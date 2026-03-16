@@ -114,6 +114,7 @@ Miniapp 模块已经拆成明确分层：
 
 至少关注这些配置：
 
+- `PIM_HTTP_ADDR=127.0.0.1:26228`
 - `PIM_PUBLIC_URL`
 - `PIM_API_KEY`
 - `PIM_SUPERUSER_EMAIL`
@@ -146,8 +147,10 @@ go run ./cmd/pim serve
 
 默认地址：
 
-- Admin UI: `http://127.0.0.1:8090/_/`
-- Health: `http://127.0.0.1:8090/api/pim/healthz`
+- Admin UI: `http://127.0.0.1:26228/_/`
+- Mrtang Admin: `http://127.0.0.1:26228/_/mrtang-admin`
+- Procurement Workbench: `http://127.0.0.1:26228/_/procurement-workbench`
+- Health: `http://127.0.0.1:26228/api/pim/healthz`
 
 ## 当前可用接口
 
@@ -156,6 +159,17 @@ PIM：
 - `POST /api/pim/harvest`
 - `POST /api/pim/process`
 - `POST /api/pim/sync`
+- `GET /api/pim/procurement/capabilities`
+- `GET /api/pim/procurement/workbench-summary`
+- `POST /api/pim/procurement/summary`
+- `POST /api/pim/procurement/export`
+- `POST /api/pim/procurement/submit`
+- `POST /api/pim/procurement/orders`
+- `GET /api/pim/procurement/orders`
+- `GET /api/pim/procurement/order?id=<id>`
+- `POST /api/pim/procurement/order/review?id=<id>`
+- `POST /api/pim/procurement/order/export?id=<id>`
+- `POST /api/pim/procurement/order/status?id=<id>`
 
 Miniapp：
 
@@ -211,3 +225,4 @@ Miniapp：
 
 1. `internal/miniapp/repository` 的真实入库实现
 2. 真实上游 miniapp source 返回结果到本地数据库的同步任务
+

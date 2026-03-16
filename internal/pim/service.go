@@ -1,7 +1,9 @@
 package pim
 
 import (
+	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -21,8 +23,9 @@ import (
 )
 
 const (
-	CollectionSupplierProducts = "supplier_products"
-	CollectionCategoryMappings = "category_mappings"
+	CollectionSupplierProducts  = "supplier_products"
+	CollectionCategoryMappings  = "category_mappings"
+	CollectionProcurementOrders = "procurement_orders"
 
 	StatusPending      = "pending"
 	StatusAIProcessing = "ai_processing"
@@ -36,6 +39,13 @@ const (
 	ImageStatusProcessing = "processing"
 	ImageStatusProcessed  = "processed"
 	ImageStatusFailed     = "failed"
+
+	ProcurementStatusDraft    = "draft"
+	ProcurementStatusReviewed = "reviewed"
+	ProcurementStatusExported = "exported"
+	ProcurementStatusOrdered  = "ordered"
+	ProcurementStatusReceived = "received"
+	ProcurementStatusCanceled = "canceled"
 )
 
 type Result struct {
@@ -46,6 +56,134 @@ type Result struct {
 	Skipped   int    `json:"skipped"`
 	Failed    int    `json:"failed"`
 	Offline   int    `json:"offline"`
+}
+
+type ProcurementItemRequest struct {
+	SupplierCode string  `json:"supplierCode"`
+	OriginalSKU  string  `json:"originalSku"`
+	Quantity     float64 `json:"quantity"`
+}
+
+type ProcurementRequest struct {
+	ExternalRef     string                   `json:"externalRef"`
+	DeliveryAddress string                   `json:"deliveryAddress"`
+	Notes           string                   `json:"notes"`
+	Items           []ProcurementItemRequest `json:"items"`
+}
+
+type ProcurementSummaryItem struct {
+	SupplierCode       string  `json:"supplierCode"`
+	OriginalSKU        string  `json:"originalSku"`
+	Title              string  `json:"title"`
+	NormalizedCategory string  `json:"normalizedCategory"`
+	Quantity           float64 `json:"quantity"`
+	SalesUnit          string  `json:"salesUnit"`
+	CostPrice          float64 `json:"costPrice"`
+	CostAmount         float64 `json:"costAmount"`
+	BusinessPrice      float64 `json:"businessPrice"`
+	BusinessAmount     float64 `json:"businessAmount"`
+	ConsumerPrice      float64 `json:"consumerPrice"`
+	ConsumerAmount     float64 `json:"consumerAmount"`
+	MarginRatio        float64 `json:"marginRatio"`
+	RiskLevel          string  `json:"riskLevel"`
+	NeedColdChain      bool    `json:"needColdChain"`
+}
+
+type ProcurementSupplierSummary struct {
+	SupplierCode        string                   `json:"supplierCode"`
+	ItemCount           int                      `json:"itemCount"`
+	TotalQty            float64                  `json:"totalQty"`
+	TotalCostAmount     float64                  `json:"totalCostAmount"`
+	TotalBusinessAmount float64                  `json:"totalBusinessAmount"`
+	TotalConsumerAmount float64                  `json:"totalConsumerAmount"`
+	RiskyItemCount      int                      `json:"riskyItemCount"`
+	Items               []ProcurementSummaryItem `json:"items"`
+}
+
+type ProcurementSummary struct {
+	Connector           string                         `json:"connector"`
+	Capabilities        supplier.ConnectorCapabilities `json:"capabilities"`
+	ExternalRef         string                         `json:"externalRef"`
+	DeliveryAddress     string                         `json:"deliveryAddress,omitempty"`
+	Notes               string                         `json:"notes,omitempty"`
+	SupplierCount       int                            `json:"supplierCount"`
+	ItemCount           int                            `json:"itemCount"`
+	TotalQty            float64                        `json:"totalQty"`
+	TotalCostAmount     float64                        `json:"totalCostAmount"`
+	TotalBusinessAmount float64                        `json:"totalBusinessAmount"`
+	TotalConsumerAmount float64                        `json:"totalConsumerAmount"`
+	RiskyItemCount      int                            `json:"riskyItemCount"`
+	Suppliers           []ProcurementSupplierSummary   `json:"suppliers"`
+}
+
+type ProcurementExport struct {
+	FileName    string             `json:"fileName"`
+	ContentType string             `json:"contentType"`
+	RowCount    int                `json:"rowCount"`
+	CSV         string             `json:"csv"`
+	Summary     ProcurementSummary `json:"summary"`
+}
+
+type ProcurementSubmitResponse struct {
+	Summary ProcurementSummary             `json:"summary"`
+	Results []supplier.PurchaseOrderResult `json:"results"`
+}
+
+type ProcurementStatusUpdateRequest struct {
+	Status string `json:"status"`
+	Note   string `json:"note"`
+}
+
+type ProcurementOrder struct {
+	ID              string                         `json:"id"`
+	ExternalRef     string                         `json:"externalRef"`
+	Status          string                         `json:"status"`
+	Connector       string                         `json:"connector"`
+	Capabilities    supplier.ConnectorCapabilities `json:"capabilities"`
+	DeliveryAddress string                         `json:"deliveryAddress,omitempty"`
+	Notes           string                         `json:"notes,omitempty"`
+	LastActionNote  string                         `json:"lastActionNote,omitempty"`
+	SupplierCount   int                            `json:"supplierCount"`
+	ItemCount       int                            `json:"itemCount"`
+	TotalQty        float64                        `json:"totalQty"`
+	TotalCostAmount float64                        `json:"totalCostAmount"`
+	RiskyItemCount  int                            `json:"riskyItemCount"`
+	Summary         ProcurementSummary             `json:"summary"`
+	Results         []supplier.PurchaseOrderResult `json:"results,omitempty"`
+	ExportCSV       string                         `json:"exportCsv,omitempty"`
+	Created         string                         `json:"created,omitempty"`
+	Updated         string                         `json:"updated,omitempty"`
+	ReviewedAt      string                         `json:"reviewedAt,omitempty"`
+	ExportedAt      string                         `json:"exportedAt,omitempty"`
+	OrderedAt       string                         `json:"orderedAt,omitempty"`
+	ReceivedAt      string                         `json:"receivedAt,omitempty"`
+	CanceledAt      string                         `json:"canceledAt,omitempty"`
+}
+
+type ProcurementWorkbenchSummary struct {
+	TotalOrders     int                `json:"totalOrders"`
+	DraftOrders     int                `json:"draftOrders"`
+	ReviewedOrders  int                `json:"reviewedOrders"`
+	ExportedOrders  int                `json:"exportedOrders"`
+	OrderedOrders   int                `json:"orderedOrders"`
+	ReceivedOrders  int                `json:"receivedOrders"`
+	CanceledOrders  int                `json:"canceledOrders"`
+	OpenRiskyOrders int                `json:"openRiskyOrders"`
+	OpenOrderCount  int                `json:"openOrderCount"`
+	RecentOrders    []ProcurementOrder `json:"recentOrders"`
+}
+
+type procurementCatalogItem struct {
+	SupplierCode       string
+	OriginalSKU        string
+	Title              string
+	NormalizedCategory string
+	Quantity           float64
+	SalesUnit          string
+	CostPrice          float64
+	BusinessPrice      float64
+	ConsumerPrice      float64
+	NeedColdChain      bool
 }
 
 type Service struct {
@@ -71,6 +209,277 @@ func NewService(cfg config.Config) *Service {
 		processor: image.NewProcessor(cfg.Image),
 		vendure:   vendure.NewClient(cfg.Vendure),
 	}
+}
+
+func (s *Service) ConnectorCapabilities() supplier.ConnectorCapabilities {
+	return s.connector.Capabilities()
+}
+
+func (s *Service) ProcurementSummary(ctx context.Context, app core.App, req ProcurementRequest) (ProcurementSummary, error) {
+	items, err := s.resolveProcurementItems(ctx, app, req.Items)
+	if err != nil {
+		return ProcurementSummary{}, err
+	}
+
+	summary := buildProcurementSummary(
+		s.cfg.Supplier.Connector,
+		s.connector.Capabilities(),
+		defaultProcurementExternalRef(req.ExternalRef),
+		strings.TrimSpace(req.DeliveryAddress),
+		strings.TrimSpace(req.Notes),
+		items,
+	)
+
+	return summary, nil
+}
+
+func (s *Service) ExportProcurement(ctx context.Context, app core.App, req ProcurementRequest) (ProcurementExport, error) {
+	summary, err := s.ProcurementSummary(ctx, app, req)
+	if err != nil {
+		return ProcurementExport{}, err
+	}
+
+	content, err := renderProcurementCSV(summary)
+	if err != nil {
+		return ProcurementExport{}, err
+	}
+
+	fileName := slugify(summary.ExternalRef)
+	if fileName == "" {
+		fileName = "procurement"
+	}
+
+	return ProcurementExport{
+		FileName:    fileName + ".csv",
+		ContentType: "text/csv; charset=utf-8",
+		RowCount:    summary.ItemCount,
+		CSV:         content,
+		Summary:     summary,
+	}, nil
+}
+
+func (s *Service) SubmitProcurement(ctx context.Context, app core.App, req ProcurementRequest) (ProcurementSubmitResponse, error) {
+	summary, err := s.ProcurementSummary(ctx, app, req)
+	if err != nil {
+		return ProcurementSubmitResponse{}, err
+	}
+
+	results := make([]supplier.PurchaseOrderResult, 0, len(summary.Suppliers))
+	for _, supplierSummary := range summary.Suppliers {
+		order := supplier.PurchaseOrder{
+			SupplierCode:    supplierSummary.SupplierCode,
+			ExternalRef:     summary.ExternalRef,
+			DeliveryAddress: summary.DeliveryAddress,
+			Notes:           summary.Notes,
+			Items:           make([]supplier.PurchaseOrderItem, 0, len(supplierSummary.Items)),
+		}
+
+		for _, item := range supplierSummary.Items {
+			order.Items = append(order.Items, supplier.PurchaseOrderItem{
+				SupplierCode: item.SupplierCode,
+				OriginalSKU:  item.OriginalSKU,
+				Quantity:     item.Quantity,
+				SalesUnit:    item.SalesUnit,
+			})
+		}
+
+		result, submitErr := s.connector.SubmitPurchaseOrder(ctx, order)
+		if submitErr != nil {
+			results = append(results, supplier.PurchaseOrderResult{
+				SupplierCode: supplierSummary.SupplierCode,
+				ExternalRef:  summary.ExternalRef,
+				Mode:         "error",
+				Accepted:     false,
+				Message:      submitErr.Error(),
+			})
+			continue
+		}
+
+		results = append(results, result)
+	}
+
+	return ProcurementSubmitResponse{
+		Summary: summary,
+		Results: results,
+	}, nil
+}
+
+func (s *Service) CreateProcurementOrder(ctx context.Context, app core.App, req ProcurementRequest) (ProcurementOrder, error) {
+	summary, err := s.ProcurementSummary(ctx, app, req)
+	if err != nil {
+		return ProcurementOrder{}, err
+	}
+
+	collection, err := app.FindCollectionByNameOrId(CollectionProcurementOrders)
+	if err != nil {
+		return ProcurementOrder{}, err
+	}
+
+	record := core.NewRecord(collection)
+	record.Set("external_ref", summary.ExternalRef)
+	record.Set("status", ProcurementStatusDraft)
+	record.Set("connector", summary.Connector)
+	record.Set("delivery_address", summary.DeliveryAddress)
+	record.Set("notes", summary.Notes)
+	record.Set("supplier_count", summary.SupplierCount)
+	record.Set("item_count", summary.ItemCount)
+	record.Set("total_qty", summary.TotalQty)
+	record.Set("total_cost_amount", summary.TotalCostAmount)
+	record.Set("risky_item_count", summary.RiskyItemCount)
+	if err := setJSONField(record, "summary_json", summary); err != nil {
+		return ProcurementOrder{}, err
+	}
+	if err := setJSONField(record, "results_json", []supplier.PurchaseOrderResult{}); err != nil {
+		return ProcurementOrder{}, err
+	}
+
+	if err := app.Save(record); err != nil {
+		return ProcurementOrder{}, err
+	}
+
+	return procurementOrderFromRecord(record)
+}
+
+func (s *Service) ListProcurementOrders(_ context.Context, app core.App, limit int, status string) ([]ProcurementOrder, error) {
+	filter := ""
+	params := dbx.Params{}
+	if strings.TrimSpace(status) != "" {
+		filter = "status = {:status}"
+		params["status"] = strings.TrimSpace(status)
+	}
+
+	if limit <= 0 {
+		limit = 20
+	}
+
+	sortExpr, err := procurementOrderSortExpr(app)
+	if err != nil {
+		return nil, err
+	}
+
+	records, err := app.FindRecordsByFilter(CollectionProcurementOrders, filter, sortExpr, limit, 0, params)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]ProcurementOrder, 0, len(records))
+	for _, record := range records {
+		order, orderErr := procurementOrderFromRecord(record)
+		if orderErr != nil {
+			return nil, orderErr
+		}
+		result = append(result, order)
+	}
+
+	return result, nil
+}
+
+func procurementOrderSortExpr(app core.App) (string, error) {
+	collection, err := app.FindCollectionByNameOrId(CollectionProcurementOrders)
+	if err != nil {
+		return "", err
+	}
+
+	if collection.Fields.GetByName("created") != nil {
+		return "-created", nil
+	}
+
+	return "-id", nil
+}
+
+func (s *Service) GetProcurementOrder(_ context.Context, app core.App, id string) (ProcurementOrder, error) {
+	record, err := app.FindRecordById(CollectionProcurementOrders, id)
+	if err != nil {
+		return ProcurementOrder{}, err
+	}
+
+	return procurementOrderFromRecord(record)
+}
+
+func (s *Service) ReviewProcurementOrder(ctx context.Context, app core.App, id string, note string) (ProcurementOrder, error) {
+	return s.UpdateProcurementOrderStatus(ctx, app, id, ProcurementStatusReviewed, note)
+}
+
+func (s *Service) ExportProcurementOrder(ctx context.Context, app core.App, id string) (ProcurementOrder, error) {
+	record, err := app.FindRecordById(CollectionProcurementOrders, id)
+	if err != nil {
+		return ProcurementOrder{}, err
+	}
+
+	summary, err := decodeProcurementSummary(record.GetString("summary_json"))
+	if err != nil {
+		return ProcurementOrder{}, err
+	}
+
+	content, err := renderProcurementCSV(summary)
+	if err != nil {
+		return ProcurementOrder{}, err
+	}
+
+	record.Set("export_csv", content)
+	if err := applyProcurementStatus(record, ProcurementStatusExported, "exported csv generated"); err != nil {
+		return ProcurementOrder{}, err
+	}
+
+	if err := app.Save(record); err != nil {
+		return ProcurementOrder{}, err
+	}
+
+	return procurementOrderFromRecord(record)
+}
+
+func (s *Service) UpdateProcurementOrderStatus(_ context.Context, app core.App, id string, status string, note string) (ProcurementOrder, error) {
+	record, err := app.FindRecordById(CollectionProcurementOrders, id)
+	if err != nil {
+		return ProcurementOrder{}, err
+	}
+
+	if err := applyProcurementStatus(record, status, note); err != nil {
+		return ProcurementOrder{}, err
+	}
+
+	if err := app.Save(record); err != nil {
+		return ProcurementOrder{}, err
+	}
+
+	return procurementOrderFromRecord(record)
+}
+
+func (s *Service) ProcurementWorkbenchSummary(ctx context.Context, app core.App, limit int) (ProcurementWorkbenchSummary, error) {
+	orders, err := s.ListProcurementOrders(ctx, app, limit, "")
+	if err != nil {
+		return ProcurementWorkbenchSummary{}, err
+	}
+
+	summary := ProcurementWorkbenchSummary{
+		RecentOrders: orders,
+	}
+	for _, order := range orders {
+		summary.TotalOrders++
+		if order.Status != ProcurementStatusReceived && order.Status != ProcurementStatusCanceled {
+			summary.OpenOrderCount++
+			if order.RiskyItemCount > 0 {
+				summary.OpenRiskyOrders++
+			}
+		}
+
+		switch order.Status {
+		case ProcurementStatusDraft:
+			summary.DraftOrders++
+		case ProcurementStatusReviewed:
+			summary.ReviewedOrders++
+		case ProcurementStatusExported:
+			summary.ExportedOrders++
+		case ProcurementStatusOrdered:
+			summary.OrderedOrders++
+		case ProcurementStatusReceived:
+			summary.ReceivedOrders++
+		case ProcurementStatusCanceled:
+			summary.CanceledOrders++
+		}
+	}
+
+	return summary, nil
 }
 
 func (s *Service) Harvest(ctx context.Context, app core.App) (Result, error) {
@@ -318,6 +727,196 @@ func (s *Service) syncRecord(ctx context.Context, app core.App, record *core.Rec
 	return app.Save(record)
 }
 
+func (s *Service) resolveProcurementItems(_ context.Context, app core.App, requested []ProcurementItemRequest) ([]procurementCatalogItem, error) {
+	if len(requested) == 0 {
+		return nil, fmt.Errorf("procurement items are required")
+	}
+
+	items := make([]procurementCatalogItem, 0, len(requested))
+	for _, requestItem := range requested {
+		quantity := requestItem.Quantity
+		if quantity <= 0 {
+			return nil, fmt.Errorf("procurement quantity must be positive for sku %s", strings.TrimSpace(requestItem.OriginalSKU))
+		}
+
+		supplierCode := strings.TrimSpace(requestItem.SupplierCode)
+		if supplierCode == "" {
+			supplierCode = s.cfg.Supplier.Code
+		}
+
+		sku := strings.TrimSpace(requestItem.OriginalSKU)
+		if sku == "" {
+			return nil, fmt.Errorf("procurement sku is required")
+		}
+
+		record, err := app.FindFirstRecordByFilter(
+			CollectionSupplierProducts,
+			"supplier_code = {:supplier} && original_sku = {:sku}",
+			dbx.Params{
+				"supplier": supplierCode,
+				"sku":      sku,
+			},
+		)
+		if err != nil {
+			return nil, fmt.Errorf("load procurement item %s/%s: %w", supplierCode, sku, err)
+		}
+
+		items = append(items, procurementCatalogItem{
+			SupplierCode:       supplierCode,
+			OriginalSKU:        sku,
+			Title:              displayTitle(record),
+			NormalizedCategory: defaultString(record.GetString("normalized_category"), record.GetString("raw_category")),
+			Quantity:           quantity,
+			SalesUnit:          defaultString(readJSONAttribute(record, "sales_unit"), "件"),
+			CostPrice:          record.GetFloat("cost_price"),
+			BusinessPrice:      record.GetFloat("b_price"),
+			ConsumerPrice:      record.GetFloat("c_price"),
+			NeedColdChain:      strings.EqualFold(readJSONAttribute(record, "need_cold_chain"), "true"),
+		})
+	}
+
+	return items, nil
+}
+
+func procurementOrderFromRecord(record *core.Record) (ProcurementOrder, error) {
+	summary, err := decodeProcurementSummary(record.GetString("summary_json"))
+	if err != nil {
+		return ProcurementOrder{}, err
+	}
+
+	results, err := decodeProcurementResults(record.GetString("results_json"))
+	if err != nil {
+		return ProcurementOrder{}, err
+	}
+
+	return ProcurementOrder{
+		ID:              record.Id,
+		ExternalRef:     record.GetString("external_ref"),
+		Status:          record.GetString("status"),
+		Connector:       record.GetString("connector"),
+		Capabilities:    summary.Capabilities,
+		DeliveryAddress: record.GetString("delivery_address"),
+		Notes:           record.GetString("notes"),
+		LastActionNote:  record.GetString("last_action_note"),
+		SupplierCount:   record.GetInt("supplier_count"),
+		ItemCount:       record.GetInt("item_count"),
+		TotalQty:        record.GetFloat("total_qty"),
+		TotalCostAmount: record.GetFloat("total_cost_amount"),
+		RiskyItemCount:  record.GetInt("risky_item_count"),
+		Summary:         summary,
+		Results:         results,
+		ExportCSV:       record.GetString("export_csv"),
+		Created:         record.GetString("created"),
+		Updated:         record.GetString("updated"),
+		ReviewedAt:      record.GetString("reviewed_at"),
+		ExportedAt:      record.GetString("exported_at"),
+		OrderedAt:       record.GetString("ordered_at"),
+		ReceivedAt:      record.GetString("received_at"),
+		CanceledAt:      record.GetString("canceled_at"),
+	}, nil
+}
+
+func decodeProcurementSummary(raw string) (ProcurementSummary, error) {
+	var summary ProcurementSummary
+	if strings.TrimSpace(raw) == "" {
+		return summary, fmt.Errorf("missing procurement summary")
+	}
+
+	if err := json.Unmarshal([]byte(raw), &summary); err != nil {
+		return ProcurementSummary{}, fmt.Errorf("decode procurement summary: %w", err)
+	}
+
+	return summary, nil
+}
+
+func decodeProcurementResults(raw string) ([]supplier.PurchaseOrderResult, error) {
+	if strings.TrimSpace(raw) == "" {
+		return []supplier.PurchaseOrderResult{}, nil
+	}
+
+	var results []supplier.PurchaseOrderResult
+	if err := json.Unmarshal([]byte(raw), &results); err != nil {
+		return nil, fmt.Errorf("decode procurement results: %w", err)
+	}
+
+	return results, nil
+}
+
+func setJSONField(record *core.Record, key string, value any) error {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+
+	record.Set(key, string(encoded))
+	return nil
+}
+
+func applyProcurementStatus(record *core.Record, status string, note string) error {
+	status = strings.TrimSpace(status)
+	if !isValidProcurementStatus(status) {
+		return fmt.Errorf("unsupported procurement status: %s", status)
+	}
+
+	current := record.GetString("status")
+	if current == "" {
+		current = ProcurementStatusDraft
+	}
+
+	if !isAllowedProcurementTransition(current, status) {
+		return fmt.Errorf("invalid procurement status transition: %s -> %s", current, status)
+	}
+
+	record.Set("status", status)
+	record.Set("last_action_note", strings.TrimSpace(note))
+
+	now := time.Now().Format(time.RFC3339)
+	switch status {
+	case ProcurementStatusReviewed:
+		record.Set("reviewed_at", now)
+	case ProcurementStatusExported:
+		record.Set("exported_at", now)
+	case ProcurementStatusOrdered:
+		record.Set("ordered_at", now)
+	case ProcurementStatusReceived:
+		record.Set("received_at", now)
+	case ProcurementStatusCanceled:
+		record.Set("canceled_at", now)
+	}
+
+	return nil
+}
+
+func isValidProcurementStatus(status string) bool {
+	switch status {
+	case ProcurementStatusDraft, ProcurementStatusReviewed, ProcurementStatusExported, ProcurementStatusOrdered, ProcurementStatusReceived, ProcurementStatusCanceled:
+		return true
+	default:
+		return false
+	}
+}
+
+func isAllowedProcurementTransition(current string, next string) bool {
+	if current == next {
+		return true
+	}
+
+	switch current {
+	case ProcurementStatusDraft:
+		return next == ProcurementStatusReviewed || next == ProcurementStatusExported || next == ProcurementStatusCanceled
+	case ProcurementStatusReviewed:
+		return next == ProcurementStatusExported || next == ProcurementStatusOrdered || next == ProcurementStatusCanceled
+	case ProcurementStatusExported:
+		return next == ProcurementStatusOrdered || next == ProcurementStatusCanceled
+	case ProcurementStatusOrdered:
+		return next == ProcurementStatusReceived || next == ProcurementStatusCanceled
+	case ProcurementStatusReceived, ProcurementStatusCanceled:
+		return false
+	default:
+		return false
+	}
+}
+
 func (s *Service) markMissingProductsOffline(ctx context.Context, app core.App, seen map[string]struct{}) (int, error) {
 	records, err := app.FindAllRecords(CollectionSupplierProducts)
 	if err != nil {
@@ -389,6 +988,175 @@ func (s *Service) recordAssetURL(record *core.Record) string {
 
 func (s *Service) recordKey(supplierCode string, sku string) string {
 	return strings.TrimSpace(supplierCode) + "::" + strings.TrimSpace(sku)
+}
+
+func buildProcurementSummary(
+	connector string,
+	capabilities supplier.ConnectorCapabilities,
+	externalRef string,
+	deliveryAddress string,
+	notes string,
+	items []procurementCatalogItem,
+) ProcurementSummary {
+	summary := ProcurementSummary{
+		Connector:       connector,
+		Capabilities:    capabilities,
+		ExternalRef:     externalRef,
+		DeliveryAddress: deliveryAddress,
+		Notes:           notes,
+		Suppliers:       make([]ProcurementSupplierSummary, 0),
+	}
+
+	supplierIndexes := make(map[string]int, len(items))
+	for _, item := range items {
+		summary.ItemCount++
+		summary.TotalQty += item.Quantity
+
+		supplierIndex, ok := supplierIndexes[item.SupplierCode]
+		if !ok {
+			supplierIndex = len(summary.Suppliers)
+			supplierIndexes[item.SupplierCode] = supplierIndex
+			summary.Suppliers = append(summary.Suppliers, ProcurementSupplierSummary{
+				SupplierCode: item.SupplierCode,
+				Items:        make([]ProcurementSummaryItem, 0),
+			})
+		}
+
+		supplierSummary := &summary.Suppliers[supplierIndex]
+		line := procurementSummaryLine(item)
+		supplierSummary.ItemCount++
+		supplierSummary.TotalQty += line.Quantity
+		supplierSummary.TotalCostAmount += line.CostAmount
+		supplierSummary.TotalBusinessAmount += line.BusinessAmount
+		supplierSummary.TotalConsumerAmount += line.ConsumerAmount
+		if line.RiskLevel != "normal" {
+			supplierSummary.RiskyItemCount++
+			summary.RiskyItemCount++
+		}
+		supplierSummary.Items = append(supplierSummary.Items, line)
+
+		summary.TotalCostAmount += line.CostAmount
+		summary.TotalBusinessAmount += line.BusinessAmount
+		summary.TotalConsumerAmount += line.ConsumerAmount
+	}
+
+	summary.SupplierCount = len(summary.Suppliers)
+	return summary
+}
+
+func procurementSummaryLine(item procurementCatalogItem) ProcurementSummaryItem {
+	costAmount := roundAmount(item.CostPrice * item.Quantity)
+	businessAmount := roundAmount(item.BusinessPrice * item.Quantity)
+	consumerAmount := roundAmount(item.ConsumerPrice * item.Quantity)
+
+	return ProcurementSummaryItem{
+		SupplierCode:       item.SupplierCode,
+		OriginalSKU:        item.OriginalSKU,
+		Title:              item.Title,
+		NormalizedCategory: item.NormalizedCategory,
+		Quantity:           item.Quantity,
+		SalesUnit:          item.SalesUnit,
+		CostPrice:          roundAmount(item.CostPrice),
+		CostAmount:         costAmount,
+		BusinessPrice:      roundAmount(item.BusinessPrice),
+		BusinessAmount:     businessAmount,
+		ConsumerPrice:      roundAmount(item.ConsumerPrice),
+		ConsumerAmount:     consumerAmount,
+		MarginRatio:        roundAmount(procurementMarginRatio(item.CostPrice, item.ConsumerPrice)),
+		RiskLevel:          procurementRiskLevel(item.CostPrice, item.ConsumerPrice),
+		NeedColdChain:      item.NeedColdChain,
+	}
+}
+
+func renderProcurementCSV(summary ProcurementSummary) (string, error) {
+	var buffer bytes.Buffer
+	writer := csv.NewWriter(&buffer)
+
+	rows := [][]string{
+		{
+			"supplier_code",
+			"external_ref",
+			"original_sku",
+			"title",
+			"normalized_category",
+			"quantity",
+			"sales_unit",
+			"cost_price",
+			"cost_amount",
+			"b_price",
+			"b_amount",
+			"c_price",
+			"c_amount",
+			"margin_ratio",
+			"risk_level",
+			"need_cold_chain",
+		},
+	}
+
+	for _, supplierSummary := range summary.Suppliers {
+		for _, item := range supplierSummary.Items {
+			rows = append(rows, []string{
+				item.SupplierCode,
+				summary.ExternalRef,
+				item.OriginalSKU,
+				item.Title,
+				item.NormalizedCategory,
+				fmt.Sprintf("%.2f", item.Quantity),
+				item.SalesUnit,
+				fmt.Sprintf("%.2f", item.CostPrice),
+				fmt.Sprintf("%.2f", item.CostAmount),
+				fmt.Sprintf("%.2f", item.BusinessPrice),
+				fmt.Sprintf("%.2f", item.BusinessAmount),
+				fmt.Sprintf("%.2f", item.ConsumerPrice),
+				fmt.Sprintf("%.2f", item.ConsumerAmount),
+				fmt.Sprintf("%.2f", item.MarginRatio),
+				item.RiskLevel,
+				fmt.Sprintf("%t", item.NeedColdChain),
+			})
+		}
+	}
+
+	if err := writer.WriteAll(rows); err != nil {
+		return "", err
+	}
+
+	return buffer.String(), nil
+}
+
+func defaultProcurementExternalRef(value string) string {
+	if strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
+
+	return fmt.Sprintf("procurement-%d", time.Now().UnixMilli())
+}
+
+func procurementMarginRatio(costPrice float64, consumerPrice float64) float64 {
+	if consumerPrice <= 0 {
+		return 0
+	}
+
+	return 1 - (costPrice / consumerPrice)
+}
+
+func procurementRiskLevel(costPrice float64, consumerPrice float64) string {
+	if consumerPrice <= 0 {
+		return "missing_consumer_price"
+	}
+
+	ratio := costPrice / consumerPrice
+	switch {
+	case ratio >= 1:
+		return "loss"
+	case ratio >= 0.8:
+		return "warning"
+	default:
+		return "normal"
+	}
+}
+
+func roundAmount(value float64) float64 {
+	return math.Round(value*100) / 100
 }
 
 func displayTitle(record *core.Record) string {

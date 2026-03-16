@@ -70,8 +70,10 @@ go run ./cmd/pim serve
 
 默认服务地址:
 
-- PocketBase Admin UI: `http://127.0.0.1:8090/_/`
-- 健康检查: `http://127.0.0.1:8090/api/pim/healthz`
+- PocketBase Admin UI: `http://127.0.0.1:26228/_/`
+- Mrtang Admin: `http://127.0.0.1:26228/_/mrtang-admin`
+- Procurement Workbench: `http://127.0.0.1:26228/_/procurement-workbench`
+- 健康检查: `http://127.0.0.1:26228/api/pim/healthz`
 
 本地生成目录:
 
@@ -98,6 +100,7 @@ go run ./cmd/pim serve
 
 环境变量:
 
+- `PIM_HTTP_ADDR=127.0.0.1:26228`
 - `MINIAPP_SOURCE_MODE=snapshot|http`
 - `MINIAPP_SOURCE_URL=...`
 - `MINIAPP_SOURCE_TIMEOUT=20s`
@@ -128,41 +131,41 @@ go run ./cmd/pim serve
 可用接口:
 
 ```bash
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/contracts/homepage
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/homepage
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/homepage/bootstrap
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/homepage/settings
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/homepage/template
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/homepage/categories
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/homepage/sections
-curl -H 'Authorization: Bearer your-account-id' 'http://127.0.0.1:8090/api/miniapp/homepage/section?id=new'
-curl -H 'Authorization: Bearer your-account-id' 'http://127.0.0.1:8090/api/miniapp/homepage/section?id=hot'
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/contracts/category-page
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/category-page/tree
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/category-page/sections
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/contracts/product-page
-curl -H 'Authorization: Bearer your-account-id' 'http://127.0.0.1:8090/api/miniapp/product-page/product?id=670168385396461568_670168388273754112'
-curl -H 'Authorization: Bearer your-account-id' 'http://127.0.0.1:8090/api/miniapp/product-page/detail?id=670168385396461568_670168388273754112'
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/product-page/coverage
-curl -H 'Authorization: Bearer your-account-id' 'http://127.0.0.1:8090/api/miniapp/product-page/coverage?priority=homepage_dual_unit'
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/product-page/coverage-summary
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/contracts/cart-order
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order
-curl -X POST -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/cart/add
-curl -X POST -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/cart/change-num
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/cart/list
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/cart/list-summary
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/cart/detail
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/cart/detail-summary
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/order/default-delivery-summary
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/order/deliveries-summary
-curl -X POST -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/order/address/analyse
-curl -X POST -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/order/address/add
-curl -H 'Authorization: Bearer your-account-id' 'http://127.0.0.1:8090/api/miniapp/cart-order/order/freight-cost?scenario=selected_delivery'
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/order/freight-summary
-curl -X POST -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/order/submit
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/order/submit-summary
-curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/checkout-summary
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/contracts/homepage
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/homepage
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/homepage/bootstrap
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/homepage/settings
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/homepage/template
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/homepage/categories
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/homepage/sections
+curl -H 'Authorization: Bearer your-account-id' 'http://127.0.0.1:26228/api/miniapp/homepage/section?id=new'
+curl -H 'Authorization: Bearer your-account-id' 'http://127.0.0.1:26228/api/miniapp/homepage/section?id=hot'
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/contracts/category-page
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/category-page/tree
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/category-page/sections
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/contracts/product-page
+curl -H 'Authorization: Bearer your-account-id' 'http://127.0.0.1:26228/api/miniapp/product-page/product?id=670168385396461568_670168388273754112'
+curl -H 'Authorization: Bearer your-account-id' 'http://127.0.0.1:26228/api/miniapp/product-page/detail?id=670168385396461568_670168388273754112'
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/product-page/coverage
+curl -H 'Authorization: Bearer your-account-id' 'http://127.0.0.1:26228/api/miniapp/product-page/coverage?priority=homepage_dual_unit'
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/product-page/coverage-summary
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/contracts/cart-order
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/cart-order
+curl -X POST -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/cart-order/cart/add
+curl -X POST -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/cart-order/cart/change-num
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/cart-order/cart/list
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/cart-order/cart/list-summary
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/cart-order/cart/detail
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/cart-order/cart/detail-summary
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/cart-order/order/default-delivery-summary
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/cart-order/order/deliveries-summary
+curl -X POST -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/cart-order/order/address/analyse
+curl -X POST -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/cart-order/order/address/add
+curl -H 'Authorization: Bearer your-account-id' 'http://127.0.0.1:26228/api/miniapp/cart-order/order/freight-cost?scenario=selected_delivery'
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/cart-order/order/freight-summary
+curl -X POST -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/cart-order/order/submit
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/cart-order/order/submit-summary
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/cart-order/checkout-summary
 ```
 
 接口说明:
@@ -205,10 +208,78 @@ go run ./cmd/pim superuser create admin@example.com change-me
 如果设置了 `PIM_API_KEY`，以下接口需要请求头 `X-PIM-API-Key: <key>` 或 `Authorization: Bearer <key>`。
 
 ```bash
-curl -X POST http://127.0.0.1:8090/api/pim/harvest
-curl -X POST http://127.0.0.1:8090/api/pim/process
-curl -X POST http://127.0.0.1:8090/api/pim/sync
+curl -X POST http://127.0.0.1:26228/api/pim/harvest
+curl -X POST http://127.0.0.1:26228/api/pim/process
+curl -X POST http://127.0.0.1:26228/api/pim/sync
+curl http://127.0.0.1:26228/api/pim/procurement/capabilities
+curl http://127.0.0.1:26228/api/pim/procurement/workbench-summary
 ```
+
+采购汇总与导出接口也已经接入，同样受 `PIM_API_KEY` 保护：
+
+```bash
+curl -X POST http://127.0.0.1:26228/api/pim/procurement/summary \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "externalRef": "PO-20260316-001",
+    "deliveryAddress": "攀枝花一号冻库",
+    "notes": "今晚汇总采购",
+    "items": [
+      {"supplierCode": "SUP_A", "originalSku": "SKU-1001", "quantity": 5},
+      {"supplierCode": "SUP_A", "originalSku": "SKU-1002", "quantity": 8}
+    ]
+  }'
+
+curl -X POST http://127.0.0.1:26228/api/pim/procurement/export \
+  -H 'Content-Type: application/json' \
+  -d '{"items":[{"supplierCode":"SUP_A","originalSku":"SKU-1001","quantity":5}]}'
+
+curl -X POST http://127.0.0.1:26228/api/pim/procurement/submit \
+  -H 'Content-Type: application/json' \
+  -d '{"items":[{"supplierCode":"SUP_A","originalSku":"SKU-1001","quantity":5}]}'
+
+curl -X POST http://127.0.0.1:26228/api/pim/procurement/orders \
+  -H 'Content-Type: application/json' \
+  -d '{"items":[{"supplierCode":"SUP_A","originalSku":"SKU-1001","quantity":5}]}'
+
+curl http://127.0.0.1:26228/api/pim/procurement/orders
+curl 'http://127.0.0.1:26228/api/pim/procurement/order?id=<procurement-order-id>'
+curl -X POST 'http://127.0.0.1:26228/api/pim/procurement/order/review?id=<procurement-order-id>'
+curl -X POST 'http://127.0.0.1:26228/api/pim/procurement/order/export?id=<procurement-order-id>'
+curl -X POST 'http://127.0.0.1:26228/api/pim/procurement/order/status?id=<procurement-order-id>' \
+  -H 'Content-Type: application/json' \
+  -d '{"status":"ordered","note":"已在供应商后台手工下单"}'
+```
+
+采购接口说明：
+
+- `GET /api/pim/procurement/capabilities`
+  返回当前 supplier connector 是否支持真实推单，还是只支持手工导出。
+- `GET /api/pim/procurement/workbench-summary`
+  返回手动采购工作台摘要，包括各状态计数、未完成风险单数和最近采购单。
+- `POST /api/pim/procurement/summary`
+  按 `supplier_products` 中已采集商品生成采购汇总，并带出成本、B/C 价、风险等级。
+- `POST /api/pim/procurement/export`
+  返回标准 CSV 内容，适合走“半自动汇单 + 人工发给供应商”的模式。
+- `POST /api/pim/procurement/submit`
+  走 connector 的统一下单边界。当前 `file` connector 会明确返回 `manual_export`，不给出伪成功。
+- `POST /api/pim/procurement/orders`
+  创建一张可追踪的手动采购单，初始状态为 `draft`。
+- `GET /api/pim/procurement/orders`
+  查询采购单列表，可按 `status` 过滤。
+- `GET /api/pim/procurement/order?id=...`
+  查看单张采购单详情，含汇总、导出内容和状态时间戳。
+- `POST /api/pim/procurement/order/review?id=...`
+  将采购单标记为 `reviewed`，表示人工已经确认过价格、数量和地址。
+- `POST /api/pim/procurement/order/export?id=...`
+  生成并保存 CSV，同时将采购单状态推进到 `exported`。
+- `POST /api/pim/procurement/order/status?id=...`
+  手动推进状态，支持 `reviewed`、`exported`、`ordered`、`received`、`canceled`。
+
+手动采购状态流转：
+
+- `draft -> reviewed -> exported -> ordered -> received`
+- 任一未完成阶段都允许转 `canceled`
 
 ## PocketBase 审核操作
 
@@ -284,3 +355,4 @@ curl -X POST http://127.0.0.1:8090/api/pim/sync
 - 增加多供应商 connector
 - 增加价格波动报警与审批
 - 补充集成测试，验证 PocketBase 和 Vendure 实际联调
+

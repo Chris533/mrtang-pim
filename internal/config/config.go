@@ -18,6 +18,7 @@ type Config struct {
 }
 
 type AppConfig struct {
+	HTTPAddr  string
 	PublicURL string
 }
 
@@ -78,7 +79,8 @@ type VendureConfig struct {
 func Load() Config {
 	return Config{
 		App: AppConfig{
-			PublicURL: getEnv("PIM_PUBLIC_URL", "http://127.0.0.1:8090"),
+			HTTPAddr:  getEnv("PIM_HTTP_ADDR", "127.0.0.1:26228"),
+			PublicURL: getEnv("PIM_PUBLIC_URL", "http://127.0.0.1:26228"),
 		},
 		Security: SecurityConfig{
 			APIKey: strings.TrimSpace(os.Getenv("PIM_API_KEY")),
@@ -126,7 +128,7 @@ func Load() Config {
 			ChannelToken:    strings.TrimSpace(os.Getenv("VENDURE_CHANNEL_TOKEN")),
 			RequestTimeout:  getEnvDuration("VENDURE_TIMEOUT", 30*time.Second),
 			AssetTags:       splitCSV(getEnv("VENDURE_ASSET_TAGS", "pim,supplier")),
-			ReviewAssetBase: getEnv("PIM_PUBLIC_URL", "http://127.0.0.1:8090"),
+			ReviewAssetBase: getEnv("PIM_PUBLIC_URL", "http://127.0.0.1:26228"),
 		},
 	}
 }

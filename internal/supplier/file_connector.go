@@ -19,6 +19,14 @@ func NewFileConnector(path string, code string) *FileConnector {
 	}
 }
 
+func (c *FileConnector) Capabilities() ConnectorCapabilities {
+	return ConnectorCapabilities{
+		FetchProducts:       true,
+		SubmitPurchaseOrder: false,
+		ExportPurchaseOrder: true,
+	}
+}
+
 func (c *FileConnector) Fetch(ctx context.Context) ([]Product, error) {
 	select {
 	case <-ctx.Done():
@@ -47,4 +55,20 @@ func (c *FileConnector) Fetch(ctx context.Context) ([]Product, error) {
 	}
 
 	return products, nil
+}
+
+func (c *FileConnector) SubmitPurchaseOrder(ctx context.Context, order PurchaseOrder) (PurchaseOrderResult, error) {
+	select {
+	case <-ctx.Done():
+		return PurchaseOrderResult{}, ctx.Err()
+	default:
+	}
+
+	return PurchaseOrderResult{
+		SupplierCode: order.SupplierCode,
+		ExternalRef:  order.ExternalRef,
+		Mode:         "manual_export",
+		Accepted:     false,
+		Message:      "file connector does not support live purchase order submission",
+	}, nil
 }

@@ -21,6 +21,37 @@ type Product struct {
 	Attributes        map[string]interface{} `json:"attributes"`
 }
 
+type ConnectorCapabilities struct {
+	FetchProducts       bool `json:"fetchProducts"`
+	SubmitPurchaseOrder bool `json:"submitPurchaseOrder"`
+	ExportPurchaseOrder bool `json:"exportPurchaseOrder"`
+}
+
+type PurchaseOrderItem struct {
+	SupplierCode string  `json:"supplierCode"`
+	OriginalSKU  string  `json:"originalSku"`
+	Quantity     float64 `json:"quantity"`
+	SalesUnit    string  `json:"salesUnit,omitempty"`
+}
+
+type PurchaseOrder struct {
+	SupplierCode    string              `json:"supplierCode"`
+	ExternalRef     string              `json:"externalRef,omitempty"`
+	DeliveryAddress string              `json:"deliveryAddress,omitempty"`
+	Notes           string              `json:"notes,omitempty"`
+	Items           []PurchaseOrderItem `json:"items"`
+}
+
+type PurchaseOrderResult struct {
+	SupplierCode string `json:"supplierCode"`
+	ExternalRef  string `json:"externalRef,omitempty"`
+	Mode         string `json:"mode"`
+	Accepted     bool   `json:"accepted"`
+	Message      string `json:"message,omitempty"`
+}
+
 type Connector interface {
 	Fetch(ctx context.Context) ([]Product, error)
+	Capabilities() ConnectorCapabilities
+	SubmitPurchaseOrder(ctx context.Context, order PurchaseOrder) (PurchaseOrderResult, error)
 }

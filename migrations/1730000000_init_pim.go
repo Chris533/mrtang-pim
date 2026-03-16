@@ -18,8 +18,16 @@ func init() {
 			return err
 		}
 
+		if err := upsertProcurementOrdersCollection(app); err != nil {
+			return err
+		}
+
 		return ensureSuperuser(app)
 	}, func(app core.App) error {
+		if err := deleteCollectionIfExists(app, "procurement_orders"); err != nil {
+			return err
+		}
+
 		if err := deleteCollectionIfExists(app, "category_mappings"); err != nil {
 			return err
 		}
@@ -79,6 +87,39 @@ func upsertCategoryMappingsCollection(app core.App) error {
 	)
 
 	collection.AddIndex("idx_category_mapping_unique", true, "supplier_code, supplier_category", "")
+	return app.Save(collection)
+}
+
+func upsertProcurementOrdersCollection(app core.App) error {
+	collection, err := findOrCreateCollection(app, "procurement_orders")
+	if err != nil {
+		return err
+	}
+
+	collection.Fields.Add(
+		&core.TextField{Name: "external_ref", Required: true, Max: 128},
+		&core.SelectField{Name: "status", Required: true, Values: []string{"draft", "reviewed", "exported", "ordered", "received", "canceled"}, MaxSelect: 1},
+		&core.TextField{Name: "connector", Max: 32},
+		&core.TextField{Name: "delivery_address", Max: 255},
+		&core.EditorField{Name: "notes"},
+		&core.TextField{Name: "last_action_note", Max: 500},
+		&core.NumberField{Name: "supplier_count"},
+		&core.NumberField{Name: "item_count"},
+		&core.NumberField{Name: "total_qty"},
+		&core.NumberField{Name: "total_cost_amount"},
+		&core.NumberField{Name: "risky_item_count"},
+		&core.JSONField{Name: "summary_json"},
+		&core.JSONField{Name: "results_json"},
+		&core.EditorField{Name: "export_csv"},
+		&core.DateField{Name: "reviewed_at"},
+		&core.DateField{Name: "exported_at"},
+		&core.DateField{Name: "ordered_at"},
+		&core.DateField{Name: "received_at"},
+		&core.DateField{Name: "canceled_at"},
+	)
+
+	collection.AddIndex("idx_procurement_orders_external_ref", true, "external_ref", "")
+	collection.AddIndex("idx_procurement_orders_status", false, "status", "")
 	return app.Save(collection)
 }
 
