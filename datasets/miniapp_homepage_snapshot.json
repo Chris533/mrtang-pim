@@ -1,0 +1,705 @@
+{
+  "meta": {
+    "source": "sanitized-rr-homepage",
+    "description": "Sanitized homepage contract derived from mrtang-pim/docs/rr/index samples. Sensitive auth, customer identifiers and third-party session material are removed.",
+    "notes": [
+      "Original source host and auth headers are intentionally not replayed here.",
+      "Request and response shapes preserve homepage module dependencies for frontend and backend development.",
+      "Price values are normalized to currency units rather than source minor-unit integers."
+    ]
+  },
+  "contracts": [
+    {
+      "id": "bootstrap_loading_setting",
+      "name": "Loading Setting",
+      "method": "GET",
+      "originalPath": "/gateway/shop-decoration-service/api/v1/open/get_loading_setting",
+      "localPath": "/api/miniapp/homepage/bootstrap",
+      "role": "Startup branch and applet bootstrap config",
+      "request": {
+        "queryKeys": ["corpId"]
+      },
+      "responseKeys": ["allowSwitchBranch", "autoSwitchBranchByRange", "appletCount"],
+      "tags": ["homepage", "bootstrap"]
+    },
+    {
+      "id": "contacts_config",
+      "name": "Contacts Config",
+      "method": "GET",
+      "originalPath": "/gateway/customer-service/api/v1/config/get_contacts_config",
+      "localPath": "/api/miniapp/homepage/bootstrap",
+      "role": "Homepage startup dependency for contact-related toggles",
+      "request": {},
+      "responseKeys": ["data"],
+      "tags": ["homepage", "bootstrap"]
+    },
+    {
+      "id": "bb_auth_status",
+      "name": "B2B Auth Status",
+      "method": "GET",
+      "originalPath": "/gateway/customer-service/api/v1/order/app/get_bb_auth_status",
+      "localPath": "/api/miniapp/homepage/bootstrap",
+      "role": "Homepage access status gate",
+      "request": {
+        "queryKeys": ["isPreAuth", "openId"]
+      },
+      "responseKeys": ["status"],
+      "tags": ["homepage", "auth"],
+      "notes": {
+        "openId": "Removed from local contract and should be resolved by your own auth layer."
+      }
+    },
+    {
+      "id": "login_status",
+      "name": "Login Status",
+      "method": "POST",
+      "originalPath": "/gateway/customer-service/api/v1/order/app/get_login_status",
+      "localPath": "/api/miniapp/homepage/bootstrap",
+      "role": "Homepage eligibility and order capability summary",
+      "request": {
+        "bodyKeys": ["contactsId", "customerId", "isDistributor"]
+      },
+      "responseKeys": ["contactsName", "isOrderContacts", "auditStatus", "status"],
+      "tags": ["homepage", "auth"]
+    },
+    {
+      "id": "cart_total_num",
+      "name": "Cart Total Num",
+      "method": "GET",
+      "originalPath": "/gateway/goodsservice/api/v1/wx/cart/get_cart_tot_num",
+      "localPath": "/api/miniapp/homepage/bootstrap",
+      "role": "Homepage cart total snapshot",
+      "request": {
+        "queryKeys": ["needAllUnit"]
+      },
+      "responseKeys": ["data"],
+      "tags": ["homepage", "cart"]
+    },
+    {
+      "id": "shop_config_setting",
+      "name": "Shop Config Setting",
+      "method": "POST",
+      "originalPath": "/gateway/shop-decoration-service/api/v1/shop/config/setting",
+      "localPath": "/api/miniapp/homepage/settings",
+      "role": "Homepage shop configuration and visual settings",
+      "request": {
+        "bodyKeys": []
+      },
+      "responseKeys": ["corpName", "nickName", "themeColor", "goodsListSettingVO", "goodsCategorySettingVO"],
+      "tags": ["homepage", "settings"]
+    },
+    {
+      "id": "goods_category_setting_detail",
+      "name": "Goods Category Setting Detail",
+      "method": "POST",
+      "originalPath": "/gateway/shop-decoration-service/api/v1/goods/category/setting/detail",
+      "localPath": "/api/miniapp/homepage/settings",
+      "role": "Category page layout defaults used by homepage navigation",
+      "request": {
+        "bodyKeys": []
+      },
+      "responseKeys": ["layoutType", "defaultSort", "maxCategoryLevel"],
+      "tags": ["homepage", "settings", "category"]
+    },
+    {
+      "id": "category_list",
+      "name": "Category List",
+      "method": "POST",
+      "originalPath": "/gateway/gateway-mall-service/api/v1/wx/goods/category_list",
+      "localPath": "/api/miniapp/homepage/categories",
+      "role": "Homepage quick tabs for new / hot / recommend",
+      "request": {
+        "bodyKeys": ["hasGoods"]
+      },
+      "responseKeys": ["label", "categoryType"],
+      "tags": ["homepage", "category"]
+    },
+    {
+      "id": "template_using",
+      "name": "Template Using",
+      "method": "POST",
+      "originalPath": "/gateway/shop-decoration-service/api/v1/shop/template/using",
+      "localPath": "/api/miniapp/homepage/template",
+      "role": "Homepage decoration modules and page layout",
+      "request": {
+        "bodyKeys": []
+      },
+      "responseKeys": ["templateName", "pageName", "moduleList"],
+      "tags": ["homepage", "template"]
+    },
+    {
+      "id": "goods_list_new",
+      "name": "New Goods List",
+      "method": "POST",
+      "originalPath": "/gateway/gateway-mall-service/api/v1/wx/goods/list",
+      "localPath": "/api/miniapp/homepage/sections/new",
+      "role": "Homepage new-arrival or new-goods card list",
+      "request": {
+        "bodyKeys": ["pageNum", "pageSize", "sort", "type", "isBuyLogo", "includeTagIds"]
+      },
+      "responseKeys": ["pageNum", "pageSize", "total", "pages", "list"],
+      "tags": ["homepage", "goods", "new"]
+    },
+    {
+      "id": "goods_list_hot",
+      "name": "Hot Goods List",
+      "method": "POST",
+      "originalPath": "/gateway/gateway-mall-service/api/v1/wx/goods/list",
+      "localPath": "/api/miniapp/homepage/sections/hot",
+      "role": "Homepage hot-sale card list",
+      "request": {
+        "bodyKeys": ["pageNum", "pageSize", "sort", "type", "isBuyLogo"]
+      },
+      "responseKeys": ["pageNum", "pageSize", "total", "pages", "list"],
+      "tags": ["homepage", "goods", "hot"]
+    },
+    {
+      "id": "price_stock_batch_new",
+      "name": "Price Stock Batch New",
+      "method": "POST",
+      "originalPath": "/gateway/goodsservice/api/v1/wx/goods/sku/list/price_stock",
+      "localPath": "/api/miniapp/homepage/sections/new",
+      "role": "Batch stock and multi-unit price supplement for new goods",
+      "request": {
+        "bodyKeys": ["goodsShowProducedDate", "needAllUnit", "itemList", "extReturnVO", "levelId"]
+      },
+      "responseKeys": ["skuId", "spuId", "discountAfterPrice", "qty", "displayText", "unitInfoList"],
+      "tags": ["homepage", "goods", "stock", "new"]
+    },
+    {
+      "id": "price_stock_batch_hot",
+      "name": "Price Stock Batch Hot",
+      "method": "POST",
+      "originalPath": "/gateway/goodsservice/api/v1/wx/goods/sku/list/price_stock",
+      "localPath": "/api/miniapp/homepage/sections/hot",
+      "role": "Batch stock and multi-unit price supplement for hot-sale goods",
+      "request": {
+        "bodyKeys": ["goodsShowProducedDate", "needAllUnit", "itemList", "extReturnVO", "levelId"]
+      },
+      "responseKeys": ["skuId", "spuId", "discountAfterPrice", "qty", "displayText", "unitInfoList"],
+      "tags": ["homepage", "goods", "stock", "hot"]
+    }
+  ],
+  "homepage": {
+    "bootstrap": {
+      "allowSwitchBranch": false,
+      "autoSwitchBranch": false,
+      "appletCount": 1,
+      "contactsConfig": [],
+      "bbAuthStatus": 0,
+      "cartSummary": [],
+      "loginStatus": "approved",
+      "canOrder": true
+    },
+    "settings": {
+      "corpName": "XX商贸有限公司",
+      "shopName": "XX冷冻供应链",
+      "currencySymbol": "￥",
+      "themeColor": ["#FF6E1A", "#FF6E1A", "#FFF0E8"],
+      "topBackgroundColor": "#FFFFFF",
+      "topContentColor": "#000000",
+      "pageName": "XX全品类冷冻供应",
+      "showOnlineService": true,
+      "showShoppingCart": true,
+      "enableCoupon": true,
+      "enableIntegral": true,
+      "enableInvoice": true,
+      "enablePrePayment": true,
+      "enableGoodsFavorite": true,
+      "pricePrecision": 4,
+      "qtyPrecision": 2,
+      "stockViewRange": 2,
+      "goodsListSetting": {
+        "layoutType": 2,
+        "defaultSort": -9,
+        "detailPageShowType": 2,
+        "listPageShowType": 2,
+        "showSkuSearchBtn": 0
+      },
+      "goodsCategorySetting": {
+        "layoutType": 3,
+        "defaultSort": -1,
+        "maxCategoryLevel": 3,
+        "searchType": 0,
+        "categorySearchType": 0,
+        "categorySortType": 0
+      }
+    },
+    "template": {
+      "businessId": "598882090142056448",
+      "templateName": "冻品模板二",
+      "pageName": "XX全品类冷冻供应",
+      "sharePageUrl": "/share/homepage-cover.jpg",
+      "showOnlineService": true,
+      "showShoppingCart": true,
+      "templateType": 6,
+      "modules": [
+        {
+          "id": "promo-copy",
+          "type": "copy",
+          "title": "一袋也是批发价",
+          "items": [
+            {
+              "title": "一袋也是批发价"
+            }
+          ]
+        },
+        {
+          "id": "promo-categories",
+          "type": "banner-category-grid",
+          "title": "推荐分类",
+          "displayStyle": 1,
+          "items": [
+            {
+              "title": "干杂，调料",
+              "imageUrl": "/images/category-seasoning.jpg",
+              "categoryKey": "639044801676816384"
+            },
+            {
+              "title": "鸭产品",
+              "imageUrl": "/images/category-duck.jpg",
+              "categoryKey": "639042683867877376"
+            },
+            {
+              "title": "丸子，火锅",
+              "imageUrl": "/images/category-hotpot.jpg",
+              "categoryKey": "639043423936266240"
+            },
+            {
+              "title": "烧烤串串",
+              "imageUrl": "/images/category-bbq.jpg",
+              "categoryKey": "639043759132278784"
+            }
+          ]
+        },
+        {
+          "id": "quick-nav",
+          "type": "icon-nav",
+          "title": "首页专区",
+          "displayStyle": 7,
+          "items": [
+            {
+              "title": "鸡禽专区",
+              "imageUrl": "https://cdn.example.com/nav/chicken.png",
+              "categoryKey": "639042624178835456"
+            },
+            {
+              "title": "鸭副专区",
+              "imageUrl": "https://cdn.example.com/nav/duck.png",
+              "categoryKey": "639042683867877376"
+            },
+            {
+              "title": "猪副专区",
+              "imageUrl": "https://cdn.example.com/nav/pork.png",
+              "categoryKey": "639042945818968064"
+            },
+            {
+              "title": "牛副专区",
+              "imageUrl": "https://cdn.example.com/nav/beef.png",
+              "categoryKey": "639043179575889920"
+            },
+            {
+              "title": "丸子专区",
+              "imageUrl": "https://cdn.example.com/nav/hotpot-ball.png",
+              "categoryKey": "639043423936266240"
+            },
+            {
+              "title": "海鲜水产",
+              "imageUrl": "https://cdn.example.com/nav/seafood.png",
+              "categoryKey": "639225399972311040"
+            }
+          ]
+        },
+        {
+          "id": "flash-sale",
+          "type": "goods-showcase",
+          "title": "限时特价",
+          "displayStyle": 13,
+          "displayNum": 20
+        },
+        {
+          "id": "new-showcase",
+          "type": "goods-showcase",
+          "title": "畅销新品",
+          "displayStyle": 9,
+          "displayNum": 20
+        },
+        {
+          "id": "hot-showcase",
+          "type": "goods-showcase",
+          "title": "热销推荐",
+          "displayStyle": 5,
+          "displayNum": 9
+        },
+        {
+          "id": "single-banner",
+          "type": "banner",
+          "title": "首页横幅",
+          "displayStyle": 3,
+          "items": [
+            {
+              "title": "首页横幅",
+              "imageUrl": "/images/homepage-banner.png"
+            }
+          ]
+        }
+      ]
+    },
+    "categoryTabs": [
+      {
+        "key": "bought",
+        "label": "买过"
+      },
+      {
+        "key": "new",
+        "label": "新品"
+      },
+      {
+        "key": "hot",
+        "label": "热卖"
+      },
+      {
+        "key": "recommend",
+        "label": "推荐"
+      }
+    ],
+    "sections": [
+      {
+        "id": "new",
+        "title": "畅销新品",
+        "sort": "new",
+        "pageSize": 20,
+        "contractId": "goods_list_new",
+        "requestBody": {
+          "pageNum": 1,
+          "pageSize": 20,
+          "sort": -9,
+          "type": 155,
+          "isBuyLogo": true,
+          "includeTagIds": ["tag:new"]
+        },
+        "products": [
+          {
+            "spuId": "646995016921055232",
+            "skuId": "646995017386622976",
+            "name": "天府小厨娘香卤肥肠",
+            "cover": "/150032890/202511/49029960635554951/649889133166485504.jpg",
+            "skuName": "500g*20袋",
+            "defaultUnit": "件",
+            "price": 460,
+            "stockQty": 7.8,
+            "stockText": "有货",
+            "tags": ["新品"],
+            "unitOptions": [
+              {
+                "unitName": "袋",
+                "price": 23,
+                "baseUnit": "袋",
+                "rate": 1,
+                "isDefault": false,
+                "stockQty": 156,
+                "stockText": "有货"
+              },
+              {
+                "unitName": "件",
+                "price": 460,
+                "baseUnit": "袋",
+                "rate": 20,
+                "isDefault": true,
+                "stockQty": 7.8,
+                "stockText": "有货"
+              }
+            ],
+            "promotionTexts": ["满299-5", "满1199-10"]
+          },
+          {
+            "spuId": "649207810357710848",
+            "skuId": "649207811062353920",
+            "name": "牛多旺鸭肠",
+            "cover": "/150032890/202511/5587164025797891/649272654129201152.jpg",
+            "skuName": "500g*20袋，固形物70%",
+            "defaultUnit": "件",
+            "price": 165,
+            "stockQty": 4.2,
+            "stockText": "有货",
+            "tags": ["新品", "火锅爆品"],
+            "unitOptions": [
+              {
+                "unitName": "袋",
+                "price": 9,
+                "baseUnit": "袋",
+                "rate": 1,
+                "isDefault": false,
+                "stockQty": 84,
+                "stockText": "有货"
+              },
+              {
+                "unitName": "件",
+                "price": 165,
+                "baseUnit": "袋",
+                "rate": 20,
+                "isDefault": true,
+                "stockQty": 4.2,
+                "stockText": "有货"
+              }
+            ],
+            "promotionTexts": ["满299-5", "满1199-10"]
+          },
+          {
+            "spuId": "648500854252695552",
+            "skuId": "648500854881841152",
+            "name": "牛多旺小叶片",
+            "cover": "/150032890/202511/48779316026701486/648835186259554304.jpg",
+            "skuName": "60%固型物500g*20",
+            "defaultUnit": "袋",
+            "price": 19,
+            "stockQty": 5,
+            "stockText": "有货",
+            "tags": ["新品", "火锅爆品"],
+            "unitOptions": [
+              {
+                "unitName": "袋",
+                "price": 19,
+                "baseUnit": "袋",
+                "rate": 1,
+                "isDefault": true,
+                "stockQty": 5,
+                "stockText": "有货"
+              },
+              {
+                "unitName": "件",
+                "price": 380,
+                "baseUnit": "袋",
+                "rate": 20,
+                "isDefault": false,
+                "stockQty": 0.25,
+                "stockText": "有货"
+              }
+            ],
+            "promotionTexts": ["满299-5", "满1199-10"]
+          },
+          {
+            "spuId": "649525485331894272",
+            "skuId": "649525485784879104",
+            "name": "天府小厨娘麻辣筷子肉",
+            "cover": "/150032890/202511/5745526421255425/649936874160193536.png",
+            "skuName": "950g*10袋",
+            "defaultUnit": "件",
+            "price": 180,
+            "stockQty": 2.5,
+            "stockText": "有货",
+            "tags": ["新品", "冒菜爆品"],
+            "unitOptions": [
+              {
+                "unitName": "袋",
+                "price": 18,
+                "baseUnit": "袋",
+                "rate": 1,
+                "isDefault": false,
+                "stockQty": 25,
+                "stockText": "有货"
+              },
+              {
+                "unitName": "件",
+                "price": 180,
+                "baseUnit": "袋",
+                "rate": 10,
+                "isDefault": true,
+                "stockQty": 2.5,
+                "stockText": "有货"
+              }
+            ],
+            "promotionTexts": ["满299-5", "满1199-10"]
+          },
+          {
+            "spuId": "661152229524418560",
+            "skuId": "661152230338113536",
+            "name": "千米井加碘精制盐(350克)",
+            "cover": "/150032890/202512/51715256945257927/661152082220703744.png",
+            "skuName": "350克*60包",
+            "defaultUnit": "件",
+            "price": 30,
+            "stockQty": 5,
+            "stockText": "有货",
+            "tags": ["新品", "热销"],
+            "unitOptions": [
+              {
+                "unitName": "袋",
+                "price": 0.5,
+                "baseUnit": "袋",
+                "rate": 1,
+                "isDefault": false,
+                "stockQty": 300,
+                "stockText": "有货"
+              },
+              {
+                "unitName": "件",
+                "price": 30,
+                "baseUnit": "袋",
+                "rate": 60,
+                "isDefault": true,
+                "stockQty": 5,
+                "stockText": "有货"
+              }
+            ],
+            "promotionTexts": ["满299-5", "满1199-10"]
+          }
+        ]
+      },
+      {
+        "id": "hot",
+        "title": "热销推荐",
+        "sort": "hot",
+        "pageSize": 9,
+        "contractId": "goods_list_hot",
+        "requestBody": {
+          "pageNum": 1,
+          "pageSize": 9,
+          "sort": -9,
+          "type": 155,
+          "isBuyLogo": true
+        },
+        "products": [
+          {
+            "spuId": "593792488859361280",
+            "skuId": "593792489375260672",
+            "name": "500g芝麻汤圆",
+            "cover": "/150032890/20257/36523291843683869/597432362225274880.jpg",
+            "skuName": "20袋*1件",
+            "defaultUnit": "件",
+            "price": 100,
+            "stockQty": 540.45,
+            "stockText": "有货",
+            "tags": ["热销"],
+            "unitOptions": [
+              {
+                "unitName": "件",
+                "price": 100,
+                "baseUnit": "袋",
+                "rate": 20,
+                "isDefault": true,
+                "stockQty": 540.45,
+                "stockText": "有货"
+              }
+            ],
+            "promotionTexts": ["满299-5", "满1199-10"]
+          },
+          {
+            "spuId": "593442906757525504",
+            "skuId": "593442907130818560",
+            "name": "寄无优精修鸡尾",
+            "cover": "/150032890/20257/35990880899404097/595197818206220288.jpg",
+            "skuName": "1kg*10袋",
+            "defaultUnit": "件",
+            "price": 100,
+            "stockQty": 5.2,
+            "stockText": "有货",
+            "tags": ["热销"],
+            "unitOptions": [
+              {
+                "unitName": "件",
+                "price": 100,
+                "baseUnit": "袋",
+                "rate": 10,
+                "isDefault": true,
+                "stockQty": 5.2,
+                "stockText": "有货"
+              }
+            ],
+            "promotionTexts": ["满299-5", "满1199-10"]
+          },
+          {
+            "spuId": "593845837495398400",
+            "skuId": "593845837956771840",
+            "name": "千味金玉良缘",
+            "cover": "/150032890/20256/35820169752999950/594483494433189888.jpg",
+            "skuName": "280g*20袋",
+            "defaultUnit": "件",
+            "price": 65,
+            "stockQty": 412.35,
+            "stockText": "有货",
+            "tags": ["热销"],
+            "unitOptions": [
+              {
+                "unitName": "袋",
+                "price": 3.5,
+                "baseUnit": "袋",
+                "rate": 1,
+                "isDefault": false,
+                "stockQty": 8247,
+                "stockText": "有货"
+              },
+              {
+                "unitName": "件",
+                "price": 65,
+                "baseUnit": "袋",
+                "rate": 20,
+                "isDefault": true,
+                "stockQty": 412.35,
+                "stockText": "有货"
+              }
+            ],
+            "promotionTexts": ["满299-5", "满1199-10"]
+          },
+          {
+            "spuId": "593745019060502528",
+            "skuId": "593745019484127232",
+            "name": "安井爆浆糍粑",
+            "cover": "/150032890/20256/35758353791752026/594221312277229568.jpg",
+            "skuName": "300g*12袋",
+            "defaultUnit": "件",
+            "price": 45,
+            "stockQty": 224.41,
+            "stockText": "有货",
+            "tags": ["热销"],
+            "unitOptions": [
+              {
+                "unitName": "袋",
+                "price": 4,
+                "baseUnit": "袋",
+                "rate": 1,
+                "isDefault": false,
+                "stockQty": 2693,
+                "stockText": "有货"
+              },
+              {
+                "unitName": "件",
+                "price": 45,
+                "baseUnit": "袋",
+                "rate": 12,
+                "isDefault": true,
+                "stockQty": 224.41,
+                "stockText": "有货"
+              }
+            ],
+            "promotionTexts": ["满299-5", "满1199-10"]
+          },
+          {
+            "spuId": "593826736458653696",
+            "skuId": "593826736844529664",
+            "name": "455g芝麻汤圆",
+            "cover": "/150032890/20256/35749431468286856/594183889337987072.jpg",
+            "skuName": "455g*20袋",
+            "defaultUnit": "件",
+            "price": 80,
+            "stockQty": 554,
+            "stockText": "有货",
+            "tags": ["热销"],
+            "unitOptions": [
+              {
+                "unitName": "件",
+                "price": 80,
+                "baseUnit": "袋",
+                "rate": 20,
+                "isDefault": true,
+                "stockQty": 554,
+                "stockText": "有货"
+              }
+            ],
+            "promotionTexts": ["满299-5", "满1199-10"]
+          }
+        ]
+      }
+    ]
+  }
+}

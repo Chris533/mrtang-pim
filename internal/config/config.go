@@ -1,0 +1,190 @@
+package config
+
+import (
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+type Config struct {
+	App      AppConfig
+	Security SecurityConfig
+	MiniApp  MiniAppConfig
+	Supplier SupplierConfig
+	Image    ImageConfig
+	Workflow WorkflowConfig
+	Vendure  VendureConfig
+}
+
+type AppConfig struct {
+	PublicURL string
+}
+
+type SecurityConfig struct {
+	APIKey string
+}
+
+type MiniAppConfig struct {
+	SourceMode           string
+	SourceURL            string
+	SourceTimeout        time.Duration
+	HomepageSnapshotFile string
+	AuthorizedAccountID  string
+	UserAgent            string
+}
+
+type SupplierConfig struct {
+	Connector string
+	Code      string
+	FilePath  string
+}
+
+type ImageConfig struct {
+	Processor            string
+	WebhookURL           string
+	WebhookToken         string
+	AllowRemoteDownloads bool
+	Timeout              time.Duration
+}
+
+type WorkflowConfig struct {
+	AutoProcessOnIngest bool
+	AutoSyncApproved    bool
+	ProcessBatchSize    int
+	SyncBatchSize       int
+	DefaultStockOnHand  int
+	CronHarvest         string
+	CronProcess         string
+	CronSync            string
+}
+
+type VendureConfig struct {
+	Endpoint        string
+	Token           string
+	Username        string
+	Password        string
+	LanguageCode    string
+	CurrencyCode    string
+	ChannelToken    string
+	RequestTimeout  time.Duration
+	AssetTags       []string
+	ReviewAssetBase string
+}
+
+func Load() Config {
+	return Config{
+		App: AppConfig{
+			PublicURL: getEnv("PIM_PUBLIC_URL", "http://127.0.0.1:8090"),
+		},
+		Security: SecurityConfig{
+			APIKey: strings.TrimSpace(os.Getenv("PIM_API_KEY")),
+		},
+		MiniApp: MiniAppConfig{
+			SourceMode:           getEnv("MINIAPP_SOURCE_MODE", "snapshot"),
+			SourceURL:            strings.TrimSpace(os.Getenv("MINIAPP_SOURCE_URL")),
+			SourceTimeout:        getEnvDuration("MINIAPP_SOURCE_TIMEOUT", 20*time.Second),
+			HomepageSnapshotFile: getEnv("MINIAPP_HOMEPAGE_SNAPSHOT", "./datasets/miniapp_homepage_snapshot.json"),
+			AuthorizedAccountID:  strings.TrimSpace(os.Getenv("MINIAPP_AUTH_ACCOUNT_ID")),
+			UserAgent:            getEnv("MINIAPP_USER_AGENT", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.53(0x18003537) NetType/WIFI Language/zh_CN miniProgram"),
+		},
+		Supplier: SupplierConfig{
+			Connector: getEnv("SUPPLIER_CONNECTOR", "file"),
+			Code:      getEnv("SUPPLIER_CODE", "SUP_A"),
+			FilePath:  getEnv("SUPPLIER_FILE", "./datasets/mock_supplier_products.json"),
+		},
+		Image: ImageConfig{
+			Processor:            getEnv("IMAGE_PROCESSOR", "mock"),
+			WebhookURL:           strings.TrimSpace(os.Getenv("IMAGE_WEBHOOK_URL")),
+			WebhookToken:         strings.TrimSpace(os.Getenv("IMAGE_WEBHOOK_TOKEN")),
+			AllowRemoteDownloads: getEnvBool("ALLOW_REMOTE_IMAGE_DOWNLOADS", true),
+			Timeout:              getEnvDuration("IMAGE_TIMEOUT", 45*time.Second),
+		},
+		Workflow: WorkflowConfig{
+			AutoProcessOnIngest: getEnvBool("AUTO_PROCESS_ON_INGEST", true),
+			AutoSyncApproved:    getEnvBool("AUTO_SYNC_APPROVED", false),
+			ProcessBatchSize:    getEnvInt("PROCESS_BATCH_SIZE", 20),
+			SyncBatchSize:       getEnvInt("SYNC_BATCH_SIZE", 20),
+			DefaultStockOnHand:  getEnvInt("DEFAULT_STOCK_ON_HAND", 100),
+			CronHarvest:         getEnv("CRON_HARVEST", "0 */6 * * *"),
+			CronProcess:         getEnv("CRON_PROCESS", "*/10 * * * *"),
+			CronSync:            getEnv("CRON_SYNC", "*/15 * * * *"),
+		},
+		Vendure: VendureConfig{
+			Endpoint:        getEnv("VENDURE_ADMIN_API", "http://127.0.0.1:26227/admin-api"),
+			Token:           strings.TrimSpace(os.Getenv("VENDURE_ADMIN_TOKEN")),
+			Username:        strings.TrimSpace(os.Getenv("VENDURE_ADMIN_USERNAME")),
+			Password:        strings.TrimSpace(os.Getenv("VENDURE_ADMIN_PASSWORD")),
+			LanguageCode:    getEnv("VENDURE_LANGUAGE_CODE", "zh_Hans"),
+			CurrencyCode:    getEnv("VENDURE_CURRENCY_CODE", "CNY"),
+			ChannelToken:    strings.TrimSpace(os.Getenv("VENDURE_CHANNEL_TOKEN")),
+			RequestTimeout:  getEnvDuration("VENDURE_TIMEOUT", 30*time.Second),
+			AssetTags:       splitCSV(getEnv("VENDURE_ASSET_TAGS", "pim,supplier")),
+			ReviewAssetBase: getEnv("PIM_PUBLIC_URL", "http://127.0.0.1:8090"),
+		},
+	}
+}
+
+func getEnv(key string, fallback string) string {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+
+	return value
+}
+
+func getEnvInt(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+
+	return value
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return fallback
+	}
+
+	return value
+}
+
+func getEnvDuration(key string, fallback time.Duration) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+
+	value, err := time.ParseDuration(raw)
+	if err != nil {
+		return fallback
+	}
+
+	return value
+}
+
+func splitCSV(value string) []string {
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			result = append(result, part)
+		}
+	}
+
+	return result
+}

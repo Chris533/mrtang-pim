@@ -1,0 +1,38 @@
+[
+  {
+    "supplier_code": "SUP_A",
+    "original_sku": "SKU-1001",
+    "raw_title": "谷饲肥牛卷 500g",
+    "raw_description": "带轻微水印的供应商原始标题与描述，用于模拟采集数据。",
+    "raw_category": "冷冻肉类-肥牛",
+    "raw_image_url": "https://example.com/images/sku-1001.jpg",
+    "cost_price": 36.5,
+    "b_price": 45,
+    "c_price": 59.9,
+    "currency_code": "CNY",
+    "supplier_updated_at": "2026-03-15T00:00:00Z",
+    "payload": {
+      "sales_unit": "盒",
+      "need_cold_chain": true,
+      "origin": "澳洲"
+    }
+  },
+  {
+    "supplier_code": "SUP_A",
+    "original_sku": "SKU-1002",
+    "raw_title": "手打潮汕牛肉丸 250g",
+    "raw_description": "适合火锅、烧烤和团餐渠道的标准化单品。",
+    "raw_category": "冷冻肉类-丸滑",
+    "raw_image_url": "https://example.com/images/sku-1002.jpg",
+    "cost_price": 18.3,
+    "b_price": 24,
+    "c_price": 32.8,
+    "currency_code": "CNY",
+    "supplier_updated_at": "2026-03-15T00:00:00Z",
+    "payload": {
+      "sales_unit": "袋",
+      "need_cold_chain": true,
+      "origin": "广东"
+    }
+  }
+]
