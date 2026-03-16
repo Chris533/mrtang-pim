@@ -1,0 +1,214 @@
+[
+    {
+        "id": "product_page_info",
+        "name": "Product Page Info",
+        "method": "GET",
+        "originalPath": "/gateway/goodsservice/api/v1/wx/goods/info",
+        "localPath": "/api/miniapp/product-page/detail",
+        "role": "Product detail base information, carousel and form fields",
+        "request": {
+            "queryKeys": [
+                "spuId",
+                "skuId",
+                "unitId",
+                "isAdaptKeywords"
+            ]
+        },
+        "responseKeys": [
+            "spuId",
+            "skuId",
+            "name",
+            "skuName",
+            "carouselList",
+            "formFieldList"
+        ],
+        "tags": [
+            "product-page",
+            "detail"
+        ]
+    },
+    {
+        "id": "product_page_price_list",
+        "name": "Product Page Price List",
+        "method": "POST",
+        "originalPath": "/gateway/goodsservice/api/v1/wx/price/list",
+        "localPath": "/api/miniapp/product-page/pricing",
+        "role": "Default unit price list for the selected sku",
+        "request": {
+            "bodyKeys": [
+                "goodsShowProducedDate",
+                "levelId",
+                "promotionId",
+                "activityType",
+                "skuUnitList"
+            ]
+        },
+        "responseKeys": [
+            "skuId",
+            "unitId",
+            "discountAfterPrice",
+            "promotionList"
+        ],
+        "tags": [
+            "product-page",
+            "pricing"
+        ]
+    },
+    {
+        "id": "product_page_price_stock_default",
+        "name": "Product Page Price Stock Default",
+        "method": "POST",
+        "originalPath": "/gateway/goodsservice/api/v1/wx/goods/sku/price_stock",
+        "localPath": "/api/miniapp/product-page/pricing",
+        "role": "Default unit price and stock supplement after the price list request",
+        "request": {
+            "bodyKeys": [
+                "goodsShowProducedDate",
+                "goodsPriceType",
+                "promotionId",
+                "warehouseId",
+                "itemList",
+                "levelId",
+                "showAvailable"
+            ]
+        },
+        "responseKeys": [
+            "skuId",
+            "unitId",
+            "discountAfterPrice",
+            "qty",
+            "stockList"
+        ],
+        "tags": [
+            "product-page",
+            "pricing",
+            "stock"
+        ]
+    },
+    {
+        "id": "product_page_package",
+        "name": "Product Page Discount Package",
+        "method": "POST",
+        "originalPath": "/gateway/goodsservice/api/v1/goods/get_sku_relation_discounts_package",
+        "localPath": "/api/miniapp/product-page/package",
+        "role": "Product-related package and discount recommendations",
+        "request": {
+            "bodyKeys": [
+                "skuId",
+                "spuId",
+                "wantNum",
+                "pageNum",
+                "pageSize",
+                "ignoreRange",
+                "statusList",
+                "from"
+            ]
+        },
+        "responseKeys": [
+            "pageNum",
+            "pageSize",
+            "total",
+            "pages",
+            "list"
+        ],
+        "tags": [
+            "product-page",
+            "package"
+        ]
+    },
+    {
+        "id": "product_page_cart_total_num",
+        "name": "Product Page Cart Total Num",
+        "method": "GET",
+        "originalPath": "/gateway/goodsservice/api/v1/wx/cart/get_cart_tot_num",
+        "localPath": "/api/miniapp/product-page/context",
+        "role": "Cart badge snapshot used by the product page header",
+        "request": {
+            "queryKeys": [
+                "needAllUnit"
+            ]
+        },
+        "responseKeys": [
+            "data"
+        ],
+        "tags": [
+            "product-page",
+            "context",
+            "cart"
+        ]
+    },
+    {
+        "id": "product_page_cart_choose",
+        "name": "Product Page Cart Choose",
+        "method": "GET",
+        "originalPath": "/gateway/goodsservice/api/v1/wx/cart/choose/{skuId}",
+        "localPath": "/api/miniapp/product-page/context",
+        "role": "Product page unit selection and ordering context",
+        "request": {
+            "queryKeys": []
+        },
+        "responseKeys": [
+            "defaultUnitId",
+            "style",
+            "goodsCartCompose",
+            "extInfoVO"
+        ],
+        "tags": [
+            "product-page",
+            "context",
+            "cart"
+        ]
+    },
+    {
+        "id": "product_page_price_stock_multi_unit",
+        "name": "Product Page Price Stock Multi Unit",
+        "method": "POST",
+        "originalPath": "/gateway/goodsservice/api/v1/wx/goods/sku/price_stock",
+        "localPath": "/api/miniapp/product-page/pricing",
+        "role": "Multi-unit price and stock supplement after cart choose",
+        "request": {
+            "bodyKeys": [
+                "goodsShowProducedDate",
+                "itemList",
+                "goodsPriceType",
+                "promotionId",
+                "extInfoVO",
+                "levelId",
+                "showAvailable"
+            ]
+        },
+        "responseKeys": [
+            "skuId",
+            "unitId",
+            "discountAfterPrice",
+            "qty",
+            "stockList"
+        ],
+        "tags": [
+            "product-page",
+            "pricing",
+            "stock"
+        ]
+    },
+    {
+        "id": "product_page_add_cart_total",
+        "name": "Product Page Add Cart Total",
+        "method": "GET",
+        "originalPath": "/gateway/goodsservice/api/v1/wx/cart/get_add_cart_tot",
+        "localPath": "/api/miniapp/product-page/context",
+        "role": "Current product add-to-cart summary",
+        "request": {
+            "queryKeys": [
+                "spuId"
+            ]
+        },
+        "responseKeys": [
+            "data"
+        ],
+        "tags": [
+            "product-page",
+            "context",
+            "cart"
+        ]
+    }
+]

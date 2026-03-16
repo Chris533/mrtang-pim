@@ -1,0 +1,201 @@
+{
+    "id":  "661152229524418560_661152230338113536",
+    "spuId":  "661152229524418560",
+    "skuId":  "661152230338113536",
+    "sourceType":  "list_skeleton",
+    "sourceSections":  [
+                           "new"
+                       ],
+    "summary":  {
+                    "productId":  "661152229524418560_661152230338113536",
+                    "spuId":  "661152229524418560",
+                    "skuId":  "661152230338113536",
+                    "name":  "千米井加碘精制盐(350克)",
+                    "cover":  "/150032890/202512/51715256945257927/661152082220703744.png",
+                    "skuName":  "350克*60包",
+                    "defaultUnit":  "件",
+                    "price":  30,
+                    "stockQty":  5,
+                    "stockText":  "有货",
+                    "tags":  [
+                                 "新品",
+                                 "热销"
+                             ],
+                    "unitOptions":  [
+                                        {
+                                            "unitName":  "袋",
+                                            "price":  0.5,
+                                            "baseUnit":  "袋",
+                                            "rate":  1,
+                                            "isDefault":  false,
+                                            "stockQty":  300,
+                                            "stockText":  "有货"
+                                        },
+                                        {
+                                            "unitName":  "件",
+                                            "price":  30,
+                                            "baseUnit":  "袋",
+                                            "rate":  60,
+                                            "isDefault":  true,
+                                            "stockQty":  5,
+                                            "stockText":  "有货"
+                                        }
+                                    ],
+                    "promotionTexts":  [
+                                           "满299-5",
+                                           "满1199-10"
+                                       ]
+                },
+    "detail":  {
+                   "contractId":  "product_page_info",
+                   "requestQuery":  {
+                                        "spuId":  "661152229524418560",
+                                        "skuId":  "661152230338113536",
+                                        "unitId":  "",
+                                        "isAdaptKeywords":  false
+                                    },
+                   "code":  "",
+                   "barCode":  "",
+                   "name":  "千米井加碘精制盐(350克)",
+                   "skuName":  "350克*60包",
+                   "defaultUnitId":  "",
+                   "baseUnitId":  "",
+                   "defaultUnit":  "件",
+                   "hasCollect":  false,
+                   "cartNum":  0,
+                   "carousel":  [
+                                    {
+                                        "imageUrl":  "/150032890/202512/51715256945257927/661152082220703744.png",
+                                        "type":  1
+                                    }
+                                ],
+                   "detailAssets":  [
+
+                                    ],
+                   "forbidOutStockOrder":  false,
+                   "detailPageShowType":  0,
+                   "configRecommend":  0,
+                   "formFields":  [
+
+                                  ],
+                   "tagInfo":  [
+
+                               ]
+               },
+    "pricing":  {
+                    "priceListContractId":  "product_page_price_list",
+                    "priceListRequestBody":  {
+
+                                             },
+                    "defaultStockContractId":  "product_page_price_stock_default",
+                    "defaultStockRequestBody":  {
+
+                                                },
+                    "multiUnitStockContractId":  "product_page_price_stock_multi_unit",
+                    "multiUnitStockRequestBody":  {
+
+                                                  },
+                    "defaultUnit":  "件",
+                    "defaultPrice":  30,
+                    "defaultStockQty":  5,
+                    "defaultStockText":  "有货",
+                    "unitOptions":  [
+                                        {
+                                            "unitName":  "袋",
+                                            "price":  0.5,
+                                            "baseUnit":  "袋",
+                                            "rate":  1,
+                                            "isDefault":  false,
+                                            "stockQty":  300,
+                                            "stockText":  "有货"
+                                        },
+                                        {
+                                            "unitName":  "件",
+                                            "price":  30,
+                                            "baseUnit":  "袋",
+                                            "rate":  60,
+                                            "isDefault":  true,
+                                            "stockQty":  5,
+                                            "stockText":  "有货"
+                                        }
+                                    ],
+                    "promotionTexts":  [
+                                           "满299-5",
+                                           "满1199-10"
+                                       ]
+                },
+    "package":  {
+                    "contractId":  "product_page_package",
+                    "requestBody":  {
+                                        "skuId":  "661152230338113536",
+                                        "spuId":  "661152229524418560",
+                                        "wantNum":  1,
+                                        "pageNum":  1,
+                                        "pageSize":  20,
+                                        "ignoreRange":  true,
+                                        "statusList":  [
+                                                           0,
+                                                           1
+                                                       ],
+                                        "from":  "wx"
+                                    },
+                    "pageNum":  1,
+                    "pageSize":  0,
+                    "total":  0,
+                    "pages":  0,
+                    "relatedItems":  [
+
+                                     ]
+                },
+    "context":  {
+                    "cartSummaryContractId":  "product_page_cart_total_num",
+                    "cartSummaryQuery":  {
+                                             "needAllUnit":  true
+                                         },
+                    "cartSummary":  [
+
+                                    ],
+                    "cartChooseContractId":  "product_page_cart_choose",
+                    "cartChoosePath":  "/gateway/goodsservice/api/v1/wx/cart/choose/661152230338113536",
+                    "addCartContractId":  "product_page_add_cart_total",
+                    "addCartQuery":  {
+                                         "spuId":  "661152229524418560"
+                                     },
+                    "addCartSummary":  [
+
+                                       ],
+                    "defaultUnitId":  "",
+                    "style":  0,
+                    "unitOptions":  [
+                                        {
+                                            "unitId":  "",
+                                            "unitName":  "袋",
+                                            "rate":  1,
+                                            "isBase":  true,
+                                            "isDefault":  false,
+                                            "allowOrder":  true,
+                                            "minOrderQty":  0,
+                                            "maxOrderQty":  0
+                                        },
+                                        {
+                                            "unitId":  "",
+                                            "unitName":  "件",
+                                            "rate":  60,
+                                            "isBase":  false,
+                                            "isDefault":  true,
+                                            "allowOrder":  true,
+                                            "minOrderQty":  0,
+                                            "maxOrderQty":  0
+                                        }
+                                    ],
+                    "settings":  {
+                                     "currencySymbol":  "",
+                                     "pricePrecision":  0,
+                                     "qtyPrecision":  0,
+                                     "enableMinimumQty":  false,
+                                     "forbidOutStockOrder":  false,
+                                     "showBookQty":  false,
+                                     "showStockQty":  false
+                                 }
+                }
+}

@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/joho/godotenv"
@@ -83,6 +84,29 @@ func main() {
 			return re.JSON(http.StatusOK, map[string]any{
 				"meta":      dataset.Meta,
 				"contracts": filterContractsByPrefix(dataset.Contracts, "/api/miniapp/category-page"),
+				"clientConfig": map[string]any{
+					"sourceMode":        cfg.MiniApp.SourceMode,
+					"sourceURL":         cfg.MiniApp.SourceURL,
+					"userAgent":         cfg.MiniApp.UserAgent,
+					"authHeader":        "Authorization: Bearer <authorized-account-id>",
+					"authorizationMode": miniAppAuthorizationMode(cfg),
+				},
+			})
+		})
+
+		se.Router.GET("/api/miniapp/contracts/product-page", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			dataset, err := miniappService.Dataset(re.Request.Context())
+			if err != nil {
+				return re.InternalServerError("load miniapp product-page contracts failed", err)
+			}
+
+			return re.JSON(http.StatusOK, map[string]any{
+				"meta":      dataset.Meta,
+				"contracts": filterContractsByPrefix(dataset.Contracts, "/api/miniapp/product-page"),
 				"clientConfig": map[string]any{
 					"sourceMode":        cfg.MiniApp.SourceMode,
 					"sourceURL":         cfg.MiniApp.SourceURL,
@@ -267,6 +291,182 @@ func main() {
 			return re.JSON(http.StatusOK, section)
 		})
 
+		se.Router.GET("/api/miniapp/product-page", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			productPage, err := miniappService.ProductPage(re.Request.Context())
+			if err != nil {
+				return re.InternalServerError("load miniapp product page failed", err)
+			}
+
+			return re.JSON(http.StatusOK, productPage)
+		})
+
+		se.Router.GET("/api/miniapp/product-page/product", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			productID := miniAppProductID(re)
+			if productID == "" {
+				return re.BadRequestError("missing product id", nil)
+			}
+
+			product, err := miniappService.Product(re.Request.Context(), productID)
+			if err != nil {
+				return re.InternalServerError("load miniapp product failed", err)
+			}
+
+			if product == nil {
+				return re.NotFoundError("product not found", nil)
+			}
+
+			return re.JSON(http.StatusOK, product)
+		})
+
+		se.Router.GET("/api/miniapp/product-page/detail", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			productID := miniAppProductID(re)
+			if productID == "" {
+				return re.BadRequestError("missing product id", nil)
+			}
+
+			product, err := miniappService.Product(re.Request.Context(), productID)
+			if err != nil {
+				return re.InternalServerError("load miniapp product detail failed", err)
+			}
+
+			if product == nil {
+				return re.NotFoundError("product not found", nil)
+			}
+
+			return re.JSON(http.StatusOK, product.Detail)
+		})
+
+		se.Router.GET("/api/miniapp/product-page/pricing", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			productID := miniAppProductID(re)
+			if productID == "" {
+				return re.BadRequestError("missing product id", nil)
+			}
+
+			product, err := miniappService.Product(re.Request.Context(), productID)
+			if err != nil {
+				return re.InternalServerError("load miniapp product pricing failed", err)
+			}
+
+			if product == nil {
+				return re.NotFoundError("product not found", nil)
+			}
+
+			return re.JSON(http.StatusOK, product.Pricing)
+		})
+
+		se.Router.GET("/api/miniapp/product-page/package", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			productID := miniAppProductID(re)
+			if productID == "" {
+				return re.BadRequestError("missing product id", nil)
+			}
+
+			product, err := miniappService.Product(re.Request.Context(), productID)
+			if err != nil {
+				return re.InternalServerError("load miniapp product package failed", err)
+			}
+
+			if product == nil {
+				return re.NotFoundError("product not found", nil)
+			}
+
+			return re.JSON(http.StatusOK, product.Package)
+		})
+
+		se.Router.GET("/api/miniapp/product-page/context", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			productID := miniAppProductID(re)
+			if productID == "" {
+				return re.BadRequestError("missing product id", nil)
+			}
+
+			product, err := miniappService.Product(re.Request.Context(), productID)
+			if err != nil {
+				return re.InternalServerError("load miniapp product context failed", err)
+			}
+
+			if product == nil {
+				return re.NotFoundError("product not found", nil)
+			}
+
+			return re.JSON(http.StatusOK, product.Context)
+		})
+
+		se.Router.GET("/api/miniapp/product-page/coverage", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			coverage, err := miniappService.ProductCoverage(re.Request.Context())
+			if err != nil {
+				return re.InternalServerError("load miniapp product coverage failed", err)
+			}
+
+			priority := strings.TrimSpace(re.Request.URL.Query().Get("priority"))
+			if priority != "" {
+				filtered := make([]miniappmodel.ProductCoverage, 0, len(coverage))
+				for _, item := range coverage {
+					if strings.EqualFold(item.Priority, priority) {
+						filtered = append(filtered, item)
+					}
+				}
+				coverage = filtered
+			}
+
+			return re.JSON(http.StatusOK, coverage)
+		})
+
+		se.Router.GET("/api/miniapp/product-page/coverage-summary", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			summary, err := miniappService.ProductCoverageSummary(re.Request.Context())
+			if err != nil {
+				return re.InternalServerError("load miniapp product coverage summary failed", err)
+			}
+
+			priority := strings.TrimSpace(re.Request.URL.Query().Get("priority"))
+			if priority != "" {
+				filteredBuckets := make([]miniappmodel.ProductCoverageBucket, 0, len(summary.ByPriority))
+				for _, bucket := range summary.ByPriority {
+					if strings.EqualFold(bucket.Priority, priority) {
+						filteredBuckets = append(filteredBuckets, bucket)
+					}
+				}
+				summary.ByPriority = filteredBuckets
+				if !slices.ContainsFunc(summary.FirstBatch, func(item miniappmodel.ProductCoverage) bool {
+					return strings.EqualFold(item.Priority, priority)
+				}) {
+					summary.FirstBatch = nil
+				}
+			}
+
+			return re.JSON(http.StatusOK, summary)
+		})
+
 		se.Router.POST("/api/pim/harvest", func(re *core.RequestEvent) error {
 			if !authorized(re, cfg.Security.APIKey) {
 				return re.UnauthorizedError("missing or invalid api key", nil)
@@ -438,6 +638,21 @@ func filterContractsByPrefix(contracts []miniappmodel.Contract, prefix string) [
 	return filtered
 }
 
+func miniAppProductID(re *core.RequestEvent) string {
+	query := re.Request.URL.Query()
+	if id := strings.TrimSpace(query.Get("id")); id != "" {
+		return id
+	}
+
+	spuID := strings.TrimSpace(query.Get("spuId"))
+	skuID := strings.TrimSpace(query.Get("skuId"))
+	if spuID == "" || skuID == "" {
+		return ""
+	}
+
+	return spuID + "_" + skuID
+}
+
 func newMiniAppSource(cfg config.Config) miniappapi.Source {
 	if strings.EqualFold(strings.TrimSpace(cfg.MiniApp.SourceMode), "http") {
 		return miniappapi.NewHTTPSource(miniappapi.HTTPSourceConfig{
@@ -451,6 +666,7 @@ func newMiniAppSource(cfg config.Config) miniappapi.Source {
 	return miniappapi.NewSnapshotSource(
 		cfg.MiniApp.HomepageSnapshotFile,
 		cfg.MiniApp.CategorySnapshotFile,
+		cfg.MiniApp.ProductSnapshotFile,
 	)
 }
 

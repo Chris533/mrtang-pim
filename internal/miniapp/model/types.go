@@ -5,6 +5,7 @@ type Dataset struct {
 	Contracts    []Contract            `json:"contracts"`
 	Homepage     HomepageAggregate     `json:"homepage"`
 	CategoryPage CategoryPageAggregate `json:"categoryPage"`
+	ProductPage  ProductPageAggregate  `json:"productPage"`
 }
 
 type Meta struct {
@@ -132,6 +133,7 @@ type HomepageSection struct {
 }
 
 type HomepageProduct struct {
+	ProductID      string       `json:"productId,omitempty"`
 	SpuID          string       `json:"spuId"`
 	SkuID          string       `json:"skuId"`
 	Name           string       `json:"name"`
@@ -190,4 +192,152 @@ type CategorySection struct {
 	CategoryPath string            `json:"categoryPath"`
 	RequestBody  map[string]any    `json:"requestBody"`
 	Products     []HomepageProduct `json:"products"`
+}
+
+type ProductPageAggregate struct {
+	Products []ProductPage `json:"products"`
+}
+
+type ProductCoverage struct {
+	ProductID      string   `json:"productId"`
+	SpuID          string   `json:"spuId"`
+	SkuID          string   `json:"skuId"`
+	Name           string   `json:"name"`
+	SourceType     string   `json:"sourceType"`
+	SourceSections []string `json:"sourceSections"`
+	UnitCount      int      `json:"unitCount"`
+	HasMultiUnit   bool     `json:"hasMultiUnit"`
+	Priority       string   `json:"priority"`
+}
+
+type ProductCoverageBucket struct {
+	Priority string            `json:"priority"`
+	Count    int               `json:"count"`
+	Items    []ProductCoverage `json:"items"`
+}
+
+type ProductCoverageSummary struct {
+	TotalProducts  int                     `json:"totalProducts"`
+	MultiUnitTotal int                     `json:"multiUnitTotal"`
+	ByPriority     []ProductCoverageBucket `json:"byPriority"`
+	FirstBatch     []ProductCoverage       `json:"firstBatch"`
+}
+
+type ProductPage struct {
+	ID             string          `json:"id"`
+	SpuID          string          `json:"spuId"`
+	SkuID          string          `json:"skuId"`
+	SourceType     string          `json:"sourceType"`
+	SourceSections []string        `json:"sourceSections,omitempty"`
+	Summary        HomepageProduct `json:"summary"`
+	Detail         ProductDetail   `json:"detail"`
+	Pricing        ProductPricing  `json:"pricing"`
+	Package        ProductPackage  `json:"package"`
+	Context        ProductContext  `json:"context"`
+}
+
+type ProductDetail struct {
+	ContractID          string             `json:"contractId"`
+	RequestQuery        map[string]any     `json:"requestQuery"`
+	Code                string             `json:"code"`
+	BarCode             string             `json:"barCode"`
+	Name                string             `json:"name"`
+	SkuName             string             `json:"skuName"`
+	DefaultUnitID       string             `json:"defaultUnitId"`
+	BaseUnitID          string             `json:"baseUnitId"`
+	DefaultUnit         string             `json:"defaultUnit"`
+	HasCollect          bool               `json:"hasCollect"`
+	CartNum             float64            `json:"cartNum"`
+	Carousel            []ProductMedia     `json:"carousel"`
+	DetailAssets        []ProductMedia     `json:"detailAssets"`
+	DetailTexts         []string           `json:"detailTexts"`
+	ForbidOutStockOrder bool               `json:"forbidOutStockOrder"`
+	DetailPageShowType  int                `json:"detailPageShowType"`
+	ConfigRecommend     int                `json:"configRecommend"`
+	FormFields          []ProductFormField `json:"formFields"`
+	TagInfo             []string           `json:"tagInfo"`
+}
+
+type ProductMedia struct {
+	ImageURL string `json:"imageUrl,omitempty"`
+	VideoURL string `json:"videoUrl,omitempty"`
+	Type     int    `json:"type"`
+}
+
+type ProductFormField struct {
+	ID           string `json:"id"`
+	FieldName    string `json:"fieldName"`
+	SystemName   string `json:"systemName"`
+	Limit        int    `json:"limit"`
+	ValueType    int    `json:"valueType"`
+	DefaultValue string `json:"defaultValue"`
+	Value        string `json:"value"`
+}
+
+type ProductPricing struct {
+	PriceListContractID       string         `json:"priceListContractId"`
+	PriceListRequestBody      map[string]any `json:"priceListRequestBody"`
+	DefaultStockContractID    string         `json:"defaultStockContractId"`
+	DefaultStockRequestBody   map[string]any `json:"defaultStockRequestBody"`
+	MultiUnitStockContractID  string         `json:"multiUnitStockContractId"`
+	MultiUnitStockRequestBody map[string]any `json:"multiUnitStockRequestBody"`
+	DefaultUnit               string         `json:"defaultUnit"`
+	DefaultPrice              float64        `json:"defaultPrice"`
+	DefaultStockQty           float64        `json:"defaultStockQty"`
+	DefaultStockText          string         `json:"defaultStockText"`
+	UnitOptions               []UnitOption   `json:"unitOptions"`
+	PromotionTexts            []string       `json:"promotionTexts"`
+}
+
+type ProductPackage struct {
+	ContractID   string               `json:"contractId"`
+	RequestBody  map[string]any       `json:"requestBody"`
+	PageNum      int                  `json:"pageNum"`
+	PageSize     int                  `json:"pageSize"`
+	Total        int                  `json:"total"`
+	Pages        int                  `json:"pages"`
+	RelatedItems []ProductPackageItem `json:"relatedItems"`
+}
+
+type ProductPackageItem struct {
+	SpuID       string `json:"spuId"`
+	SkuID       string `json:"skuId"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+type ProductContext struct {
+	CartSummaryContractID string                 `json:"cartSummaryContractId"`
+	CartSummaryQuery      map[string]any         `json:"cartSummaryQuery"`
+	CartSummary           []any                  `json:"cartSummary"`
+	CartChooseContractID  string                 `json:"cartChooseContractId"`
+	CartChoosePath        string                 `json:"cartChoosePath"`
+	AddCartContractID     string                 `json:"addCartContractId"`
+	AddCartQuery          map[string]any         `json:"addCartQuery"`
+	AddCartSummary        []any                  `json:"addCartSummary"`
+	DefaultUnitID         string                 `json:"defaultUnitId"`
+	Style                 int                    `json:"style"`
+	UnitOptions           []ProductOrderUnit     `json:"unitOptions"`
+	Settings              ProductContextSettings `json:"settings"`
+}
+
+type ProductOrderUnit struct {
+	UnitID      string  `json:"unitId"`
+	UnitName    string  `json:"unitName"`
+	Rate        float64 `json:"rate"`
+	IsBase      bool    `json:"isBase"`
+	IsDefault   bool    `json:"isDefault"`
+	AllowOrder  bool    `json:"allowOrder"`
+	MinOrderQty float64 `json:"minOrderQty"`
+	MaxOrderQty float64 `json:"maxOrderQty"`
+}
+
+type ProductContextSettings struct {
+	CurrencySymbol      string `json:"currencySymbol"`
+	PricePrecision      int    `json:"pricePrecision"`
+	QtyPrecision        int    `json:"qtyPrecision"`
+	EnableMinimumQty    bool   `json:"enableMinimumQty"`
+	ForbidOutStockOrder bool   `json:"forbidOutStockOrder"`
+	ShowBookQty         bool   `json:"showBookQty"`
+	ShowStockQty        bool   `json:"showStockQty"`
 }

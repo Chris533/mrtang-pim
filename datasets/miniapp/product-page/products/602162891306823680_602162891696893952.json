@@ -1,0 +1,284 @@
+{
+    "id":  "602162891306823680_602162891696893952",
+    "spuId":  "602162891306823680",
+    "skuId":  "602162891696893952",
+    "sourceType":  "rr_detail",
+    "sourceSections":  [
+
+                       ],
+    "summary":  {
+                    "productId":  "602162891306823680_602162891696893952",
+                    "spuId":  "602162891306823680",
+                    "skuId":  "602162891696893952",
+                    "name":  "思念脆皮烤肠（原味）",
+                    "cover":  "/150032890/20257/17191899274623916/602183285195612160.jpg",
+                    "skuName":  "500G*20袋",
+                    "defaultUnit":  "件",
+                    "price":  130,
+                    "stockQty":  7,
+                    "stockText":  "有货",
+                    "tags":  [
+                                 "热销"
+                             ],
+                    "unitOptions":  [
+                                        {
+                                            "unitName":  "袋",
+                                            "price":  7,
+                                            "baseUnit":  "袋",
+                                            "rate":  1,
+                                            "isDefault":  false,
+                                            "stockQty":  140,
+                                            "stockText":  "有货"
+                                        },
+                                        {
+                                            "unitName":  "件",
+                                            "price":  130,
+                                            "baseUnit":  "袋",
+                                            "rate":  20,
+                                            "isDefault":  true,
+                                            "stockQty":  7,
+                                            "stockText":  "有货"
+                                        }
+                                    ],
+                    "promotionTexts":  [
+                                           "满299-5",
+                                           "满1199-10"
+                                       ]
+                },
+    "detail":  {
+                   "contractId":  "product_page_info",
+                   "requestQuery":  {
+                                        "spuId":  "602162891306823680",
+                                        "skuId":  "602162891696893952",
+                                        "unitId":  "",
+                                        "isAdaptKeywords":  false
+                                    },
+                   "code":  "",
+                   "barCode":  "",
+                   "name":  "思念脆皮烤肠（原味）",
+                   "skuName":  "500G*20袋",
+                   "defaultUnitId":  "592750618481872899",
+                   "baseUnitId":  "592761609374539776",
+                   "defaultUnit":  "件",
+                   "hasCollect":  false,
+                   "cartNum":  1.04,
+                   "carousel":  [
+                                    {
+                                        "imageUrl":  "/150032890/20257/17191899274623916/602183285195612160.jpg",
+                                        "type":  1
+                                    },
+                                    {
+                                        "imageUrl":  "/150032890/20257/37655945945066304/602183297858220032.jpg",
+                                        "type":  1
+                                    },
+                                    {
+                                        "imageUrl":  "/150032890/20257/37651065489981126/602162827746291712.jpg",
+                                        "type":  1
+                                    },
+                                    {
+                                        "imageUrl":  "/150032890/20258/39717861213531916/610829906647998464.jpg",
+                                        "type":  1
+                                    },
+                                    {
+                                        "imageUrl":  "/150032890/20259/42213031484101383/621296859960782848.jpg",
+                                        "type":  1
+                                    }
+                                ],
+                   "detailAssets":  [
+
+                                    ],
+                   "detailTexts":  [
+                                       "原味脆皮烤肠：一口爆汁的焦香肉感暴击",
+                                       "销售渠道：",
+                                       "1.商超 / 便利店",
+                                       "2.早餐店、麻辣烫店、烧烤摊",
+                                       "3.市集 / 展会",
+                                       "4.企业 / 学校食堂等",
+                                       ".烹饪方式:",
+                                       "1.煎制",
+                                       "2.烤",
+                                       "3.油炸等"
+                                   ],
+                   "forbidOutStockOrder":  true,
+                   "detailPageShowType":  2,
+                   "configRecommend":  0,
+                   "formFields":  [
+                                      {
+                                          "id":  "592750626019037184",
+                                          "fieldName":  "商品备注",
+                                          "systemName":  "商品备注",
+                                          "limit":  15,
+                                          "valueType":  1,
+                                          "defaultValue":  "",
+                                          "value":  ""
+                                      }
+                                  ],
+                   "tagInfo":  [
+                                   "热销"
+                               ]
+               },
+    "pricing":  {
+                    "priceListContractId":  "product_page_price_list",
+                    "priceListRequestBody":  {
+                                                 "goodsShowProducedDate":  false,
+                                                 "levelId":  null,
+                                                 "promotionId":  0,
+                                                 "activityType":  7,
+                                                 "skuUnitList":  [
+                                                                     {
+                                                                         "qty":  null,
+                                                                         "skuId":  "602162891696893952",
+                                                                         "spuId":  "602162891306823680",
+                                                                         "unitId":  "592750618481872899"
+                                                                     }
+                                                                 ]
+                                             },
+                    "defaultStockContractId":  "product_page_price_stock_default",
+                    "defaultStockRequestBody":  {
+                                                    "goodsShowProducedDate":  false,
+                                                    "goodsPriceType":  16,
+                                                    "promotionId":  0,
+                                                    "warehouseId":  0,
+                                                    "itemList":  [
+                                                                     {
+                                                                         "queryStock":  true,
+                                                                         "skuId":  "602162891696893952",
+                                                                         "spuId":  "602162891306823680",
+                                                                         "unitId":  "592750618481872899",
+                                                                         "warehouseId":  0
+                                                                     }
+                                                                 ],
+                                                    "levelId":  null,
+                                                    "showAvailable":  false
+                                                },
+                    "multiUnitStockContractId":  "product_page_price_stock_multi_unit",
+                    "multiUnitStockRequestBody":  {
+                                                      "goodsShowProducedDate":  false,
+                                                      "itemList":  [
+                                                                       {
+                                                                           "unitId":  "592761609374539776",
+                                                                           "skuId":  "602162891696893952",
+                                                                           "spuId":  "602162891306823680",
+                                                                           "queryStock":  true,
+                                                                           "warehouseId":  0
+                                                                       },
+                                                                       {
+                                                                           "unitId":  "592750618481872899",
+                                                                           "skuId":  "602162891696893952",
+                                                                           "spuId":  "602162891306823680",
+                                                                           "queryStock":  true,
+                                                                           "warehouseId":  0
+                                                                       }
+                                                                   ],
+                                                      "goodsPriceType":  16,
+                                                      "promotionId":  0,
+                                                      "extInfoVO":  {
+                                                                        "defaultUnitId":  "592750618481872899"
+                                                                    },
+                                                      "levelId":  null,
+                                                      "showAvailable":  false
+                                                  },
+                    "defaultUnit":  "件",
+                    "defaultPrice":  130,
+                    "defaultStockQty":  7,
+                    "defaultStockText":  "有货",
+                    "unitOptions":  [
+                                        {
+                                            "unitName":  "袋",
+                                            "price":  7,
+                                            "baseUnit":  "袋",
+                                            "rate":  1,
+                                            "isDefault":  false,
+                                            "stockQty":  140,
+                                            "stockText":  "有货"
+                                        },
+                                        {
+                                            "unitName":  "件",
+                                            "price":  130,
+                                            "baseUnit":  "袋",
+                                            "rate":  20,
+                                            "isDefault":  true,
+                                            "stockQty":  7,
+                                            "stockText":  "有货"
+                                        }
+                                    ],
+                    "promotionTexts":  [
+                                           "满299-5",
+                                           "满1199-10"
+                                       ]
+                },
+    "package":  {
+                    "contractId":  "product_page_package",
+                    "requestBody":  {
+                                        "skuId":  "602162891696893952",
+                                        "spuId":  "602162891306823680",
+                                        "wantNum":  1,
+                                        "pageNum":  1,
+                                        "pageSize":  20,
+                                        "ignoreRange":  true,
+                                        "statusList":  [
+                                                           0,
+                                                           1
+                                                       ],
+                                        "from":  "wx"
+                                    },
+                    "pageNum":  1,
+                    "pageSize":  20,
+                    "total":  0,
+                    "pages":  0,
+                    "relatedItems":  [
+
+                                     ]
+                },
+    "context":  {
+                    "cartSummaryContractId":  "product_page_cart_total_num",
+                    "cartSummaryQuery":  {
+                                             "needAllUnit":  true
+                                         },
+                    "cartSummary":  [
+
+                                    ],
+                    "cartChooseContractId":  "product_page_cart_choose",
+                    "cartChoosePath":  "/gateway/goodsservice/api/v1/wx/cart/choose/602162891696893952",
+                    "addCartContractId":  "product_page_add_cart_total",
+                    "addCartQuery":  {
+                                         "spuId":  "602162891306823680"
+                                     },
+                    "addCartSummary":  [
+
+                                       ],
+                    "defaultUnitId":  "592750618481872899",
+                    "style":  2,
+                    "unitOptions":  [
+                                        {
+                                            "unitId":  "592761609374539776",
+                                            "unitName":  "袋",
+                                            "rate":  1,
+                                            "isBase":  true,
+                                            "isDefault":  false,
+                                            "allowOrder":  true,
+                                            "minOrderQty":  0,
+                                            "maxOrderQty":  0
+                                        },
+                                        {
+                                            "unitId":  "592750618481872899",
+                                            "unitName":  "件",
+                                            "rate":  20,
+                                            "isBase":  false,
+                                            "isDefault":  true,
+                                            "allowOrder":  true,
+                                            "minOrderQty":  0,
+                                            "maxOrderQty":  0
+                                        }
+                                    ],
+                    "settings":  {
+                                     "currencySymbol":  "￥",
+                                     "pricePrecision":  4,
+                                     "qtyPrecision":  2,
+                                     "enableMinimumQty":  true,
+                                     "forbidOutStockOrder":  true,
+                                     "showBookQty":  true,
+                                     "showStockQty":  true
+                                 }
+                }
+}

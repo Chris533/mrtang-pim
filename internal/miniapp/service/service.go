@@ -58,6 +58,15 @@ func (s *Service) CategoryPage(ctx context.Context) (model.CategoryPageAggregate
 	return s.importer.CategoryPage(dataset), nil
 }
 
+func (s *Service) ProductPage(ctx context.Context) (model.ProductPageAggregate, error) {
+	dataset, err := s.Dataset(ctx)
+	if err != nil {
+		return model.ProductPageAggregate{}, err
+	}
+
+	return s.importer.ProductPage(dataset), nil
+}
+
 func (s *Service) Section(ctx context.Context, id string) (*model.HomepageSection, error) {
 	dataset, err := s.Dataset(ctx)
 	if err != nil {
@@ -74,6 +83,33 @@ func (s *Service) CategorySection(ctx context.Context, id string) (*model.Catego
 	}
 
 	return s.importer.CategorySection(dataset, id), nil
+}
+
+func (s *Service) Product(ctx context.Context, id string) (*model.ProductPage, error) {
+	dataset, err := s.Dataset(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.importer.Product(dataset, id), nil
+}
+
+func (s *Service) ProductCoverage(ctx context.Context) ([]model.ProductCoverage, error) {
+	dataset, err := s.Dataset(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.importer.ProductCoverage(dataset), nil
+}
+
+func (s *Service) ProductCoverageSummary(ctx context.Context) (model.ProductCoverageSummary, error) {
+	dataset, err := s.Dataset(ctx)
+	if err != nil {
+		return model.ProductCoverageSummary{}, err
+	}
+
+	return s.importer.ProductCoverageSummary(dataset), nil
 }
 
 func (s *Service) SaveSnapshot(ctx context.Context) error {

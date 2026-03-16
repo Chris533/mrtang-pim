@@ -1,0 +1,10 @@
+{
+    "source": "sanitized-rr-product-page",
+    "description": "Sanitized product page contract derived from mrtang-pim/docs/rr/product samples. Sensitive auth, customer identifiers and third-party session material are removed.",
+    "notes": [
+        "Original source host and auth headers are intentionally not replayed here.",
+        "Product page keeps detail, pricing, package and cart context as separate blocks inside one product record.",
+        "Homepage and category sections should reference products by spuId and skuId instead of duplicating full product page state.",
+        "Current dataset mixes one full rr-derived product sample with list-derived skeleton product records for currently visible homepage and category goods."
+    ]
+}

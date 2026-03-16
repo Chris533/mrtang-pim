@@ -24,6 +24,10 @@ mrtang-pim/
 │   │   │   ├── meta.json
 │   │   │   ├── tree.json
 │   │   │   └── sections/
+│   │   ├── product-page/
+│   │   │   ├── contracts.json
+│   │   │   ├── meta.json
+│   │   │   └── products/
 │   │   └── homepage/
 │   │       ├── bootstrap.json
 │   │       ├── category-tabs.json
@@ -113,6 +117,7 @@ Miniapp 模块已经拆成明确分层：
 - `MINIAPP_SOURCE_TIMEOUT`
 - `MINIAPP_HOMEPAGE_SNAPSHOT=./datasets/miniapp/homepage`
 - `MINIAPP_CATEGORY_SNAPSHOT=./datasets/miniapp/category-page`
+- `MINIAPP_PRODUCT_SNAPSHOT=./datasets/miniapp/product-page`
 - `MINIAPP_AUTH_ACCOUNT_ID`
 - `MINIAPP_USER_AGENT`
 - `SUPPLIER_CONNECTOR=file`
@@ -161,6 +166,15 @@ Miniapp：
 - `GET /api/miniapp/category-page/tree`
 - `GET /api/miniapp/category-page/sections`
 - `GET /api/miniapp/category-page/section?id=<section-id>`
+- `GET /api/miniapp/contracts/product-page`
+- `GET /api/miniapp/product-page`
+- `GET /api/miniapp/product-page/product?id=<spuId>_<skuId>`
+- `GET /api/miniapp/product-page/detail?id=<spuId>_<skuId>`
+- `GET /api/miniapp/product-page/pricing?id=<spuId>_<skuId>`
+- `GET /api/miniapp/product-page/package?id=<spuId>_<skuId>`
+- `GET /api/miniapp/product-page/context?id=<spuId>_<skuId>`
+- `GET /api/miniapp/product-page/coverage`
+- `GET /api/miniapp/product-page/coverage-summary`
 
 ## 下一步
 

@@ -8,8 +8,12 @@
   首页聚合数据，按 `meta/contracts/bootstrap/settings/template/category-tabs/sections` 拆分。
 - `category-page/`
   分类页聚合数据，按 `meta/contracts/context/tree/sections` 拆分。
+- `product-page/`
+  商品页聚合数据，按 `meta/contracts/products` 拆分；每个商品文件内部再拆 detail/pricing/package/context。
 - `*/sections/*.json`
   商品分组单独存文件，便于按分类或模块增量维护。
+- `product-page/products/*.json`
+  商品页按 `spuId_skuId` 单独存文件，便于增量补样本。
 
 约束：
 

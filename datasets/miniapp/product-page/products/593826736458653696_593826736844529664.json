@@ -1,0 +1,172 @@
+{
+    "id":  "593826736458653696_593826736844529664",
+    "spuId":  "593826736458653696",
+    "skuId":  "593826736844529664",
+    "sourceType":  "list_skeleton",
+    "sourceSections":  [
+                           "hot"
+                       ],
+    "summary":  {
+                    "productId":  "593826736458653696_593826736844529664",
+                    "spuId":  "593826736458653696",
+                    "skuId":  "593826736844529664",
+                    "name":  "455g芝麻汤圆",
+                    "cover":  "/150032890/20256/35749431468286856/594183889337987072.jpg",
+                    "skuName":  "455g*20袋",
+                    "defaultUnit":  "件",
+                    "price":  80,
+                    "stockQty":  554,
+                    "stockText":  "有货",
+                    "tags":  [
+                                 "热销"
+                             ],
+                    "unitOptions":  [
+                                        {
+                                            "unitName":  "件",
+                                            "price":  80,
+                                            "baseUnit":  "袋",
+                                            "rate":  20,
+                                            "isDefault":  true,
+                                            "stockQty":  554,
+                                            "stockText":  "有货"
+                                        }
+                                    ],
+                    "promotionTexts":  [
+                                           "满299-5",
+                                           "满1199-10"
+                                       ]
+                },
+    "detail":  {
+                   "contractId":  "product_page_info",
+                   "requestQuery":  {
+                                        "spuId":  "593826736458653696",
+                                        "skuId":  "593826736844529664",
+                                        "unitId":  "",
+                                        "isAdaptKeywords":  false
+                                    },
+                   "code":  "",
+                   "barCode":  "",
+                   "name":  "455g芝麻汤圆",
+                   "skuName":  "455g*20袋",
+                   "defaultUnitId":  "",
+                   "baseUnitId":  "",
+                   "defaultUnit":  "件",
+                   "hasCollect":  false,
+                   "cartNum":  0,
+                   "carousel":  [
+                                    {
+                                        "imageUrl":  "/150032890/20256/35749431468286856/594183889337987072.jpg",
+                                        "type":  1
+                                    }
+                                ],
+                   "detailAssets":  [
+
+                                    ],
+                   "forbidOutStockOrder":  false,
+                   "detailPageShowType":  0,
+                   "configRecommend":  0,
+                   "formFields":  [
+
+                                  ],
+                   "tagInfo":  [
+
+                               ]
+               },
+    "pricing":  {
+                    "priceListContractId":  "product_page_price_list",
+                    "priceListRequestBody":  {
+
+                                             },
+                    "defaultStockContractId":  "product_page_price_stock_default",
+                    "defaultStockRequestBody":  {
+
+                                                },
+                    "multiUnitStockContractId":  "product_page_price_stock_multi_unit",
+                    "multiUnitStockRequestBody":  {
+
+                                                  },
+                    "defaultUnit":  "件",
+                    "defaultPrice":  80,
+                    "defaultStockQty":  554,
+                    "defaultStockText":  "有货",
+                    "unitOptions":  [
+                                        {
+                                            "unitName":  "件",
+                                            "price":  80,
+                                            "baseUnit":  "袋",
+                                            "rate":  20,
+                                            "isDefault":  true,
+                                            "stockQty":  554,
+                                            "stockText":  "有货"
+                                        }
+                                    ],
+                    "promotionTexts":  [
+                                           "满299-5",
+                                           "满1199-10"
+                                       ]
+                },
+    "package":  {
+                    "contractId":  "product_page_package",
+                    "requestBody":  {
+                                        "skuId":  "593826736844529664",
+                                        "spuId":  "593826736458653696",
+                                        "wantNum":  1,
+                                        "pageNum":  1,
+                                        "pageSize":  20,
+                                        "ignoreRange":  true,
+                                        "statusList":  [
+                                                           0,
+                                                           1
+                                                       ],
+                                        "from":  "wx"
+                                    },
+                    "pageNum":  1,
+                    "pageSize":  0,
+                    "total":  0,
+                    "pages":  0,
+                    "relatedItems":  [
+
+                                     ]
+                },
+    "context":  {
+                    "cartSummaryContractId":  "product_page_cart_total_num",
+                    "cartSummaryQuery":  {
+                                             "needAllUnit":  true
+                                         },
+                    "cartSummary":  [
+
+                                    ],
+                    "cartChooseContractId":  "product_page_cart_choose",
+                    "cartChoosePath":  "/gateway/goodsservice/api/v1/wx/cart/choose/593826736844529664",
+                    "addCartContractId":  "product_page_add_cart_total",
+                    "addCartQuery":  {
+                                         "spuId":  "593826736458653696"
+                                     },
+                    "addCartSummary":  [
+
+                                       ],
+                    "defaultUnitId":  "",
+                    "style":  0,
+                    "unitOptions":  [
+                                        {
+                                            "unitId":  "",
+                                            "unitName":  "件",
+                                            "rate":  20,
+                                            "isBase":  false,
+                                            "isDefault":  true,
+                                            "allowOrder":  true,
+                                            "minOrderQty":  0,
+                                            "maxOrderQty":  0
+                                        }
+                                    ],
+                    "settings":  {
+                                     "currencySymbol":  "",
+                                     "pricePrecision":  0,
+                                     "qtyPrecision":  0,
+                                     "enableMinimumQty":  false,
+                                     "forbidOutStockOrder":  false,
+                                     "showBookQty":  false,
+                                     "showStockQty":  false
+                                 }
+                }
+}

@@ -1,0 +1,172 @@
+{
+    "id":  "683941023021350912_683941026209021952",
+    "spuId":  "683941023021350912",
+    "skuId":  "683941026209021952",
+    "sourceType":  "list_skeleton",
+    "sourceSections":  [
+                           "chicken"
+                       ],
+    "summary":  {
+                    "productId":  "683941023021350912_683941026209021952",
+                    "spuId":  "683941023021350912",
+                    "skuId":  "683941026209021952",
+                    "name":  "3887爪",
+                    "cover":  "/150032890/20263/57182011735254448/684081553705562112.jpg",
+                    "skuName":  "30斤",
+                    "defaultUnit":  "件",
+                    "price":  440,
+                    "stockQty":  42,
+                    "stockText":  "有货",
+                    "tags":  [
+
+                             ],
+                    "unitOptions":  [
+                                        {
+                                            "unitName":  "件",
+                                            "price":  440,
+                                            "baseUnit":  "件",
+                                            "rate":  1,
+                                            "isDefault":  true,
+                                            "stockQty":  42,
+                                            "stockText":  "有货"
+                                        }
+                                    ],
+                    "promotionTexts":  [
+                                           "满299-5",
+                                           "满1199-10"
+                                       ]
+                },
+    "detail":  {
+                   "contractId":  "product_page_info",
+                   "requestQuery":  {
+                                        "spuId":  "683941023021350912",
+                                        "skuId":  "683941026209021952",
+                                        "unitId":  "",
+                                        "isAdaptKeywords":  false
+                                    },
+                   "code":  "",
+                   "barCode":  "",
+                   "name":  "3887爪",
+                   "skuName":  "30斤",
+                   "defaultUnitId":  "",
+                   "baseUnitId":  "",
+                   "defaultUnit":  "件",
+                   "hasCollect":  false,
+                   "cartNum":  0,
+                   "carousel":  [
+                                    {
+                                        "imageUrl":  "/150032890/20263/57182011735254448/684081553705562112.jpg",
+                                        "type":  1
+                                    }
+                                ],
+                   "detailAssets":  [
+
+                                    ],
+                   "forbidOutStockOrder":  false,
+                   "detailPageShowType":  0,
+                   "configRecommend":  0,
+                   "formFields":  [
+
+                                  ],
+                   "tagInfo":  [
+
+                               ]
+               },
+    "pricing":  {
+                    "priceListContractId":  "product_page_price_list",
+                    "priceListRequestBody":  {
+
+                                             },
+                    "defaultStockContractId":  "product_page_price_stock_default",
+                    "defaultStockRequestBody":  {
+
+                                                },
+                    "multiUnitStockContractId":  "product_page_price_stock_multi_unit",
+                    "multiUnitStockRequestBody":  {
+
+                                                  },
+                    "defaultUnit":  "件",
+                    "defaultPrice":  440,
+                    "defaultStockQty":  42,
+                    "defaultStockText":  "有货",
+                    "unitOptions":  [
+                                        {
+                                            "unitName":  "件",
+                                            "price":  440,
+                                            "baseUnit":  "件",
+                                            "rate":  1,
+                                            "isDefault":  true,
+                                            "stockQty":  42,
+                                            "stockText":  "有货"
+                                        }
+                                    ],
+                    "promotionTexts":  [
+                                           "满299-5",
+                                           "满1199-10"
+                                       ]
+                },
+    "package":  {
+                    "contractId":  "product_page_package",
+                    "requestBody":  {
+                                        "skuId":  "683941026209021952",
+                                        "spuId":  "683941023021350912",
+                                        "wantNum":  1,
+                                        "pageNum":  1,
+                                        "pageSize":  20,
+                                        "ignoreRange":  true,
+                                        "statusList":  [
+                                                           0,
+                                                           1
+                                                       ],
+                                        "from":  "wx"
+                                    },
+                    "pageNum":  1,
+                    "pageSize":  0,
+                    "total":  0,
+                    "pages":  0,
+                    "relatedItems":  [
+
+                                     ]
+                },
+    "context":  {
+                    "cartSummaryContractId":  "product_page_cart_total_num",
+                    "cartSummaryQuery":  {
+                                             "needAllUnit":  true
+                                         },
+                    "cartSummary":  [
+
+                                    ],
+                    "cartChooseContractId":  "product_page_cart_choose",
+                    "cartChoosePath":  "/gateway/goodsservice/api/v1/wx/cart/choose/683941026209021952",
+                    "addCartContractId":  "product_page_add_cart_total",
+                    "addCartQuery":  {
+                                         "spuId":  "683941023021350912"
+                                     },
+                    "addCartSummary":  [
+
+                                       ],
+                    "defaultUnitId":  "",
+                    "style":  0,
+                    "unitOptions":  [
+                                        {
+                                            "unitId":  "",
+                                            "unitName":  "件",
+                                            "rate":  1,
+                                            "isBase":  true,
+                                            "isDefault":  true,
+                                            "allowOrder":  true,
+                                            "minOrderQty":  0,
+                                            "maxOrderQty":  0
+                                        }
+                                    ],
+                    "settings":  {
+                                     "currencySymbol":  "",
+                                     "pricePrecision":  0,
+                                     "qtyPrecision":  0,
+                                     "enableMinimumQty":  false,
+                                     "forbidOutStockOrder":  false,
+                                     "showBookQty":  false,
+                                     "showStockQty":  false
+                                 }
+                }
+}

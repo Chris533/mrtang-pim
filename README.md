@@ -18,7 +18,7 @@
 - 定时采集 / 处理 / 同步任务
 - 缺失 SKU 自动标记 `offline`，并尝试下架 Vendure 商品
 - 自定义 HTTP 触发接口
-- 脱敏后的“小程序首页契约”接口与离线 snapshot dataset
+- 脱敏后的“小程序首页/分类/商品页契约”接口与离线 snapshot dataset
 
 ## 目录
 
@@ -28,7 +28,8 @@ mrtang-pim/
 ├── datasets/
 │   ├── miniapp/
 │   │   ├── homepage/
-│   │   └── category-page/
+│   │   ├── category-page/
+│   │   └── product-page/
 │   └── mock_supplier_products.json
 ├── internal/
 │   ├── config
@@ -82,6 +83,7 @@ go run ./cmd/pim serve
 
 - [`datasets/miniapp/homepage`](./datasets/miniapp/homepage)
 - [`datasets/miniapp/category-page`](./datasets/miniapp/category-page)
+- [`datasets/miniapp/product-page`](./datasets/miniapp/product-page)
 
 这套数据不会重放第三方鉴权，也不保留任何敏感 token / openId / customerId。它的目标是:
 
@@ -98,13 +100,14 @@ go run ./cmd/pim serve
 - `MINIAPP_SOURCE_TIMEOUT=20s`
 - `MINIAPP_HOMEPAGE_SNAPSHOT=./datasets/miniapp/homepage`
 - `MINIAPP_CATEGORY_SNAPSHOT=./datasets/miniapp/category-page`
+- `MINIAPP_PRODUCT_SNAPSHOT=./datasets/miniapp/product-page`
 - `MINIAPP_AUTH_ACCOUNT_ID=...`
 - `MINIAPP_USER_AGENT=Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.53(0x18003537) NetType/WIFI Language/zh_CN miniProgram`
 
 数据源切换:
 
 - `MINIAPP_SOURCE_MODE=snapshot`
-  读取本地 snapshot 目录，并组装 homepage/category-page dataset
+  读取本地 snapshot 目录，并组装 homepage/category-page/product-page dataset
 - `MINIAPP_SOURCE_MODE=http`
   从 `MINIAPP_SOURCE_URL` 拉取标准化后的 `Dataset` JSON
 
@@ -128,6 +131,12 @@ curl -H 'Authorization: Bearer your-account-id' 'http://127.0.0.1:8090/api/minia
 curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/contracts/category-page
 curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/category-page/tree
 curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/category-page/sections
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/contracts/product-page
+curl -H 'Authorization: Bearer your-account-id' 'http://127.0.0.1:8090/api/miniapp/product-page/product?id=670168385396461568_670168388273754112'
+curl -H 'Authorization: Bearer your-account-id' 'http://127.0.0.1:8090/api/miniapp/product-page/detail?id=670168385396461568_670168388273754112'
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/product-page/coverage
+curl -H 'Authorization: Bearer your-account-id' 'http://127.0.0.1:8090/api/miniapp/product-page/coverage?priority=homepage_dual_unit'
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/product-page/coverage-summary
 ```
 
 接口说明:

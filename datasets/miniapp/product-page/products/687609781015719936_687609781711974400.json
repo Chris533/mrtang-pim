@@ -1,0 +1,236 @@
+{
+    "id":  "687609781015719936_687609781711974400",
+    "spuId":  "687609781015719936",
+    "skuId":  "687609781711974400",
+    "sourceType":  "rr_detail",
+    "sourceSections":  [
+                           "chicken"
+                       ],
+    "summary":  {
+                    "productId":  "687609781015719936_687609781711974400",
+                    "spuId":  "687609781015719936",
+                    "skuId":  "687609781711974400",
+                    "name":  "天颐康40-50长爪",
+                    "cover":  "/150032890/20263/37837789811252547/688779506626129920.jpg",
+                    "skuName":  "10kg",
+                    "defaultUnit":  "件",
+                    "price":  285,
+                    "stockQty":  189,
+                    "stockText":  "有货",
+                    "tags":  [
+
+                             ],
+                    "unitOptions":  [
+                                        {
+                                            "unitName":  "件",
+                                            "price":  285,
+                                            "baseUnit":  "件",
+                                            "rate":  1,
+                                            "isDefault":  true,
+                                            "stockQty":  189,
+                                            "stockText":  "有货"
+                                        }
+                                    ],
+                    "promotionTexts":  [
+                                           "满299-5",
+                                           "满1199-10"
+                                       ]
+                },
+    "detail":  {
+                   "contractId":  "product_page_info",
+                   "requestQuery":  {
+                                        "spuId":  "687609781015719936",
+                                        "skuId":  "687609781711974400",
+                                        "unitId":  "",
+                                        "isAdaptKeywords":  false
+                                    },
+                   "code":  "",
+                   "barCode":  "",
+                   "name":  "天颐康40-50长爪",
+                   "skuName":  "10kg",
+                   "defaultUnitId":  "592750618481872899",
+                   "baseUnitId":  "592750618481872899",
+                   "defaultUnit":  "件",
+                   "hasCollect":  false,
+                   "cartNum":  1.04,
+                   "carousel":  [
+                                    {
+                                        "imageUrl":  "/150032890/20263/37837789811252547/688779506626129920.jpg",
+                                        "type":  1
+                                    },
+                                    {
+                                        "imageUrl":  "/150032890/20263/58302151431056563/688779520110800896.jpg",
+                                        "type":  1
+                                    },
+                                    {
+                                        "imageUrl":  "/150032890/20263/58302154086455097/688779531246678016.jpg",
+                                        "type":  1
+                                    },
+                                    {
+                                        "imageUrl":  "/150032890/20263/58034054839885884/687653590835499008.jpg",
+                                        "type":  1
+                                    }
+                                ],
+                   "detailAssets":  [
+
+                                    ],
+                   "detailTexts":  [
+
+                                   ],
+                   "forbidOutStockOrder":  true,
+                   "detailPageShowType":  2,
+                   "configRecommend":  0,
+                   "formFields":  [
+                                      {
+                                          "id":  "592750626019037184",
+                                          "fieldName":  "商品备注",
+                                          "systemName":  "商品备注",
+                                          "limit":  15,
+                                          "valueType":  1,
+                                          "defaultValue":  "",
+                                          "value":  ""
+                                      }
+                                  ],
+                   "tagInfo":  [
+
+                               ]
+               },
+    "pricing":  {
+                    "priceListContractId":  "product_page_price_list",
+                    "priceListRequestBody":  {
+                                                 "goodsShowProducedDate":  false,
+                                                 "levelId":  null,
+                                                 "promotionId":  0,
+                                                 "activityType":  7,
+                                                 "skuUnitList":  [
+                                                                     {
+                                                                         "qty":  null,
+                                                                         "skuId":  "687609781711974400",
+                                                                         "spuId":  "687609781015719936",
+                                                                         "unitId":  "592750618481872899"
+                                                                     }
+                                                                 ]
+                                             },
+                    "defaultStockContractId":  "product_page_price_stock_default",
+                    "defaultStockRequestBody":  {
+                                                    "goodsShowProducedDate":  false,
+                                                    "goodsPriceType":  16,
+                                                    "promotionId":  0,
+                                                    "warehouseId":  0,
+                                                    "itemList":  [
+                                                                     {
+                                                                         "queryStock":  true,
+                                                                         "skuId":  "687609781711974400",
+                                                                         "spuId":  "687609781015719936",
+                                                                         "unitId":  "592750618481872899",
+                                                                         "warehouseId":  0
+                                                                     }
+                                                                 ],
+                                                    "levelId":  null,
+                                                    "showAvailable":  false
+                                                },
+                    "multiUnitStockContractId":  "product_page_price_stock_multi_unit",
+                    "multiUnitStockRequestBody":  {
+                                                      "goodsShowProducedDate":  false,
+                                                      "itemList":  [
+                                                                       {
+                                                                           "unitId":  "592750618481872899",
+                                                                           "skuId":  "687609781711974400",
+                                                                           "spuId":  "687609781015719936",
+                                                                           "queryStock":  true,
+                                                                           "warehouseId":  0
+                                                                       }
+                                                                   ],
+                                                      "goodsPriceType":  16,
+                                                      "promotionId":  0,
+                                                      "extInfoVO":  {
+                                                                        "defaultUnitId":  "592750618481872899"
+                                                                    },
+                                                      "levelId":  null,
+                                                      "showAvailable":  false
+                                                  },
+                    "defaultUnit":  "件",
+                    "defaultPrice":  285,
+                    "defaultStockQty":  189,
+                    "defaultStockText":  "有货",
+                    "unitOptions":  [
+                                        {
+                                            "unitName":  "件",
+                                            "price":  285,
+                                            "baseUnit":  "件",
+                                            "rate":  1,
+                                            "isDefault":  true,
+                                            "stockQty":  189,
+                                            "stockText":  "有货"
+                                        }
+                                    ],
+                    "promotionTexts":  [
+                                           "满299-5",
+                                           "满1199-10"
+                                       ]
+                },
+    "package":  {
+                    "contractId":  "product_page_package",
+                    "requestBody":  {
+                                        "skuId":  "687609781711974400",
+                                        "spuId":  "687609781015719936",
+                                        "wantNum":  1,
+                                        "pageNum":  1,
+                                        "pageSize":  20,
+                                        "ignoreRange":  true,
+                                        "statusList":  [
+                                                           0,
+                                                           1
+                                                       ],
+                                        "from":  "wx"
+                                    },
+                    "pageNum":  1,
+                    "pageSize":  20,
+                    "total":  0,
+                    "pages":  0,
+                    "relatedItems":  [
+
+                                     ]
+                },
+    "context":  {
+                    "cartSummaryContractId":  "product_page_cart_total_num",
+                    "cartSummaryQuery":  {
+                                             "needAllUnit":  true
+                                         },
+                    "cartSummary":  [
+
+                                    ],
+                    "cartChooseContractId":  "product_page_cart_choose",
+                    "cartChoosePath":  "/gateway/goodsservice/api/v1/wx/cart/choose/687609781711974400",
+                    "addCartContractId":  "product_page_add_cart_total",
+                    "addCartQuery":  {
+                                         "spuId":  "687609781015719936"
+                                     },
+                    "addCartSummary":  [
+
+                                       ],
+                    "defaultUnitId":  "592750618481872899",
+                    "style":  2,
+                    "unitOptions":  [
+                                        {
+                                            "unitId":  "592750618481872899",
+                                            "unitName":  "件",
+                                            "rate":  1,
+                                            "isBase":  true,
+                                            "isDefault":  true,
+                                            "allowOrder":  true,
+                                            "minOrderQty":  0,
+                                            "maxOrderQty":  0
+                                        }
+                                    ],
+                    "settings":  {
+                                     "currencySymbol":  "￥",
+                                     "pricePrecision":  4,
+                                     "qtyPrecision":  2,
+                                     "enableMinimumQty":  true,
+                                     "forbidOutStockOrder":  true,
+                                     "showBookQty":  true,
+                                     "showStockQty":  true
+                                 }
+                }
+}

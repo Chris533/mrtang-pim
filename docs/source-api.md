@@ -14,7 +14,7 @@
 ```text
 源站 API / 抓包样本
     -> 脱敏整理
-    -> datasets/miniapp/homepage | datasets/miniapp/category-page
+    -> datasets/miniapp/homepage | datasets/miniapp/category-page | datasets/miniapp/product-page
     -> snapshot/http source
     -> internal/miniapp/service
     -> /api/miniapp/**
@@ -31,7 +31,7 @@
 
 | 模式 | 读取位置 | 用途 |
 | --- | --- | --- |
-| `snapshot` | `datasets/miniapp/homepage` + `datasets/miniapp/category-page` | 本地联调、脱网开发、固定样本回放 |
+| `snapshot` | `datasets/miniapp/homepage` + `datasets/miniapp/category-page` + `datasets/miniapp/product-page` | 本地联调、脱网开发、固定样本回放 |
 | `http` | `MINIAPP_SOURCE_URL` | 接入你自己的上游 connector 或标准化聚合服务 |
 
 相关配置：
@@ -40,6 +40,7 @@
 - `MINIAPP_SOURCE_URL=...`
 - `MINIAPP_HOMEPAGE_SNAPSHOT=./datasets/miniapp/homepage`
 - `MINIAPP_CATEGORY_SNAPSHOT=./datasets/miniapp/category-page`
+- `MINIAPP_PRODUCT_SNAPSHOT=./datasets/miniapp/product-page`
 - `MINIAPP_AUTH_ACCOUNT_ID=...`
 - `MINIAPP_USER_AGENT=...`
 
@@ -76,6 +77,23 @@
 - 已有 18 个顶级类目对应的 `sections/*.json`
 - 只有 `chicken.json` 带真实商品样本
 - 其余 section 先保留标准请求骨架和空商品列表
+
+### 商品页
+
+目录：[datasets/miniapp/product-page](../datasets/miniapp/product-page)
+
+| 文件 | 含义 |
+| --- | --- |
+| `meta.json` | 数据来源说明、脱敏说明、补充备注 |
+| `contracts.json` | 商品页相关原始 API 到本地接口的契约映射 |
+| `products/*.json` | 单商品聚合记录，内部再分 `detail/pricing/package/context` |
+
+当前商品页状态：
+
+- 已落 1 条完整 rr 商品页样本
+- 已为当前首页 `new/hot` 和分类 `chicken` 中出现的商品补齐 list-derived skeleton 商品记录
+- 样本主键使用 `spuId_skuId`
+- 首页和分类页继续以 `spuId + skuId` 关联到商品页
 
 ## 源站到本地接口映射
 
@@ -120,6 +138,39 @@
 - `GET /api/miniapp/category-page`
 - `GET /api/miniapp/category-page/sections`
 
+### 商品页链路
+
+商品页原始样本归档说明见 [docs/rr/product/README.md](./rr/product/README.md)。
+
+| 源站 API | rr 样本编号 | Dataset 落点 | 本地接口 | 作用 |
+| --- | --- | --- | --- | --- |
+| `/gateway/goodsservice/api/v1/wx/goods/info` | `[2776]` | `product-page/products/*.json.detail` | `GET /api/miniapp/product-page/detail?id=<spuId>_<skuId>` | 商品详情基础信息 |
+| `/gateway/goodsservice/api/v1/wx/price/list` | `[2777]` | `product-page/products/*.json.pricing` | `GET /api/miniapp/product-page/pricing?id=<spuId>_<skuId>` | 默认单位价格 |
+| `/gateway/goodsservice/api/v1/wx/goods/sku/price_stock` | `[2778]` | `product-page/products/*.json.pricing` | `GET /api/miniapp/product-page/pricing?id=<spuId>_<skuId>` | 默认单位库存补充 |
+| `/gateway/goodsservice/api/v1/goods/get_sku_relation_discounts_package` | `[2779]` | `product-page/products/*.json.package` | `GET /api/miniapp/product-page/package?id=<spuId>_<skuId>` | 套餐和关联优惠 |
+| `/gateway/goodsservice/api/v1/wx/cart/get_cart_tot_num` | `[2780]` | `product-page/products/*.json.context` | `GET /api/miniapp/product-page/context?id=<spuId>_<skuId>` | 购物车角标 |
+| `/gateway/goodsservice/api/v1/wx/cart/choose/{skuId}` | `[2781]` | `product-page/products/*.json.context` | `GET /api/miniapp/product-page/context?id=<spuId>_<skuId>` | 单位切换和下单上下文 |
+| `/gateway/goodsservice/api/v1/wx/goods/sku/price_stock` | `[2782]` | `product-page/products/*.json.pricing` | `GET /api/miniapp/product-page/pricing?id=<spuId>_<skuId>` | 多单位价格库存补充 |
+| `/gateway/goodsservice/api/v1/wx/cart/get_add_cart_tot` | `[2783]` | `product-page/products/*.json.context` | `GET /api/miniapp/product-page/context?id=<spuId>_<skuId>` | 当前商品已加购数量 |
+
+商品页聚合接口：
+
+- `GET /api/miniapp/contracts/product-page`
+- `GET /api/miniapp/product-page`
+- `GET /api/miniapp/product-page/product?id=<spuId>_<skuId>`
+- `GET /api/miniapp/product-page/coverage`
+- `GET /api/miniapp/product-page/coverage-summary`
+
+当前状态：
+
+- `docs/rr/product` 已经有完整商品页访问链路样本
+- 运行时现在从 `datasets/miniapp/product-page` 读取 `product-page` dataset
+- 当前 `product-page` 目录中同时包含完整 rr 商品样本和列表回填的 skeleton 商品记录
+- 首页和分类页商品仍保留列表职责，不把商品主数据继续塞回 section 文件
+- `/api/miniapp/product-page/coverage` 会把当前可见商品按 `homepage_dual_unit -> category_dual_unit -> visible_single_unit -> done_rr_detail` 排序，直接给出下一批应优先替换的目标
+- `/api/miniapp/product-page/coverage?priority=homepage_dual_unit` 可以直接只看“首页双单位优先批次”
+- `/api/miniapp/product-page/coverage-summary` 会返回总数、分桶统计和 `firstBatch`
+
 ## 运行时读取规则
 
 实现位置：
@@ -130,7 +181,7 @@
 
 规则如下：
 
-1. `snapshot` 模式先加载首页 dataset，再合并分类页 dataset。
+1. `snapshot` 模式先加载首页 dataset，再合并分类页和商品页 dataset。
 2. `snapshot` 支持“目录模式”和“单文件兼容模式”，但当前推荐目录模式。
 3. `http` 模式只请求一次 `MINIAPP_SOURCE_URL`，要求对方直接返回标准化后的 `Dataset` JSON。
 4. `http` 模式会自动附带：
@@ -141,5 +192,6 @@
 
 - 新增首页商品模块时，优先补 `datasets/miniapp/homepage/sections/<id>.json`。
 - 新增分类商品样本时，优先补 `datasets/miniapp/category-page/sections/<id>.json`。
+- 新增商品详情样本时，优先补 `datasets/miniapp/product-page/products/<spuId>_<skuId>.json`。
 - 原始抓包只追加到 `docs/rr/**`，不要让运行时代码直接依赖 rr 目录。
 - 如果接入真实源站，先把源站返回整理成标准化 `Dataset`，再接到 `http` 模式，不要把源站字段直接泄漏到本地接口层。
