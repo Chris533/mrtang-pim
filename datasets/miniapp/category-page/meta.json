@@ -1,0 +1,9 @@
+{
+    "source":  "sanitized-rr-homepage",
+    "description":  "Sanitized homepage contract derived from mrtang-pim/docs/rr/index samples. Sensitive auth, customer identifiers and third-party session material are removed.",
+    "notes":  [
+                  "Original source host and auth headers are intentionally not replayed here.",
+                  "Request and response shapes preserve homepage module dependencies for frontend and backend development.",
+                  "Price values are normalized to currency units rather than source minor-unit integers."
+              ]
+}

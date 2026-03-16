@@ -17,7 +17,21 @@
 mrtang-pim/
 ├── cmd/pim/main.go
 ├── datasets/
-│   ├── miniapp_homepage_snapshot.json
+│   ├── miniapp/
+│   │   ├── category-page/
+│   │   │   ├── context.json
+│   │   │   ├── contracts.json
+│   │   │   ├── meta.json
+│   │   │   ├── tree.json
+│   │   │   └── sections/
+│   │   └── homepage/
+│   │       ├── bootstrap.json
+│   │       ├── category-tabs.json
+│   │       ├── contracts.json
+│   │       ├── meta.json
+│   │       ├── settings.json
+│   │       ├── template.json
+│   │       └── sections/
 │   └── mock_supplier_products.json
 ├── docs/
 │   ├── rr/
@@ -84,6 +98,8 @@ Miniapp 模块已经拆成明确分层：
 
 默认 `User-Agent` 是较新的 iPhone 微信小程序模板。
 
+如果要快速理解“源站 API、抓包归档、dataset 和本地接口”之间的关系，直接看 [source-api.md](./source-api.md)。
+
 ## 环境变量
 
 至少关注这些配置：
@@ -95,7 +111,8 @@ Miniapp 模块已经拆成明确分层：
 - `MINIAPP_SOURCE_MODE`
 - `MINIAPP_SOURCE_URL`
 - `MINIAPP_SOURCE_TIMEOUT`
-- `MINIAPP_HOMEPAGE_SNAPSHOT=./datasets/miniapp_homepage_snapshot.json`
+- `MINIAPP_HOMEPAGE_SNAPSHOT=./datasets/miniapp/homepage`
+- `MINIAPP_CATEGORY_SNAPSHOT=./datasets/miniapp/category-page`
 - `MINIAPP_AUTH_ACCOUNT_ID`
 - `MINIAPP_USER_AGENT`
 - `SUPPLIER_CONNECTOR=file`
@@ -131,6 +148,7 @@ PIM：
 Miniapp：
 
 - `GET /api/miniapp/contracts/homepage`
+- `GET /api/miniapp/contracts/category-page`
 - `GET /api/miniapp/homepage`
 - `GET /api/miniapp/homepage/bootstrap`
 - `GET /api/miniapp/homepage/settings`
@@ -138,6 +156,11 @@ Miniapp：
 - `GET /api/miniapp/homepage/categories`
 - `GET /api/miniapp/homepage/sections`
 - `GET /api/miniapp/homepage/section?id=<section-id>`
+- `GET /api/miniapp/category-page`
+- `GET /api/miniapp/category-page/context`
+- `GET /api/miniapp/category-page/tree`
+- `GET /api/miniapp/category-page/sections`
+- `GET /api/miniapp/category-page/section?id=<section-id>`
 
 ## 下一步
 

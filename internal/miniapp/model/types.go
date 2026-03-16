@@ -1,9 +1,10 @@
 package model
 
 type Dataset struct {
-	Meta      Meta              `json:"meta"`
-	Contracts []Contract        `json:"contracts"`
-	Homepage  HomepageAggregate `json:"homepage"`
+	Meta         Meta                  `json:"meta"`
+	Contracts    []Contract            `json:"contracts"`
+	Homepage     HomepageAggregate     `json:"homepage"`
+	CategoryPage CategoryPageAggregate `json:"categoryPage"`
 }
 
 type Meta struct {
@@ -153,4 +154,40 @@ type UnitOption struct {
 	IsDefault bool    `json:"isDefault"`
 	StockQty  float64 `json:"stockQty"`
 	StockText string  `json:"stockText"`
+}
+
+type CategoryPageAggregate struct {
+	Context  CategoryPageContext `json:"context"`
+	Tree     []CategoryNode      `json:"tree"`
+	Sections []CategorySection   `json:"sections"`
+}
+
+type CategoryPageContext struct {
+	LoginStatus     string               `json:"loginStatus"`
+	ContactsName    string               `json:"contactsName"`
+	CanOrder        bool                 `json:"canOrder"`
+	AuditStatus     int                  `json:"auditStatus"`
+	CustomerStatus  int                  `json:"customerStatus"`
+	CartItemCount   int                  `json:"cartItemCount"`
+	CategorySetting GoodsCategorySetting `json:"categorySetting"`
+}
+
+type CategoryNode struct {
+	Key         string         `json:"key"`
+	Label       string         `json:"label"`
+	ImageURL    string         `json:"imageUrl,omitempty"`
+	PathName    string         `json:"pathName,omitempty"`
+	Depth       int            `json:"depth"`
+	Sort        int            `json:"sort"`
+	HasChildren bool           `json:"hasChildren"`
+	Children    []CategoryNode `json:"children,omitempty"`
+}
+
+type CategorySection struct {
+	ID           string            `json:"id"`
+	Title        string            `json:"title"`
+	CategoryKey  string            `json:"categoryKey"`
+	CategoryPath string            `json:"categoryPath"`
+	RequestBody  map[string]any    `json:"requestBody"`
+	Products     []HomepageProduct `json:"products"`
 }

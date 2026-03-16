@@ -1,0 +1,28 @@
+{
+    "id":  "duck",
+    "title":  "鸭产品",
+    "categoryKey":  "639042683867877376",
+    "categoryPath":  "鸭产品",
+    "requestBody":  {
+                        "checkList":  [
+
+                                      ],
+                        "includeTagIds":  [
+
+                                          ],
+                        "includeBrandIds":  [
+
+                                            ],
+                        "sort":  -1,
+                        "keywords":  "",
+                        "subjectPath":  "639042683867877376",
+                        "pageNum":  1,
+                        "pageSize":  10,
+                        "type":  153,
+                        "isAdaptKeywords":  false,
+                        "isBuyLogo":  true
+                    },
+    "products":  [
+
+                 ]
+}

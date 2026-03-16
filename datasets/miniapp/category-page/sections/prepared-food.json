@@ -1,0 +1,28 @@
+{
+    "id":  "prepared-food",
+    "title":  "熟食半成品",
+    "categoryKey":  "639043848483483648",
+    "categoryPath":  "熟食半成品",
+    "requestBody":  {
+                        "checkList":  [
+
+                                      ],
+                        "includeTagIds":  [
+
+                                          ],
+                        "includeBrandIds":  [
+
+                                            ],
+                        "sort":  -1,
+                        "keywords":  "",
+                        "subjectPath":  "639043848483483648",
+                        "pageNum":  1,
+                        "pageSize":  10,
+                        "type":  153,
+                        "isAdaptKeywords":  false,
+                        "isBuyLogo":  true
+                    },
+    "products":  [
+
+                 ]
+}

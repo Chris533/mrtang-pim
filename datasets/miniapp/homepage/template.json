@@ -1,0 +1,120 @@
+{
+    "businessId":  "598882090142056448",
+    "templateName":  "冻品模板二",
+    "pageName":  "XX全品类冷冻供应",
+    "sharePageUrl":  "/share/homepage-cover.jpg",
+    "showOnlineService":  true,
+    "showShoppingCart":  true,
+    "templateType":  6,
+    "modules":  [
+                    {
+                        "id":  "promo-copy",
+                        "type":  "copy",
+                        "title":  "一袋也是批发价",
+                        "items":  [
+                                      {
+                                          "title":  "一袋也是批发价"
+                                      }
+                                  ]
+                    },
+                    {
+                        "id":  "promo-categories",
+                        "type":  "banner-category-grid",
+                        "title":  "推荐分类",
+                        "displayStyle":  1,
+                        "items":  [
+                                      {
+                                          "title":  "干杂，调料",
+                                          "imageUrl":  "/images/category-seasoning.jpg",
+                                          "categoryKey":  "639044801676816384"
+                                      },
+                                      {
+                                          "title":  "鸭产品",
+                                          "imageUrl":  "/images/category-duck.jpg",
+                                          "categoryKey":  "639042683867877376"
+                                      },
+                                      {
+                                          "title":  "丸子，火锅",
+                                          "imageUrl":  "/images/category-hotpot.jpg",
+                                          "categoryKey":  "639043423936266240"
+                                      },
+                                      {
+                                          "title":  "烧烤串串",
+                                          "imageUrl":  "/images/category-bbq.jpg",
+                                          "categoryKey":  "639043759132278784"
+                                      }
+                                  ]
+                    },
+                    {
+                        "id":  "quick-nav",
+                        "type":  "icon-nav",
+                        "title":  "首页专区",
+                        "displayStyle":  7,
+                        "items":  [
+                                      {
+                                          "title":  "鸡禽专区",
+                                          "imageUrl":  "https://cdn.example.com/nav/chicken.png",
+                                          "categoryKey":  "639042624178835456"
+                                      },
+                                      {
+                                          "title":  "鸭副专区",
+                                          "imageUrl":  "https://cdn.example.com/nav/duck.png",
+                                          "categoryKey":  "639042683867877376"
+                                      },
+                                      {
+                                          "title":  "猪副专区",
+                                          "imageUrl":  "https://cdn.example.com/nav/pork.png",
+                                          "categoryKey":  "639042945818968064"
+                                      },
+                                      {
+                                          "title":  "牛副专区",
+                                          "imageUrl":  "https://cdn.example.com/nav/beef.png",
+                                          "categoryKey":  "639043179575889920"
+                                      },
+                                      {
+                                          "title":  "丸子专区",
+                                          "imageUrl":  "https://cdn.example.com/nav/hotpot-ball.png",
+                                          "categoryKey":  "639043423936266240"
+                                      },
+                                      {
+                                          "title":  "海鲜水产",
+                                          "imageUrl":  "https://cdn.example.com/nav/seafood.png",
+                                          "categoryKey":  "639225399972311040"
+                                      }
+                                  ]
+                    },
+                    {
+                        "id":  "flash-sale",
+                        "type":  "goods-showcase",
+                        "title":  "限时特价",
+                        "displayStyle":  13,
+                        "displayNum":  20
+                    },
+                    {
+                        "id":  "new-showcase",
+                        "type":  "goods-showcase",
+                        "title":  "畅销新品",
+                        "displayStyle":  9,
+                        "displayNum":  20
+                    },
+                    {
+                        "id":  "hot-showcase",
+                        "type":  "goods-showcase",
+                        "title":  "热销推荐",
+                        "displayStyle":  5,
+                        "displayNum":  9
+                    },
+                    {
+                        "id":  "single-banner",
+                        "type":  "banner",
+                        "title":  "首页横幅",
+                        "displayStyle":  3,
+                        "items":  [
+                                      {
+                                          "title":  "首页横幅",
+                                          "imageUrl":  "/images/homepage-banner.png"
+                                      }
+                                  ]
+                    }
+                ]
+}

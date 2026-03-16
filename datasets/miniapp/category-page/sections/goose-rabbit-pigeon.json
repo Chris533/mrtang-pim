@@ -1,0 +1,28 @@
+{
+    "id":  "goose-rabbit-pigeon",
+    "title":  "鹅，兔，鸽",
+    "categoryKey":  "639043141827252224",
+    "categoryPath":  "鹅，兔，鸽",
+    "requestBody":  {
+                        "checkList":  [
+
+                                      ],
+                        "includeTagIds":  [
+
+                                          ],
+                        "includeBrandIds":  [
+
+                                            ],
+                        "sort":  -1,
+                        "keywords":  "",
+                        "subjectPath":  "639043141827252224",
+                        "pageNum":  1,
+                        "pageSize":  10,
+                        "type":  153,
+                        "isAdaptKeywords":  false,
+                        "isBuyLogo":  true
+                    },
+    "products":  [
+
+                 ]
+}

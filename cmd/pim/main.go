@@ -15,6 +15,7 @@ import (
 
 	"mrtang-pim/internal/config"
 	miniappapi "mrtang-pim/internal/miniapp/api"
+	miniappmodel "mrtang-pim/internal/miniapp/model"
 	miniappservice "mrtang-pim/internal/miniapp/service"
 	"mrtang-pim/internal/pim"
 	_ "mrtang-pim/migrations"
@@ -58,7 +59,30 @@ func main() {
 
 			return re.JSON(http.StatusOK, map[string]any{
 				"meta":      dataset.Meta,
-				"contracts": dataset.Contracts,
+				"contracts": filterContractsByPrefix(dataset.Contracts, "/api/miniapp/homepage"),
+				"clientConfig": map[string]any{
+					"sourceMode":        cfg.MiniApp.SourceMode,
+					"sourceURL":         cfg.MiniApp.SourceURL,
+					"userAgent":         cfg.MiniApp.UserAgent,
+					"authHeader":        "Authorization: Bearer <authorized-account-id>",
+					"authorizationMode": miniAppAuthorizationMode(cfg),
+				},
+			})
+		})
+
+		se.Router.GET("/api/miniapp/contracts/category-page", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			dataset, err := miniappService.Dataset(re.Request.Context())
+			if err != nil {
+				return re.InternalServerError("load miniapp category-page contracts failed", err)
+			}
+
+			return re.JSON(http.StatusOK, map[string]any{
+				"meta":      dataset.Meta,
+				"contracts": filterContractsByPrefix(dataset.Contracts, "/api/miniapp/category-page"),
 				"clientConfig": map[string]any{
 					"sourceMode":        cfg.MiniApp.SourceMode,
 					"sourceURL":         cfg.MiniApp.SourceURL,
@@ -160,6 +184,80 @@ func main() {
 			section, err := miniappService.Section(re.Request.Context(), sectionID)
 			if err != nil {
 				return re.InternalServerError("load miniapp section failed", err)
+			}
+
+			if section == nil {
+				return re.NotFoundError("section not found", nil)
+			}
+
+			return re.JSON(http.StatusOK, section)
+		})
+
+		se.Router.GET("/api/miniapp/category-page", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			categoryPage, err := miniappService.CategoryPage(re.Request.Context())
+			if err != nil {
+				return re.InternalServerError("load miniapp category page failed", err)
+			}
+
+			return re.JSON(http.StatusOK, categoryPage)
+		})
+
+		se.Router.GET("/api/miniapp/category-page/context", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			categoryPage, err := miniappService.CategoryPage(re.Request.Context())
+			if err != nil {
+				return re.InternalServerError("load miniapp category context failed", err)
+			}
+
+			return re.JSON(http.StatusOK, categoryPage.Context)
+		})
+
+		se.Router.GET("/api/miniapp/category-page/tree", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			categoryPage, err := miniappService.CategoryPage(re.Request.Context())
+			if err != nil {
+				return re.InternalServerError("load miniapp category tree failed", err)
+			}
+
+			return re.JSON(http.StatusOK, categoryPage.Tree)
+		})
+
+		se.Router.GET("/api/miniapp/category-page/sections", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			categoryPage, err := miniappService.CategoryPage(re.Request.Context())
+			if err != nil {
+				return re.InternalServerError("load miniapp category sections failed", err)
+			}
+
+			return re.JSON(http.StatusOK, categoryPage.Sections)
+		})
+
+		se.Router.GET("/api/miniapp/category-page/section", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			sectionID := strings.TrimSpace(re.Request.URL.Query().Get("id"))
+			if sectionID == "" {
+				return re.BadRequestError("missing section id", nil)
+			}
+
+			section, err := miniappService.CategorySection(re.Request.Context(), sectionID)
+			if err != nil {
+				return re.InternalServerError("load miniapp category section failed", err)
 			}
 
 			if section == nil {
@@ -329,6 +427,17 @@ func miniAppBearer(re *core.RequestEvent) string {
 	return ""
 }
 
+func filterContractsByPrefix(contracts []miniappmodel.Contract, prefix string) []miniappmodel.Contract {
+	filtered := make([]miniappmodel.Contract, 0, len(contracts))
+	for _, contract := range contracts {
+		if strings.HasPrefix(contract.LocalPath, prefix) {
+			filtered = append(filtered, contract)
+		}
+	}
+
+	return filtered
+}
+
 func newMiniAppSource(cfg config.Config) miniappapi.Source {
 	if strings.EqualFold(strings.TrimSpace(cfg.MiniApp.SourceMode), "http") {
 		return miniappapi.NewHTTPSource(miniappapi.HTTPSourceConfig{
@@ -339,7 +448,10 @@ func newMiniAppSource(cfg config.Config) miniappapi.Source {
 		})
 	}
 
-	return miniappapi.NewSnapshotSource(cfg.MiniApp.HomepageSnapshotFile)
+	return miniappapi.NewSnapshotSource(
+		cfg.MiniApp.HomepageSnapshotFile,
+		cfg.MiniApp.CategorySnapshotFile,
+	)
 }
 
 func init() {

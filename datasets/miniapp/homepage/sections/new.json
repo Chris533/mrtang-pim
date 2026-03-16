@@ -1,0 +1,213 @@
+{
+    "id":  "new",
+    "title":  "畅销新品",
+    "sort":  "new",
+    "pageSize":  20,
+    "contractId":  "goods_list_new",
+    "requestBody":  {
+                        "pageNum":  1,
+                        "pageSize":  20,
+                        "sort":  -9,
+                        "type":  155,
+                        "isBuyLogo":  true,
+                        "includeTagIds":  [
+                                              "tag:new"
+                                          ]
+                    },
+    "products":  [
+                     {
+                         "spuId":  "646995016921055232",
+                         "skuId":  "646995017386622976",
+                         "name":  "天府小厨娘香卤肥肠",
+                         "cover":  "/150032890/202511/49029960635554951/649889133166485504.jpg",
+                         "skuName":  "500g*20袋",
+                         "defaultUnit":  "件",
+                         "price":  460,
+                         "stockQty":  7.8,
+                         "stockText":  "有货",
+                         "tags":  [
+                                      "新品"
+                                  ],
+                         "unitOptions":  [
+                                             {
+                                                 "unitName":  "袋",
+                                                 "price":  23,
+                                                 "baseUnit":  "袋",
+                                                 "rate":  1,
+                                                 "isDefault":  false,
+                                                 "stockQty":  156,
+                                                 "stockText":  "有货"
+                                             },
+                                             {
+                                                 "unitName":  "件",
+                                                 "price":  460,
+                                                 "baseUnit":  "袋",
+                                                 "rate":  20,
+                                                 "isDefault":  true,
+                                                 "stockQty":  7.8,
+                                                 "stockText":  "有货"
+                                             }
+                                         ],
+                         "promotionTexts":  [
+                                                "满299-5",
+                                                "满1199-10"
+                                            ]
+                     },
+                     {
+                         "spuId":  "649207810357710848",
+                         "skuId":  "649207811062353920",
+                         "name":  "牛多旺鸭肠",
+                         "cover":  "/150032890/202511/5587164025797891/649272654129201152.jpg",
+                         "skuName":  "500g*20袋，固形物70%",
+                         "defaultUnit":  "件",
+                         "price":  165,
+                         "stockQty":  4.2,
+                         "stockText":  "有货",
+                         "tags":  [
+                                      "新品",
+                                      "火锅爆品"
+                                  ],
+                         "unitOptions":  [
+                                             {
+                                                 "unitName":  "袋",
+                                                 "price":  9,
+                                                 "baseUnit":  "袋",
+                                                 "rate":  1,
+                                                 "isDefault":  false,
+                                                 "stockQty":  84,
+                                                 "stockText":  "有货"
+                                             },
+                                             {
+                                                 "unitName":  "件",
+                                                 "price":  165,
+                                                 "baseUnit":  "袋",
+                                                 "rate":  20,
+                                                 "isDefault":  true,
+                                                 "stockQty":  4.2,
+                                                 "stockText":  "有货"
+                                             }
+                                         ],
+                         "promotionTexts":  [
+                                                "满299-5",
+                                                "满1199-10"
+                                            ]
+                     },
+                     {
+                         "spuId":  "648500854252695552",
+                         "skuId":  "648500854881841152",
+                         "name":  "牛多旺小叶片",
+                         "cover":  "/150032890/202511/48779316026701486/648835186259554304.jpg",
+                         "skuName":  "60%固型物500g*20",
+                         "defaultUnit":  "袋",
+                         "price":  19,
+                         "stockQty":  5,
+                         "stockText":  "有货",
+                         "tags":  [
+                                      "新品",
+                                      "火锅爆品"
+                                  ],
+                         "unitOptions":  [
+                                             {
+                                                 "unitName":  "袋",
+                                                 "price":  19,
+                                                 "baseUnit":  "袋",
+                                                 "rate":  1,
+                                                 "isDefault":  true,
+                                                 "stockQty":  5,
+                                                 "stockText":  "有货"
+                                             },
+                                             {
+                                                 "unitName":  "件",
+                                                 "price":  380,
+                                                 "baseUnit":  "袋",
+                                                 "rate":  20,
+                                                 "isDefault":  false,
+                                                 "stockQty":  0.25,
+                                                 "stockText":  "有货"
+                                             }
+                                         ],
+                         "promotionTexts":  [
+                                                "满299-5",
+                                                "满1199-10"
+                                            ]
+                     },
+                     {
+                         "spuId":  "649525485331894272",
+                         "skuId":  "649525485784879104",
+                         "name":  "天府小厨娘麻辣筷子肉",
+                         "cover":  "/150032890/202511/5745526421255425/649936874160193536.png",
+                         "skuName":  "950g*10袋",
+                         "defaultUnit":  "件",
+                         "price":  180,
+                         "stockQty":  2.5,
+                         "stockText":  "有货",
+                         "tags":  [
+                                      "新品",
+                                      "冒菜爆品"
+                                  ],
+                         "unitOptions":  [
+                                             {
+                                                 "unitName":  "袋",
+                                                 "price":  18,
+                                                 "baseUnit":  "袋",
+                                                 "rate":  1,
+                                                 "isDefault":  false,
+                                                 "stockQty":  25,
+                                                 "stockText":  "有货"
+                                             },
+                                             {
+                                                 "unitName":  "件",
+                                                 "price":  180,
+                                                 "baseUnit":  "袋",
+                                                 "rate":  10,
+                                                 "isDefault":  true,
+                                                 "stockQty":  2.5,
+                                                 "stockText":  "有货"
+                                             }
+                                         ],
+                         "promotionTexts":  [
+                                                "满299-5",
+                                                "满1199-10"
+                                            ]
+                     },
+                     {
+                         "spuId":  "661152229524418560",
+                         "skuId":  "661152230338113536",
+                         "name":  "千米井加碘精制盐(350克)",
+                         "cover":  "/150032890/202512/51715256945257927/661152082220703744.png",
+                         "skuName":  "350克*60包",
+                         "defaultUnit":  "件",
+                         "price":  30,
+                         "stockQty":  5,
+                         "stockText":  "有货",
+                         "tags":  [
+                                      "新品",
+                                      "热销"
+                                  ],
+                         "unitOptions":  [
+                                             {
+                                                 "unitName":  "袋",
+                                                 "price":  0.5,
+                                                 "baseUnit":  "袋",
+                                                 "rate":  1,
+                                                 "isDefault":  false,
+                                                 "stockQty":  300,
+                                                 "stockText":  "有货"
+                                             },
+                                             {
+                                                 "unitName":  "件",
+                                                 "price":  30,
+                                                 "baseUnit":  "袋",
+                                                 "rate":  60,
+                                                 "isDefault":  true,
+                                                 "stockQty":  5,
+                                                 "stockText":  "有货"
+                                             }
+                                         ],
+                         "promotionTexts":  [
+                                                "满299-5",
+                                                "满1199-10"
+                                            ]
+                     }
+                 ]
+}

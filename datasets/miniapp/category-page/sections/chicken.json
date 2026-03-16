@@ -1,0 +1,181 @@
+{
+    "id":  "chicken",
+    "title":  "鸡产品",
+    "categoryKey":  "639042624178835456",
+    "categoryPath":  "鸡产品",
+    "requestBody":  {
+                        "checkList":  [
+
+                                      ],
+                        "includeTagIds":  [
+
+                                          ],
+                        "includeBrandIds":  [
+
+                                            ],
+                        "sort":  -1,
+                        "keywords":  "",
+                        "subjectPath":  "639042624178835456",
+                        "pageNum":  1,
+                        "pageSize":  10,
+                        "type":  153,
+                        "isAdaptKeywords":  false,
+                        "isBuyLogo":  true
+                    },
+    "products":  [
+                     {
+                         "spuId":  "687609781015719936",
+                         "skuId":  "687609781711974400",
+                         "name":  "天颐康40-50长爪",
+                         "cover":  "/150032890/20263/37569340145093793/687653547118227456.jpg",
+                         "skuName":  "10kg",
+                         "defaultUnit":  "件",
+                         "price":  285,
+                         "stockQty":  159,
+                         "stockText":  "有货",
+                         "tags":  [
+
+                                  ],
+                         "unitOptions":  [
+                                             {
+                                                 "unitName":  "件",
+                                                 "price":  285,
+                                                 "baseUnit":  "件",
+                                                 "rate":  1,
+                                                 "isDefault":  true,
+                                                 "stockQty":  159,
+                                                 "stockText":  "有货"
+                                             }
+                                         ],
+                         "promotionTexts":  [
+                                                "满299-5",
+                                                "满1199-10"
+                                            ]
+                     },
+                     {
+                         "spuId":  "684668466749186048",
+                         "skuId":  "684668467701293056",
+                         "name":  "郯润长爪m号",
+                         "cover":  "/150032890/20263/57351344162388450/684790094712115200.png",
+                         "skuName":  "9.7kg",
+                         "defaultUnit":  "件",
+                         "price":  250,
+                         "stockQty":  30,
+                         "stockText":  "有货",
+                         "tags":  [
+
+                                  ],
+                         "unitOptions":  [
+                                             {
+                                                 "unitName":  "件",
+                                                 "price":  250,
+                                                 "baseUnit":  "件",
+                                                 "rate":  1,
+                                                 "isDefault":  true,
+                                                 "stockQty":  30,
+                                                 "stockText":  "有货"
+                                             }
+                                         ],
+                         "promotionTexts":  [
+                                                "满299-5",
+                                                "满1199-10"
+                                            ]
+                     },
+                     {
+                         "spuId":  "683941023021350912",
+                         "skuId":  "683941026209021952",
+                         "name":  "3887爪",
+                         "cover":  "/150032890/20263/57182011735254448/684081553705562112.jpg",
+                         "skuName":  "30斤",
+                         "defaultUnit":  "件",
+                         "price":  440,
+                         "stockQty":  42,
+                         "stockText":  "有货",
+                         "tags":  [
+
+                                  ],
+                         "unitOptions":  [
+                                             {
+                                                 "unitName":  "件",
+                                                 "price":  440,
+                                                 "baseUnit":  "件",
+                                                 "rate":  1,
+                                                 "isDefault":  true,
+                                                 "stockQty":  42,
+                                                 "stockText":  "有货"
+                                             }
+                                         ],
+                         "promotionTexts":  [
+                                                "满299-5",
+                                                "满1199-10"
+                                            ]
+                     },
+                     {
+                         "spuId":  "683215786814431232",
+                         "skuId":  "683215792313163776",
+                         "name":  "宫味皇乌鸡腿",
+                         "cover":  "/150032890/20257/16572099774792022/599583657673711616.jpg",
+                         "skuName":  "10kg*1件",
+                         "defaultUnit":  "件",
+                         "price":  310,
+                         "stockQty":  14,
+                         "stockText":  "有货",
+                         "tags":  [
+                                      "热销"
+                                  ],
+                         "unitOptions":  [
+                                             {
+                                                 "unitName":  "件",
+                                                 "price":  310,
+                                                 "baseUnit":  "件",
+                                                 "rate":  1,
+                                                 "isDefault":  true,
+                                                 "stockQty":  14,
+                                                 "stockText":  "有货"
+                                             }
+                                         ],
+                         "promotionTexts":  [
+                                                "满299-5",
+                                                "满1199-10"
+                                            ]
+                     },
+                     {
+                         "spuId":  "671256063491756032",
+                         "skuId":  "671256064473223168",
+                         "name":  "宏业五星鸡块",
+                         "cover":  "/150032890/20261/54145654837636061/671345909820710912.jpg",
+                         "skuName":  "950g*10袋",
+                         "defaultUnit":  "件",
+                         "price":  105,
+                         "stockQty":  0.6,
+                         "stockText":  "有货",
+                         "tags":  [
+
+                                  ],
+                         "unitOptions":  [
+                                             {
+                                                 "unitName":  "袋",
+                                                 "price":  11,
+                                                 "baseUnit":  "袋",
+                                                 "rate":  1,
+                                                 "isDefault":  false,
+                                                 "stockQty":  6,
+                                                 "stockText":  "有货"
+                                             },
+                                             {
+                                                 "unitName":  "件",
+                                                 "price":  105,
+                                                 "baseUnit":  "袋",
+                                                 "rate":  10,
+                                                 "isDefault":  true,
+                                                 "stockQty":  0.6,
+                                                 "stockText":  "有货"
+                                             }
+                                         ],
+                         "promotionTexts":  [
+                                                "满299-5",
+                                                "满1199-10"
+                                            ]
+                     }
+                 ]
+}

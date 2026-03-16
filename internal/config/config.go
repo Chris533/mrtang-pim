@@ -30,6 +30,7 @@ type MiniAppConfig struct {
 	SourceURL            string
 	SourceTimeout        time.Duration
 	HomepageSnapshotFile string
+	CategorySnapshotFile string
 	AuthorizedAccountID  string
 	UserAgent            string
 }
@@ -84,7 +85,8 @@ func Load() Config {
 			SourceMode:           getEnv("MINIAPP_SOURCE_MODE", "snapshot"),
 			SourceURL:            strings.TrimSpace(os.Getenv("MINIAPP_SOURCE_URL")),
 			SourceTimeout:        getEnvDuration("MINIAPP_SOURCE_TIMEOUT", 20*time.Second),
-			HomepageSnapshotFile: getEnv("MINIAPP_HOMEPAGE_SNAPSHOT", "./datasets/miniapp_homepage_snapshot.json"),
+			HomepageSnapshotFile: getEnv("MINIAPP_HOMEPAGE_SNAPSHOT", "./datasets/miniapp/homepage"),
+			CategorySnapshotFile: getEnv("MINIAPP_CATEGORY_SNAPSHOT", "./datasets/miniapp/category-page"),
 			AuthorizedAccountID:  strings.TrimSpace(os.Getenv("MINIAPP_AUTH_ACCOUNT_ID")),
 			UserAgent:            getEnv("MINIAPP_USER_AGENT", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.53(0x18003537) NetType/WIFI Language/zh_CN miniProgram"),
 		},

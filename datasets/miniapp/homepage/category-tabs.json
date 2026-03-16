@@ -1,0 +1,18 @@
+[
+    {
+        "key":  "bought",
+        "label":  "买过"
+    },
+    {
+        "key":  "new",
+        "label":  "新品"
+    },
+    {
+        "key":  "hot",
+        "label":  "热卖"
+    },
+    {
+        "key":  "recommend",
+        "label":  "推荐"
+    }
+]

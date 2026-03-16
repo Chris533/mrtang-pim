@@ -1,0 +1,28 @@
+{
+    "id":  "sausage-prepared",
+    "title":  "烤肠.调理品",
+    "categoryKey":  "639044069926199296",
+    "categoryPath":  "烤肠.调理品",
+    "requestBody":  {
+                        "checkList":  [
+
+                                      ],
+                        "includeTagIds":  [
+
+                                          ],
+                        "includeBrandIds":  [
+
+                                            ],
+                        "sort":  -1,
+                        "keywords":  "",
+                        "subjectPath":  "639044069926199296",
+                        "pageNum":  1,
+                        "pageSize":  10,
+                        "type":  153,
+                        "isAdaptKeywords":  false,
+                        "isBuyLogo":  true
+                    },
+    "products":  [
+
+                 ]
+}

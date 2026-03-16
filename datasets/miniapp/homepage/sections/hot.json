@@ -1,0 +1,179 @@
+{
+    "id":  "hot",
+    "title":  "热销推荐",
+    "sort":  "hot",
+    "pageSize":  9,
+    "contractId":  "goods_list_hot",
+    "requestBody":  {
+                        "pageNum":  1,
+                        "pageSize":  9,
+                        "sort":  -9,
+                        "type":  155,
+                        "isBuyLogo":  true
+                    },
+    "products":  [
+                     {
+                         "spuId":  "593792488859361280",
+                         "skuId":  "593792489375260672",
+                         "name":  "500g芝麻汤圆",
+                         "cover":  "/150032890/20257/36523291843683869/597432362225274880.jpg",
+                         "skuName":  "20袋*1件",
+                         "defaultUnit":  "件",
+                         "price":  100,
+                         "stockQty":  540.45,
+                         "stockText":  "有货",
+                         "tags":  [
+                                      "热销"
+                                  ],
+                         "unitOptions":  [
+                                             {
+                                                 "unitName":  "件",
+                                                 "price":  100,
+                                                 "baseUnit":  "袋",
+                                                 "rate":  20,
+                                                 "isDefault":  true,
+                                                 "stockQty":  540.45,
+                                                 "stockText":  "有货"
+                                             }
+                                         ],
+                         "promotionTexts":  [
+                                                "满299-5",
+                                                "满1199-10"
+                                            ]
+                     },
+                     {
+                         "spuId":  "593442906757525504",
+                         "skuId":  "593442907130818560",
+                         "name":  "寄无优精修鸡尾",
+                         "cover":  "/150032890/20257/35990880899404097/595197818206220288.jpg",
+                         "skuName":  "1kg*10袋",
+                         "defaultUnit":  "件",
+                         "price":  100,
+                         "stockQty":  5.2,
+                         "stockText":  "有货",
+                         "tags":  [
+                                      "热销"
+                                  ],
+                         "unitOptions":  [
+                                             {
+                                                 "unitName":  "件",
+                                                 "price":  100,
+                                                 "baseUnit":  "袋",
+                                                 "rate":  10,
+                                                 "isDefault":  true,
+                                                 "stockQty":  5.2,
+                                                 "stockText":  "有货"
+                                             }
+                                         ],
+                         "promotionTexts":  [
+                                                "满299-5",
+                                                "满1199-10"
+                                            ]
+                     },
+                     {
+                         "spuId":  "593845837495398400",
+                         "skuId":  "593845837956771840",
+                         "name":  "千味金玉良缘",
+                         "cover":  "/150032890/20256/35820169752999950/594483494433189888.jpg",
+                         "skuName":  "280g*20袋",
+                         "defaultUnit":  "件",
+                         "price":  65,
+                         "stockQty":  412.35,
+                         "stockText":  "有货",
+                         "tags":  [
+                                      "热销"
+                                  ],
+                         "unitOptions":  [
+                                             {
+                                                 "unitName":  "袋",
+                                                 "price":  3.5,
+                                                 "baseUnit":  "袋",
+                                                 "rate":  1,
+                                                 "isDefault":  false,
+                                                 "stockQty":  8247,
+                                                 "stockText":  "有货"
+                                             },
+                                             {
+                                                 "unitName":  "件",
+                                                 "price":  65,
+                                                 "baseUnit":  "袋",
+                                                 "rate":  20,
+                                                 "isDefault":  true,
+                                                 "stockQty":  412.35,
+                                                 "stockText":  "有货"
+                                             }
+                                         ],
+                         "promotionTexts":  [
+                                                "满299-5",
+                                                "满1199-10"
+                                            ]
+                     },
+                     {
+                         "spuId":  "593745019060502528",
+                         "skuId":  "593745019484127232",
+                         "name":  "安井爆浆糍粑",
+                         "cover":  "/150032890/20256/35758353791752026/594221312277229568.jpg",
+                         "skuName":  "300g*12袋",
+                         "defaultUnit":  "件",
+                         "price":  45,
+                         "stockQty":  224.41,
+                         "stockText":  "有货",
+                         "tags":  [
+                                      "热销"
+                                  ],
+                         "unitOptions":  [
+                                             {
+                                                 "unitName":  "袋",
+                                                 "price":  4,
+                                                 "baseUnit":  "袋",
+                                                 "rate":  1,
+                                                 "isDefault":  false,
+                                                 "stockQty":  2693,
+                                                 "stockText":  "有货"
+                                             },
+                                             {
+                                                 "unitName":  "件",
+                                                 "price":  45,
+                                                 "baseUnit":  "袋",
+                                                 "rate":  12,
+                                                 "isDefault":  true,
+                                                 "stockQty":  224.41,
+                                                 "stockText":  "有货"
+                                             }
+                                         ],
+                         "promotionTexts":  [
+                                                "满299-5",
+                                                "满1199-10"
+                                            ]
+                     },
+                     {
+                         "spuId":  "593826736458653696",
+                         "skuId":  "593826736844529664",
+                         "name":  "455g芝麻汤圆",
+                         "cover":  "/150032890/20256/35749431468286856/594183889337987072.jpg",
+                         "skuName":  "455g*20袋",
+                         "defaultUnit":  "件",
+                         "price":  80,
+                         "stockQty":  554,
+                         "stockText":  "有货",
+                         "tags":  [
+                                      "热销"
+                                  ],
+                         "unitOptions":  [
+                                             {
+                                                 "unitName":  "件",
+                                                 "price":  80,
+                                                 "baseUnit":  "袋",
+                                                 "rate":  20,
+                                                 "isDefault":  true,
+                                                 "stockQty":  554,
+                                                 "stockText":  "有货"
+                                             }
+                                         ],
+                         "promotionTexts":  [
+                                                "满299-5",
+                                                "满1199-10"
+                                            ]
+                     }
+                 ]
+}

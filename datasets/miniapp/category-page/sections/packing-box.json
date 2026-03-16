@@ -1,0 +1,28 @@
+{
+    "id":  "packing-box",
+    "title":  "打包盒系列",
+    "categoryKey":  "639044861969973248",
+    "categoryPath":  "打包盒系列",
+    "requestBody":  {
+                        "checkList":  [
+
+                                      ],
+                        "includeTagIds":  [
+
+                                          ],
+                        "includeBrandIds":  [
+
+                                            ],
+                        "sort":  -1,
+                        "keywords":  "",
+                        "subjectPath":  "639044861969973248",
+                        "pageNum":  1,
+                        "pageSize":  10,
+                        "type":  153,
+                        "isAdaptKeywords":  false,
+                        "isBuyLogo":  true
+                    },
+    "products":  [
+
+                 ]
+}

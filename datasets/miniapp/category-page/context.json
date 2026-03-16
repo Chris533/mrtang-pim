@@ -1,0 +1,16 @@
+{
+    "loginStatus":  "approved",
+    "contactsName":  "示例采购员",
+    "canOrder":  true,
+    "auditStatus":  2,
+    "customerStatus":  2,
+    "cartItemCount":  0,
+    "categorySetting":  {
+                            "layoutType":  3,
+                            "defaultSort":  -1,
+                            "maxCategoryLevel":  3,
+                            "searchType":  0,
+                            "categorySearchType":  0,
+                            "categorySortType":  0
+                        }
+}

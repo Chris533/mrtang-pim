@@ -1,0 +1,158 @@
+[
+    {
+        "id":  "category_page_login_send",
+        "name":  "Category Page Login Send",
+        "method":  "GET",
+        "originalPath":  "/gateway/marketing-service/api/v1/integral/wx_login_send",
+        "localPath":  "/api/miniapp/category-page/context",
+        "role":  "Category page login-side effect call used before category data requests",
+        "request":  {
+
+                    },
+        "responseKeys":  [
+                             "code",
+                             "message"
+                         ],
+        "tags":  [
+                     "category-page",
+                     "auth"
+                 ]
+    },
+    {
+        "id":  "category_page_login_status",
+        "name":  "Category Page Login Status",
+        "method":  "POST",
+        "originalPath":  "/gateway/customer-service/api/v1/order/app/get_login_status",
+        "localPath":  "/api/miniapp/category-page/context",
+        "role":  "Category page customer and ordering status summary",
+        "request":  {
+                        "bodyKeys":  [
+                                         "contactsId",
+                                         "customerId",
+                                         "isDistributor"
+                                     ]
+                    },
+        "responseKeys":  [
+                             "contactsName",
+                             "isOrderContacts",
+                             "auditStatus",
+                             "status"
+                         ],
+        "tags":  [
+                     "category-page",
+                     "auth"
+                 ]
+    },
+    {
+        "id":  "category_page_tree",
+        "name":  "Category Page Tree",
+        "method":  "GET",
+        "originalPath":  "/gateway/goodsservice/api/v1/wx/category/get_have_goods_category",
+        "localPath":  "/api/miniapp/category-page/tree",
+        "role":  "Three-level category tree for the category landing page",
+        "request":  {
+                        "queryKeys":  [
+                                          "layoutType",
+                                          "maxCategoryLevel",
+                                          "categorySortType"
+                                      ]
+                    },
+        "responseKeys":  [
+                             "id",
+                             "categoryName",
+                             "pathCode",
+                             "childCategoryList",
+                             "deep"
+                         ],
+        "tags":  [
+                     "category-page",
+                     "category",
+                     "tree"
+                 ]
+    },
+    {
+        "id":  "category_page_cart_total_num",
+        "name":  "Category Page Cart Total Num",
+        "method":  "GET",
+        "originalPath":  "/gateway/goodsservice/api/v1/wx/cart/get_cart_tot_num",
+        "localPath":  "/api/miniapp/category-page/context",
+        "role":  "Cart badge snapshot used by category page header",
+        "request":  {
+                        "queryKeys":  [
+                                          "needAllUnit"
+                                      ]
+                    },
+        "responseKeys":  [
+                             "data"
+                         ],
+        "tags":  [
+                     "category-page",
+                     "cart"
+                 ]
+    },
+    {
+        "id":  "category_page_goods_list_chicken",
+        "name":  "Category Page Goods List Chicken",
+        "method":  "POST",
+        "originalPath":  "/gateway/gateway-mall-service/api/v1/wx/goods/list",
+        "localPath":  "/api/miniapp/category-page/sections/chicken",
+        "role":  "Category goods list request scoped by top-level category path",
+        "request":  {
+                        "bodyKeys":  [
+                                         "checkList",
+                                         "includeTagIds",
+                                         "includeBrandIds",
+                                         "sort",
+                                         "keywords",
+                                         "subjectPath",
+                                         "pageNum",
+                                         "pageSize",
+                                         "type",
+                                         "isAdaptKeywords",
+                                         "isBuyLogo"
+                                     ]
+                    },
+        "responseKeys":  [
+                             "pageNum",
+                             "pageSize",
+                             "total",
+                             "pages",
+                             "list"
+                         ],
+        "tags":  [
+                     "category-page",
+                     "goods",
+                     "list"
+                 ]
+    },
+    {
+        "id":  "category_page_price_stock_batch_chicken",
+        "name":  "Category Page Price Stock Batch Chicken",
+        "method":  "POST",
+        "originalPath":  "/gateway/goodsservice/api/v1/wx/goods/sku/list/price_stock",
+        "localPath":  "/api/miniapp/category-page/sections/chicken",
+        "role":  "Category goods batch price and stock supplement after list query",
+        "request":  {
+                        "bodyKeys":  [
+                                         "goodsShowProducedDate",
+                                         "needAllUnit",
+                                         "itemList",
+                                         "extReturnVO",
+                                         "levelId"
+                                     ]
+                    },
+        "responseKeys":  [
+                             "skuId",
+                             "discountAfterPrice",
+                             "qty",
+                             "displayText",
+                             "promotionList",
+                             "unitInfoList"
+                         ],
+        "tags":  [
+                     "category-page",
+                     "goods",
+                     "stock"
+                 ]
+    }
+]

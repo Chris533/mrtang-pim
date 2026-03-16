@@ -25,8 +25,11 @@
 ```text
 mrtang-pim/
 ├── cmd/pim/main.go
-├── datasets/miniapp_homepage_snapshot.json
-├── datasets/mock_supplier_products.json
+├── datasets/
+│   ├── miniapp/
+│   │   ├── homepage/
+│   │   └── category-page/
+│   └── mock_supplier_products.json
 ├── internal/
 │   ├── config
 │   ├── image
@@ -75,9 +78,10 @@ go run ./cmd/pim serve
 
 ## 脱敏首页接口
 
-`mrtang-pim/docs/rr/index.zip` 中的小程序首页抓包样本已经被整理成脱敏 snapshot:
+`mrtang-pim/docs/rr/index.zip` 和 `docs/rr/categories` 中的小程序抓包样本已经被整理成脱敏 snapshot 目录:
 
-- [`datasets/miniapp_homepage_snapshot.json`](./datasets/miniapp_homepage_snapshot.json)
+- [`datasets/miniapp/homepage`](./datasets/miniapp/homepage)
+- [`datasets/miniapp/category-page`](./datasets/miniapp/category-page)
 
 这套数据不会重放第三方鉴权，也不保留任何敏感 token / openId / customerId。它的目标是:
 
@@ -85,19 +89,22 @@ go run ./cmd/pim serve
 - 保留首页相关接口之间的依赖关系
 - 为后续正式授权接入保留可插拔的数据源边界
 
+如果你需要直接看“源站 API -> rr 样本 -> dataset -> 本地接口”的总览，见 [docs/source-api.md](./docs/source-api.md)。
+
 环境变量:
 
 - `MINIAPP_SOURCE_MODE=snapshot|http`
 - `MINIAPP_SOURCE_URL=...`
 - `MINIAPP_SOURCE_TIMEOUT=20s`
-- `MINIAPP_HOMEPAGE_SNAPSHOT=./datasets/miniapp_homepage_snapshot.json`
+- `MINIAPP_HOMEPAGE_SNAPSHOT=./datasets/miniapp/homepage`
+- `MINIAPP_CATEGORY_SNAPSHOT=./datasets/miniapp/category-page`
 - `MINIAPP_AUTH_ACCOUNT_ID=...`
 - `MINIAPP_USER_AGENT=Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.53(0x18003537) NetType/WIFI Language/zh_CN miniProgram`
 
 数据源切换:
 
 - `MINIAPP_SOURCE_MODE=snapshot`
-  读取本地 snapshot 文件
+  读取本地 snapshot 目录，并组装 homepage/category-page dataset
 - `MINIAPP_SOURCE_MODE=http`
   从 `MINIAPP_SOURCE_URL` 拉取标准化后的 `Dataset` JSON
 
@@ -118,6 +125,9 @@ curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniap
 curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/homepage/sections
 curl -H 'Authorization: Bearer your-account-id' 'http://127.0.0.1:8090/api/miniapp/homepage/section?id=new'
 curl -H 'Authorization: Bearer your-account-id' 'http://127.0.0.1:8090/api/miniapp/homepage/section?id=hot'
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/contracts/category-page
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/category-page/tree
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/category-page/sections
 ```
 
 接口说明:

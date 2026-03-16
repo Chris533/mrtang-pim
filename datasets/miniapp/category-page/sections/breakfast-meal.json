@@ -1,0 +1,28 @@
+{
+    "id":  "breakfast-meal",
+    "title":  "团餐，早餐，面点美食",
+    "categoryKey":  "639043563308658688",
+    "categoryPath":  "团餐，早餐，面点美食",
+    "requestBody":  {
+                        "checkList":  [
+
+                                      ],
+                        "includeTagIds":  [
+
+                                          ],
+                        "includeBrandIds":  [
+
+                                            ],
+                        "sort":  -1,
+                        "keywords":  "",
+                        "subjectPath":  "639043563308658688",
+                        "pageNum":  1,
+                        "pageSize":  10,
+                        "type":  153,
+                        "isAdaptKeywords":  false,
+                        "isBuyLogo":  true
+                    },
+    "products":  [
+
+                 ]
+}

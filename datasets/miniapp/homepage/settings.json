@@ -1,0 +1,38 @@
+{
+    "corpName":  "XX商贸有限公司",
+    "shopName":  "XX冷冻供应链",
+    "currencySymbol":  "￥",
+    "themeColor":  [
+                       "#FF6E1A",
+                       "#FF6E1A",
+                       "#FFF0E8"
+                   ],
+    "topBackgroundColor":  "#FFFFFF",
+    "topContentColor":  "#000000",
+    "pageName":  "XX全品类冷冻供应",
+    "showOnlineService":  true,
+    "showShoppingCart":  true,
+    "enableCoupon":  true,
+    "enableIntegral":  true,
+    "enableInvoice":  true,
+    "enablePrePayment":  true,
+    "enableGoodsFavorite":  true,
+    "pricePrecision":  4,
+    "qtyPrecision":  2,
+    "stockViewRange":  2,
+    "goodsListSetting":  {
+                             "layoutType":  2,
+                             "defaultSort":  -9,
+                             "detailPageShowType":  2,
+                             "listPageShowType":  2,
+                             "showSkuSearchBtn":  0
+                         },
+    "goodsCategorySetting":  {
+                                 "layoutType":  3,
+                                 "defaultSort":  -1,
+                                 "maxCategoryLevel":  3,
+                                 "searchType":  0,
+                                 "categorySearchType":  0,
+                                 "categorySortType":  0
+                             }
+}

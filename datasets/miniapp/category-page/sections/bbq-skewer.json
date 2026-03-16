@@ -1,0 +1,28 @@
+{
+    "id":  "bbq-skewer",
+    "title":  "烧烤串串",
+    "categoryKey":  "639043759132278784",
+    "categoryPath":  "烧烤串串",
+    "requestBody":  {
+                        "checkList":  [
+
+                                      ],
+                        "includeTagIds":  [
+
+                                          ],
+                        "includeBrandIds":  [
+
+                                            ],
+                        "sort":  -1,
+                        "keywords":  "",
+                        "subjectPath":  "639043759132278784",
+                        "pageNum":  1,
+                        "pageSize":  10,
+                        "type":  153,
+                        "isAdaptKeywords":  false,
+                        "isBuyLogo":  true
+                    },
+    "products":  [
+
+                 ]
+}
