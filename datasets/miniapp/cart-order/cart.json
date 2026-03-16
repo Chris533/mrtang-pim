@@ -1,0 +1,286 @@
+{
+    "add": {
+        "contractId": "cart_order_add",
+        "requestBody": [
+            {
+                "cost": 460,
+                "discountCost": 460,
+                "num": "1",
+                "isDeputy": 0,
+                "skuName": "500g*20袋",
+                "remark": "",
+                "skuId": "646995017386622976",
+                "spuId": "646995016921055232",
+                "unitId": "592750618481872899",
+                "priceSource": 5,
+                "warehouseId": 0,
+                "isFromBuyNow": 0
+            }
+        ],
+        "response": {
+            "code": "SYS_0000",
+            "message": "访问成功",
+            "data": {
+                "varietyNum": 3,
+                "totNum": 2.04,
+                "allNum": null,
+                "totPrice": 486.24,
+                "totTaxPrice": 486.24,
+                "totVarietyNum": 3,
+                "currentDelCount": 0
+            }
+        }
+    },
+    "changeNum": {
+        "contractId": "cart_order_change_num",
+        "requestBody": {
+            "id": "demo-cart-1",
+            "changeNum": 1,
+            "isIntegralList": false,
+            "discountCost": 13
+        },
+        "response": {
+            "code": "SYS_0000",
+            "message": "访问成功",
+            "data": {
+                "varietyNum": 4,
+                "totNum": 4.04,
+                "allNum": null,
+                "totPrice": 959.24,
+                "totTaxPrice": 959.24,
+                "totVarietyNum": 4,
+                "currentDelCount": 0
+            }
+        }
+    },
+    "list": {
+        "contractId": "cart_order_list",
+        "requestBody": {
+            "isBuyLogo": true,
+            "levelId": null,
+            "isIntegralList": false,
+            "page": {
+                "pageNum": 1,
+                "pageSize": 20
+            }
+        },
+        "response": {
+            "code": "SYS_0000",
+            "message": "访问成功",
+            "data": {
+                "cartSpuVOList": {
+                    "pageNum": 1,
+                    "pageSize": 20,
+                    "total": 3,
+                    "pages": 1,
+                    "list": [
+                        {
+                            "id": "demo-cart-2",
+                            "spuId": "646995016921055232",
+                            "skuId": "646995017386622976",
+                            "name": "天府小厨娘香卤肥肠",
+                            "skuName": "500g*20袋",
+                            "unitId": "592750618481872899",
+                            "unitName": "件",
+                            "baseUnitId": "592761609374539776",
+                            "baseUnitName": "袋",
+                            "num": 2,
+                            "cost": 460,
+                            "totPrice": 920,
+                            "stockList": [
+                                {
+                                    "unitId": "592761609374539776",
+                                    "qty": 156,
+                                    "displayText": "有货"
+                                },
+                                {
+                                    "unitId": "592750618481872899",
+                                    "qty": 7.8,
+                                    "displayText": "有货"
+                                }
+                            ],
+                            "promotionTexts": [
+                                "满299-5",
+                                "满1199-10"
+                            ],
+                            "whetherMultipleUnits": true,
+                            "unitRate": 20
+                        },
+                        {
+                            "id": "demo-cart-3",
+                            "spuId": "600329085763174400",
+                            "skuId": "600329086149050368",
+                            "name": "冠进蒜香骨",
+                            "skuName": "500g*20袋",
+                            "unitId": "592761609374539776",
+                            "unitName": "袋",
+                            "baseUnitId": "592761609374539776",
+                            "baseUnitName": "袋",
+                            "num": 1,
+                            "cost": 26,
+                            "totPrice": 26,
+                            "stockList": [
+                                {
+                                    "unitId": "592761609374539776",
+                                    "qty": 204,
+                                    "displayText": "有货"
+                                },
+                                {
+                                    "unitId": "592750618481872899",
+                                    "qty": 10.2,
+                                    "displayText": "有货"
+                                }
+                            ],
+                            "promotionTexts": [
+                                "满299-5",
+                                "满1199-10"
+                            ],
+                            "whetherMultipleUnits": true,
+                            "unitRate": 1
+                        },
+                        {
+                            "id": "demo-cart-4",
+                            "spuId": "670168385396461568",
+                            "skuId": "670168388273754112",
+                            "name": "荣旺鸭脖",
+                            "skuName": "1kg*12袋",
+                            "unitId": "592761609374539776",
+                            "unitName": "袋",
+                            "baseUnitId": "592761609374539776",
+                            "baseUnitName": "袋",
+                            "num": 0.04,
+                            "cost": 6,
+                            "totPrice": 0.24,
+                            "stockList": [
+                                {
+                                    "unitId": "592761609374539776",
+                                    "qty": 0.04,
+                                    "displayText": "有货"
+                                },
+                                {
+                                    "unitId": "592750618481872899",
+                                    "qty": 0,
+                                    "displayText": "有货"
+                                }
+                            ],
+                            "promotionTexts": [
+                                "满299-5",
+                                "满1199-10"
+                            ],
+                            "whetherMultipleUnits": true,
+                            "unitRate": 1
+                        }
+                    ]
+                },
+                "cartTotVO": {
+                    "varietyNum": 3,
+                    "totNum": 3.04,
+                    "allNum": null,
+                    "totPrice": 946.24,
+                    "totTaxPrice": 946.24,
+                    "totVarietyNum": 3,
+                    "currentDelCount": 0
+                }
+            }
+        }
+    },
+    "detail": {
+        "contractId": "cart_order_detail",
+        "requestQuery": {
+            "isFirst": 1,
+            "isIntegralList": false,
+            "isFromBuyNow": 0,
+            "specialAttr": 0
+        },
+        "response": {
+            "code": "SYS_0000",
+            "message": "访问成功",
+            "data": {
+                "spuDetail": {
+                    "varietyNum": 4,
+                    "num": 4.04,
+                    "totPrice": 959.24,
+                    "spuList": [
+                        {
+                            "id": "demo-cart-1",
+                            "spuId": "593849653552889856",
+                            "skuId": "593849654014263296",
+                            "name": "爆汁小肉肠（纯白箱）",
+                            "unitName": "袋",
+                            "num": 1,
+                            "discountCost": 13,
+                            "totPrice": 13
+                        },
+                        {
+                            "id": "demo-cart-2",
+                            "spuId": "646995016921055232",
+                            "skuId": "646995017386622976",
+                            "name": "天府小厨娘香卤肥肠",
+                            "unitName": "件",
+                            "num": 2,
+                            "discountCost": 460,
+                            "totPrice": 920
+                        },
+                        {
+                            "id": "demo-cart-3",
+                            "spuId": "600329085763174400",
+                            "skuId": "600329086149050368",
+                            "name": "冠进蒜香骨",
+                            "unitName": "袋",
+                            "num": 1,
+                            "discountCost": 26,
+                            "totPrice": 26
+                        },
+                        {
+                            "id": "demo-cart-4",
+                            "spuId": "670168385396461568",
+                            "skuId": "670168388273754112",
+                            "name": "荣旺鸭脖",
+                            "unitName": "袋",
+                            "num": 0.04,
+                            "discountCost": 6,
+                            "totPrice": 0.24
+                        }
+                    ]
+                },
+                "giftDetail": {
+                    "varietyNum": 0,
+                    "num": 0,
+                    "totPrice": 0
+                },
+                "couponList": [
+                    {
+                        "couponId": "demo-coupon-10",
+                        "name": "新开业大放送-优惠券",
+                        "nominalValue": 10,
+                        "threshold": 1199,
+                        "allowUse": false,
+                        "guids": [
+                            "demo-cart-1",
+                            "demo-cart-2",
+                            "demo-cart-3",
+                            "demo-cart-4"
+                        ]
+                    }
+                ],
+                "totMoney": 959.24,
+                "taxRate": 0,
+                "baseUnitTotNum": 42.04,
+                "totWeight": "0",
+                "exemptionFromPostage": 0
+            }
+        }
+    },
+    "settle": {
+        "contractId": "cart_order_settle",
+        "requestBody": {
+            "isIntegralList": false,
+            "isFromBuyNow": 0
+        },
+        "response": {
+            "code": "SYS_0000",
+            "message": "访问成功",
+            "data": null
+        }
+    }
+}

@@ -6,6 +6,7 @@ type Dataset struct {
 	Homepage     HomepageAggregate     `json:"homepage"`
 	CategoryPage CategoryPageAggregate `json:"categoryPage"`
 	ProductPage  ProductPageAggregate  `json:"productPage"`
+	CartOrder    CartOrderAggregate    `json:"cartOrder"`
 }
 
 type Meta struct {
@@ -340,4 +341,185 @@ type ProductContextSettings struct {
 	ForbidOutStockOrder bool   `json:"forbidOutStockOrder"`
 	ShowBookQty         bool   `json:"showBookQty"`
 	ShowStockQty        bool   `json:"showStockQty"`
+}
+
+type CartOrderAggregate struct {
+	Cart  CartAggregate  `json:"cart"`
+	Order OrderAggregate `json:"order"`
+}
+
+type CartAggregate struct {
+	Add       OperationSnapshot `json:"add"`
+	ChangeNum OperationSnapshot `json:"changeNum"`
+	List      OperationSnapshot `json:"list"`
+	Detail    OperationSnapshot `json:"detail"`
+	Settle    OperationSnapshot `json:"settle"`
+}
+
+type OrderAggregate struct {
+	DefaultDelivery OperationSnapshot `json:"defaultDelivery"`
+	Deliveries      OperationSnapshot `json:"deliveries"`
+	AnalyseAddress  OperationSnapshot `json:"analyseAddress"`
+	AddDelivery     OperationSnapshot `json:"addDelivery"`
+	FreightCosts    []ScenarioAction  `json:"freightCosts"`
+	Submit          OperationSnapshot `json:"submit"`
+}
+
+type OperationSnapshot struct {
+	ContractID   string         `json:"contractId"`
+	RequestQuery map[string]any `json:"requestQuery,omitempty"`
+	RequestBody  any            `json:"requestBody,omitempty"`
+	Response     any            `json:"response"`
+}
+
+type ScenarioAction struct {
+	Scenario     string         `json:"scenario"`
+	Label        string         `json:"label"`
+	ContractID   string         `json:"contractId"`
+	RequestQuery map[string]any `json:"requestQuery,omitempty"`
+	RequestBody  any            `json:"requestBody,omitempty"`
+	Response     any            `json:"response"`
+}
+
+type CartDetailSummary struct {
+	VarietyNum       int                     `json:"varietyNum"`
+	ItemCount        int                     `json:"itemCount"`
+	CartIDs          []string                `json:"cartIds"`
+	TotalQty         float64                 `json:"totalQty"`
+	BaseUnitTotalQty float64                 `json:"baseUnitTotalQty"`
+	TotalAmount      float64                 `json:"totalAmount"`
+	TaxRate          float64                 `json:"taxRate"`
+	ExemptionFreight float64                 `json:"exemptionFreight"`
+	CouponCount      int                     `json:"couponCount"`
+	Items            []CartDetailItemSummary `json:"items"`
+}
+
+type CartListSummary struct {
+	VarietyNum  int                   `json:"varietyNum"`
+	ItemCount   int                   `json:"itemCount"`
+	TotalQty    float64               `json:"totalQty"`
+	TotalAmount float64               `json:"totalAmount"`
+	TaxAmount   float64               `json:"taxAmount"`
+	Items       []CartListItemSummary `json:"items"`
+}
+
+type CartListItemSummary struct {
+	CartID         string   `json:"cartId"`
+	ProductID      string   `json:"productId"`
+	SpuID          string   `json:"spuId"`
+	SkuID          string   `json:"skuId"`
+	Name           string   `json:"name"`
+	SkuName        string   `json:"skuName"`
+	UnitName       string   `json:"unitName"`
+	Qty            float64  `json:"qty"`
+	UnitPrice      float64  `json:"unitPrice"`
+	LineAmount     float64  `json:"lineAmount"`
+	BaseUnitName   string   `json:"baseUnitName,omitempty"`
+	UnitRate       float64  `json:"unitRate"`
+	HasMultiUnit   bool     `json:"hasMultiUnit"`
+	StockTexts     []string `json:"stockTexts"`
+	PromotionTexts []string `json:"promotionTexts"`
+}
+
+type CartDetailItemSummary struct {
+	CartID         string  `json:"cartId"`
+	ProductID      string  `json:"productId"`
+	SpuID          string  `json:"spuId"`
+	SkuID          string  `json:"skuId"`
+	Name           string  `json:"name"`
+	SkuName        string  `json:"skuName"`
+	UnitName       string  `json:"unitName"`
+	Qty            float64 `json:"qty"`
+	UnitPrice      float64 `json:"unitPrice"`
+	LineAmount     float64 `json:"lineAmount"`
+	DefaultUnitID  string  `json:"defaultUnitId,omitempty"`
+	BaseUnitID     string  `json:"baseUnitId,omitempty"`
+	PromotionCount int     `json:"promotionCount"`
+}
+
+type OrderSubmitSummary struct {
+	Message          string                     `json:"message"`
+	BillID           string                     `json:"billId"`
+	CustomerID       string                     `json:"customerId"`
+	CustomerName     string                     `json:"customerName"`
+	AddressID        string                     `json:"addressId"`
+	DeliveryMethodID string                     `json:"deliveryMethodId"`
+	CartIDs          []string                   `json:"cartIds"`
+	DueAmount        float64                    `json:"dueAmount"`
+	FreightAmount    float64                    `json:"freightAmount"`
+	RequiresPayment  bool                       `json:"requiresPayment"`
+	DeadlineTime     int64                      `json:"deadlineTime"`
+	BillType         int                        `json:"billType"`
+	PaymentOptions   []OrderPaymentOption       `json:"paymentOptions"`
+	ReceiveAddress   OrderReceiveAddressSummary `json:"receiveAddress"`
+}
+
+type FreightSummary struct {
+	Scenarios []FreightScenarioSummary `json:"scenarios"`
+}
+
+type FreightScenarioSummary struct {
+	Scenario         string  `json:"scenario"`
+	Label            string  `json:"label"`
+	DeliveryMethodID string  `json:"deliveryMethodId"`
+	CustomerID       string  `json:"customerId"`
+	Qty              float64 `json:"qty"`
+	TotalAmount      float64 `json:"totalAmount"`
+	FreightAmount    float64 `json:"freightAmount"`
+	SkuCount         int     `json:"skuCount"`
+}
+
+type DefaultDeliverySummary struct {
+	Found   bool                    `json:"found"`
+	Source  string                  `json:"source"`
+	Address *DeliveryAddressSummary `json:"address,omitempty"`
+}
+
+type DeliveriesSummary struct {
+	Count            int                      `json:"count"`
+	DefaultAddressID string                   `json:"defaultAddressId"`
+	Items            []DeliveryAddressSummary `json:"items"`
+}
+
+type DeliveryAddressSummary struct {
+	AddressID     string  `json:"addressId"`
+	CustomerID    string  `json:"customerId"`
+	CustomerName  string  `json:"customerName"`
+	Phone         string  `json:"phone"`
+	FullAddress   string  `json:"fullAddress"`
+	DetailAddress string  `json:"detailAddress"`
+	ProvinceName  string  `json:"provinceName"`
+	CityName      string  `json:"cityName"`
+	DistrictName  string  `json:"districtName"`
+	DeliveryID    string  `json:"deliveryId"`
+	DeliveryName  string  `json:"deliveryName"`
+	IsDefault     bool    `json:"isDefault"`
+	Longitude     float64 `json:"longitude"`
+	Latitude      float64 `json:"latitude"`
+}
+
+type CheckoutSummary struct {
+	CartList        CartListSummary        `json:"cartList"`
+	CartDetail      CartDetailSummary      `json:"cartDetail"`
+	DefaultDelivery DefaultDeliverySummary `json:"defaultDelivery"`
+	Deliveries      DeliveriesSummary      `json:"deliveries"`
+	Freight         FreightSummary         `json:"freight"`
+	Submit          OrderSubmitSummary     `json:"submit"`
+}
+
+type OrderPaymentOption struct {
+	Name         string `json:"name"`
+	Type         int    `json:"type"`
+	PayRecommend int    `json:"payRecommend"`
+}
+
+type OrderReceiveAddressSummary struct {
+	AddressID    string  `json:"addressId"`
+	CustomerName string  `json:"customerName"`
+	Phone        string  `json:"phone"`
+	FullAddress  string  `json:"fullAddress"`
+	DeliveryID   string  `json:"deliveryId"`
+	DeliveryName string  `json:"deliveryName"`
+	Longitude    float64 `json:"longitude"`
+	Latitude     float64 `json:"latitude"`
 }

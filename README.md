@@ -18,7 +18,7 @@
 - 定时采集 / 处理 / 同步任务
 - 缺失 SKU 自动标记 `offline`，并尝试下架 Vendure 商品
 - 自定义 HTTP 触发接口
-- 脱敏后的“小程序首页/分类/商品页契约”接口与离线 snapshot dataset
+- 脱敏后的“小程序首页/分类/商品页/购物车下单契约”接口与离线 snapshot dataset
 
 ## 目录
 
@@ -29,7 +29,8 @@ mrtang-pim/
 │   ├── miniapp/
 │   │   ├── homepage/
 │   │   ├── category-page/
-│   │   └── product-page/
+│   │   ├── product-page/
+│   │   └── cart-order/
 │   └── mock_supplier_products.json
 ├── internal/
 │   ├── config
@@ -77,13 +78,14 @@ go run ./cmd/pim serve
 - `.cache/` 是 Go 编译缓存，可随时删除
 - `pb_data/` 是 PocketBase 本地运行数据目录，重新初始化或不需要保留本地数据时可删除
 
-## 脱敏首页接口
+## 脱敏 Miniapp 接口
 
-`mrtang-pim/docs/rr/index.zip` 和 `docs/rr/categories` 中的小程序抓包样本已经被整理成脱敏 snapshot 目录:
+`docs/rr/index`、`docs/rr/categories`、`docs/rr/product` 和 `docs/rr/cart-order` 中的小程序抓包样本已经被整理成脱敏 snapshot 目录:
 
 - [`datasets/miniapp/homepage`](./datasets/miniapp/homepage)
 - [`datasets/miniapp/category-page`](./datasets/miniapp/category-page)
 - [`datasets/miniapp/product-page`](./datasets/miniapp/product-page)
+- [`datasets/miniapp/cart-order`](./datasets/miniapp/cart-order)
 
 这套数据不会重放第三方鉴权，也不保留任何敏感 token / openId / customerId。它的目标是:
 
@@ -92,6 +94,7 @@ go run ./cmd/pim serve
 - 为后续正式授权接入保留可插拔的数据源边界
 
 如果你需要直接看“源站 API -> rr 样本 -> dataset -> 本地接口”的总览，见 [docs/source-api.md](./docs/source-api.md)。
+如果你需要直接看 checkout 摘要接口和推荐字段，见 [docs/checkout-api.md](./docs/checkout-api.md)。
 
 环境变量:
 
@@ -101,13 +104,14 @@ go run ./cmd/pim serve
 - `MINIAPP_HOMEPAGE_SNAPSHOT=./datasets/miniapp/homepage`
 - `MINIAPP_CATEGORY_SNAPSHOT=./datasets/miniapp/category-page`
 - `MINIAPP_PRODUCT_SNAPSHOT=./datasets/miniapp/product-page`
+- `MINIAPP_CART_ORDER_SNAPSHOT=./datasets/miniapp/cart-order`
 - `MINIAPP_AUTH_ACCOUNT_ID=...`
 - `MINIAPP_USER_AGENT=Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.53(0x18003537) NetType/WIFI Language/zh_CN miniProgram`
 
 数据源切换:
 
 - `MINIAPP_SOURCE_MODE=snapshot`
-  读取本地 snapshot 目录，并组装 homepage/category-page/product-page dataset
+  读取本地 snapshot 目录，并组装 homepage/category-page/product-page/cart-order dataset
 - `MINIAPP_SOURCE_MODE=http`
   从 `MINIAPP_SOURCE_URL` 拉取标准化后的 `Dataset` JSON
 
@@ -115,6 +119,11 @@ go run ./cmd/pim serve
 
 - `Authorization: Bearer <MINIAPP_AUTH_ACCOUNT_ID>`
 - `User-Agent: <MINIAPP_USER_AGENT>`
+
+脱敏 demo 覆盖:
+
+- `customerId`、`customerName`、`phone`、`openId`、`addressId`、`cartIdList`、`deliveryMethodId`、`dueMoney` 都会从前序 cart/address/order 样本自动串联
+- `datasets/miniapp/**` 仍保持稳定的脱敏样本，不因为本地配置被改写
 
 可用接口:
 
@@ -137,6 +146,23 @@ curl -H 'Authorization: Bearer your-account-id' 'http://127.0.0.1:8090/api/minia
 curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/product-page/coverage
 curl -H 'Authorization: Bearer your-account-id' 'http://127.0.0.1:8090/api/miniapp/product-page/coverage?priority=homepage_dual_unit'
 curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/product-page/coverage-summary
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/contracts/cart-order
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order
+curl -X POST -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/cart/add
+curl -X POST -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/cart/change-num
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/cart/list
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/cart/list-summary
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/cart/detail
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/cart/detail-summary
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/order/default-delivery-summary
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/order/deliveries-summary
+curl -X POST -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/order/address/analyse
+curl -X POST -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/order/address/add
+curl -H 'Authorization: Bearer your-account-id' 'http://127.0.0.1:8090/api/miniapp/cart-order/order/freight-cost?scenario=selected_delivery'
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/order/freight-summary
+curl -X POST -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/order/submit
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/order/submit-summary
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:8090/api/miniapp/cart-order/checkout-summary
 ```
 
 接口说明:

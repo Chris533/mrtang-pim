@@ -26,14 +26,15 @@ type SecurityConfig struct {
 }
 
 type MiniAppConfig struct {
-	SourceMode           string
-	SourceURL            string
-	SourceTimeout        time.Duration
-	HomepageSnapshotFile string
-	CategorySnapshotFile string
-	ProductSnapshotFile  string
-	AuthorizedAccountID  string
-	UserAgent            string
+	SourceMode            string
+	SourceURL             string
+	SourceTimeout         time.Duration
+	HomepageSnapshotFile  string
+	CategorySnapshotFile  string
+	ProductSnapshotFile   string
+	CartOrderSnapshotFile string
+	AuthorizedAccountID   string
+	UserAgent             string
 }
 
 type SupplierConfig struct {
@@ -83,14 +84,15 @@ func Load() Config {
 			APIKey: strings.TrimSpace(os.Getenv("PIM_API_KEY")),
 		},
 		MiniApp: MiniAppConfig{
-			SourceMode:           getEnv("MINIAPP_SOURCE_MODE", "snapshot"),
-			SourceURL:            strings.TrimSpace(os.Getenv("MINIAPP_SOURCE_URL")),
-			SourceTimeout:        getEnvDuration("MINIAPP_SOURCE_TIMEOUT", 20*time.Second),
-			HomepageSnapshotFile: getEnv("MINIAPP_HOMEPAGE_SNAPSHOT", "./datasets/miniapp/homepage"),
-			CategorySnapshotFile: getEnv("MINIAPP_CATEGORY_SNAPSHOT", "./datasets/miniapp/category-page"),
-			ProductSnapshotFile:  getEnv("MINIAPP_PRODUCT_SNAPSHOT", "./datasets/miniapp/product-page"),
-			AuthorizedAccountID:  strings.TrimSpace(os.Getenv("MINIAPP_AUTH_ACCOUNT_ID")),
-			UserAgent:            getEnv("MINIAPP_USER_AGENT", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.53(0x18003537) NetType/WIFI Language/zh_CN miniProgram"),
+			SourceMode:            getEnv("MINIAPP_SOURCE_MODE", "snapshot"),
+			SourceURL:             strings.TrimSpace(os.Getenv("MINIAPP_SOURCE_URL")),
+			SourceTimeout:         getEnvDuration("MINIAPP_SOURCE_TIMEOUT", 20*time.Second),
+			HomepageSnapshotFile:  getEnv("MINIAPP_HOMEPAGE_SNAPSHOT", "./datasets/miniapp/homepage"),
+			CategorySnapshotFile:  getEnv("MINIAPP_CATEGORY_SNAPSHOT", "./datasets/miniapp/category-page"),
+			ProductSnapshotFile:   getEnv("MINIAPP_PRODUCT_SNAPSHOT", "./datasets/miniapp/product-page"),
+			CartOrderSnapshotFile: getEnv("MINIAPP_CART_ORDER_SNAPSHOT", "./datasets/miniapp/cart-order"),
+			AuthorizedAccountID:   strings.TrimSpace(os.Getenv("MINIAPP_AUTH_ACCOUNT_ID")),
+			UserAgent:             getEnv("MINIAPP_USER_AGENT", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.53(0x18003537) NetType/WIFI Language/zh_CN miniProgram"),
 		},
 		Supplier: SupplierConfig{
 			Connector: getEnv("SUPPLIER_CONNECTOR", "file"),

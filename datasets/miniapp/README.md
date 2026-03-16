@@ -10,6 +10,8 @@
   分类页聚合数据，按 `meta/contracts/context/tree/sections` 拆分。
 - `product-page/`
   商品页聚合数据，按 `meta/contracts/products` 拆分；每个商品文件内部再拆 detail/pricing/package/context。
+- `cart-order/`
+  购物车和下单聚合数据，按 `meta/contracts/cart/order` 拆分；`order.json` 内继续按地址、运费、提交订单场景分组。
 - `*/sections/*.json`
   商品分组单独存文件，便于按分类或模块增量维护。
 - `product-page/products/*.json`

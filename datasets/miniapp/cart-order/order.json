@@ -1,0 +1,312 @@
+{
+    "defaultDelivery": {
+        "contractId": "cart_order_default_delivery",
+        "requestBody": {
+            "businessId": "demo-customer-001"
+        },
+        "response": {
+            "code": "SYS_0000",
+            "message": "访问成功",
+            "data": null
+        }
+    },
+    "deliveries": {
+        "contractId": "cart_order_deliveries",
+        "requestBody": {
+            "businessId": "demo-customer-001",
+            "showNum": false
+        },
+        "response": {
+            "code": "SYS_0000",
+            "message": "访问成功",
+            "data": []
+        }
+    },
+    "analyseAddress": {
+        "contractId": "cart_order_analyse_address",
+        "requestBody": {
+            "text": "四川省攀枝花市仁和区演示地址"
+        },
+        "response": {
+            "code": "SYS_0000",
+            "message": "访问成功",
+            "data": {
+                "province": "四川省",
+                "provinceCode": 510000,
+                "city": "攀枝花市",
+                "cityCode": 510400,
+                "county": "仁和区",
+                "countyCode": 510411,
+                "town": "仁和镇",
+                "townCode": 510411100,
+                "detail": "仁和镇演示地址",
+                "person": "",
+                "phoneNum": "",
+                "lng": 101.744656257685,
+                "lat": 26.523963047463
+            }
+        }
+    },
+    "addDelivery": {
+        "contractId": "cart_order_add_delivery",
+        "requestBody": {
+            "businessId": null,
+            "city": 510400,
+            "customerId": "demo-customer-001",
+            "customerName": "演示客户",
+            "deliveryId": "592750618322829313",
+            "deliveryMethod": 1,
+            "detailAddress": "演示地址",
+            "district": 510411,
+            "fullAddress": "四川省-攀枝花市-仁和区演示地址",
+            "isDefault": true,
+            "latitude": 26.523963047463,
+            "logisticsId": null,
+            "longitude": 101.744656257685,
+            "phone": "13800000000",
+            "province": 510000,
+            "loadCarInfo": null,
+            "routeId": null,
+            "routeName": null
+        },
+        "response": {
+            "code": "SYS_0000",
+            "message": "访问成功",
+            "data": {
+                "corpId": 150032890,
+                "deliveryMethod": 1,
+                "routeId": null,
+                "routeName": null,
+                "businessId": "demo-address-001",
+                "customerId": "demo-customer-001",
+                "country": 100000,
+                "countryName": "中国",
+                "province": 510000,
+                "provinceName": "四川省",
+                "city": 510400,
+                "cityName": "攀枝花市",
+                "district": 510411,
+                "districtName": "仁和区",
+                "detailAddress": "演示地址",
+                "longitude": 101.744656257685,
+                "latitude": 26.523963047463,
+                "fullAddress": "四川省-攀枝花市-仁和区演示地址",
+                "logisticsId": null,
+                "logisticsName": null,
+                "isDefault": true,
+                "customerName": "演示客户",
+                "phone": "13800000000",
+                "deliveryId": "592750618322829313",
+                "deliveryName": "装车",
+                "loadCarInfo": "",
+                "storeFrontMediaIdList": null
+            }
+        }
+    },
+    "freightCosts": [
+        {
+            "scenario": "preview",
+            "label": "Before delivery method selection",
+            "contractId": "cart_order_freight_preview",
+            "requestBody": {
+                "deliveryMethodId": 0,
+                "customerId": "demo-customer-001",
+                "qty": "42.04",
+                "weight": "0",
+                "giftWeight": 0,
+                "giftQty": 0,
+                "price": "959.24",
+                "skuList": [
+                    {
+                        "skuId": "593849654014263296",
+                        "qty": "1",
+                        "weight": "0",
+                        "giftQty": 0,
+                        "giftWeight": "0",
+                        "price": "13"
+                    },
+                    {
+                        "skuId": "646995017386622976",
+                        "qty": "40",
+                        "weight": "0",
+                        "giftQty": 0,
+                        "giftWeight": "0",
+                        "price": "920"
+                    },
+                    {
+                        "skuId": "600329086149050368",
+                        "qty": "1",
+                        "weight": "0",
+                        "giftQty": 0,
+                        "giftWeight": "0",
+                        "price": "26"
+                    },
+                    {
+                        "skuId": "670168388273754112",
+                        "qty": "0.04",
+                        "weight": "0",
+                        "giftQty": 0,
+                        "giftWeight": "0",
+                        "price": "0.24"
+                    }
+                ]
+            },
+            "response": {
+                "code": "SYS_0000",
+                "message": "访问成功",
+                "data": 0
+            }
+        },
+        {
+            "scenario": "selected_delivery",
+            "label": "After delivery method and district selection",
+            "contractId": "cart_order_freight_selected_delivery",
+            "requestBody": {
+                "deliveryMethodId": "592750618322829313",
+                "customerId": "demo-customer-001",
+                "province": 510000,
+                "city": 510400,
+                "district": 510411,
+                "qty": "42.04",
+                "weight": "0",
+                "giftWeight": 0,
+                "giftQty": 0,
+                "price": "959.24",
+                "skuList": [
+                    {
+                        "skuId": "593849654014263296",
+                        "qty": "1",
+                        "weight": "0",
+                        "giftQty": 0,
+                        "giftWeight": "0",
+                        "price": "13"
+                    },
+                    {
+                        "skuId": "646995017386622976",
+                        "qty": "40",
+                        "weight": "0",
+                        "giftQty": 0,
+                        "giftWeight": "0",
+                        "price": "920"
+                    },
+                    {
+                        "skuId": "600329086149050368",
+                        "qty": "1",
+                        "weight": "0",
+                        "giftQty": 0,
+                        "giftWeight": "0",
+                        "price": "26"
+                    },
+                    {
+                        "skuId": "670168388273754112",
+                        "qty": "0.04",
+                        "weight": "0",
+                        "giftQty": 0,
+                        "giftWeight": "0",
+                        "price": "0.24"
+                    }
+                ]
+            },
+            "response": {
+                "code": "SYS_0000",
+                "message": "访问成功",
+                "data": 0
+            }
+        }
+    ],
+    "submit": {
+        "contractId": "cart_order_submit",
+        "requestBody": {
+            "deliveryTime": 0,
+            "customerId": "demo-customer-001",
+            "cartIdList": [
+                "demo-cart-1",
+                "demo-cart-2",
+                "demo-cart-3",
+                "demo-cart-4"
+            ],
+            "freight": 0,
+            "preferentialMoneyList": [],
+            "remark": "",
+            "receiveAddressInfo": {
+                "businessId": "demo-address-001",
+                "customerId": "demo-customer-001",
+                "country": 100000,
+                "countryName": "中国",
+                "province": 510000,
+                "provinceName": "四川省",
+                "city": 510400,
+                "cityName": "攀枝花市",
+                "district": 510411,
+                "districtName": "仁和区",
+                "detailAddress": "演示地址",
+                "longitude": 101.744656257685,
+                "latitude": 26.523963047463,
+                "fullAddress": "四川省-攀枝花市-仁和区演示地址",
+                "isDefault": true,
+                "customerName": "演示客户",
+                "phone": "13800000000",
+                "deliveryId": "592750618322829313",
+                "deliveryName": "装车",
+                "deliveryMethodId": "592750618322829313",
+                "deliveryMethodName": "装车",
+                "contentType": 1,
+                "addressId": "demo-address-001"
+            },
+            "deliveryMethodId": "592750618322829313",
+            "exemptionFromPostage": 0,
+            "invoiceType": 0,
+            "billAnnexList": [],
+            "giftCheckMap": {},
+            "giftCheckMapRemark": {},
+            "weightTotal": "0",
+            "giftWeightTotal": "0",
+            "dueMoney": "959.24",
+            "deductIntegral": 0,
+            "deductMoney": 0,
+            "deductGuids": [],
+            "useDeductIntegral": 0,
+            "billClassification": 0,
+            "giftCheckMapQty": {},
+            "isFromBuyNow": 0,
+            "specialAttr": 0,
+            "wappEnv": {
+                "openId": "demo-open-id",
+                "netWork": "wifi",
+                "device": {
+                    "brand": "microsoft",
+                    "model": "microsoft",
+                    "system": "Windows Unknown x64",
+                    "platform": "windows"
+                }
+            }
+        },
+        "response": {
+            "code": "SYS_0000",
+            "message": "请选择支付方式进行支付",
+            "data": {
+                "billId": "demo-bill-001",
+                "prePay": 0,
+                "preStore": 0,
+                "dueMoney": 959.24,
+                "whetherOpenWxPay": true,
+                "openWxPayList": [
+                    {
+                        "name": "微信支付",
+                        "type": 13,
+                        "payRecommend": 0
+                    }
+                ],
+                "deadlineTime": 1773654185111,
+                "prePaymentMoney": 0,
+                "whetherRicevereDetteBill": false,
+                "enablePrePaymentType": 1,
+                "billType": 3,
+                "customerName": "演示客户",
+                "whetherDisableOffline": false,
+                "whetherDisablePreStore": false,
+                "existSupplierGoods": false
+            }
+        }
+    }
+}

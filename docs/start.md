@@ -8,7 +8,7 @@
 
 1. PIM 商品链路
    `Supplier -> PocketBase -> Image Processor -> Admin Review -> Vendure`
-2. Miniapp 首页链路
+2. Miniapp 契约链路
    `Snapshot/HTTP Source -> miniapp importer/service -> API -> 后续入库`
 
 当前目录重点如下：
@@ -28,6 +28,11 @@ mrtang-pim/
 │   │   │   ├── contracts.json
 │   │   │   ├── meta.json
 │   │   │   └── products/
+│   │   ├── cart-order/
+│   │   │   ├── cart.json
+│   │   │   ├── contracts.json
+│   │   │   ├── meta.json
+│   │   │   └── order.json
 │   │   └── homepage/
 │   │       ├── bootstrap.json
 │   │       ├── category-tabs.json
@@ -103,6 +108,7 @@ Miniapp 模块已经拆成明确分层：
 默认 `User-Agent` 是较新的 iPhone 微信小程序模板。
 
 如果要快速理解“源站 API、抓包归档、dataset 和本地接口”之间的关系，直接看 [source-api.md](./source-api.md)。
+如果要直接对接结算页，优先看 [checkout-api.md](./checkout-api.md)。
 
 ## 环境变量
 
@@ -118,6 +124,7 @@ Miniapp 模块已经拆成明确分层：
 - `MINIAPP_HOMEPAGE_SNAPSHOT=./datasets/miniapp/homepage`
 - `MINIAPP_CATEGORY_SNAPSHOT=./datasets/miniapp/category-page`
 - `MINIAPP_PRODUCT_SNAPSHOT=./datasets/miniapp/product-page`
+- `MINIAPP_CART_ORDER_SNAPSHOT=./datasets/miniapp/cart-order`
 - `MINIAPP_AUTH_ACCOUNT_ID`
 - `MINIAPP_USER_AGENT`
 - `SUPPLIER_CONNECTOR=file`
@@ -167,6 +174,7 @@ Miniapp：
 - `GET /api/miniapp/category-page/sections`
 - `GET /api/miniapp/category-page/section?id=<section-id>`
 - `GET /api/miniapp/contracts/product-page`
+- `GET /api/miniapp/contracts/cart-order`
 - `GET /api/miniapp/product-page`
 - `GET /api/miniapp/product-page/product?id=<spuId>_<skuId>`
 - `GET /api/miniapp/product-page/detail?id=<spuId>_<skuId>`
@@ -175,6 +183,27 @@ Miniapp：
 - `GET /api/miniapp/product-page/context?id=<spuId>_<skuId>`
 - `GET /api/miniapp/product-page/coverage`
 - `GET /api/miniapp/product-page/coverage-summary`
+- `GET /api/miniapp/cart-order`
+- `GET /api/miniapp/cart-order/cart`
+- `GET /api/miniapp/cart-order/order`
+- `POST /api/miniapp/cart-order/cart/add`
+- `POST /api/miniapp/cart-order/cart/change-num`
+- `GET /api/miniapp/cart-order/cart/list`
+- `GET /api/miniapp/cart-order/cart/list-summary`
+- `GET /api/miniapp/cart-order/cart/detail`
+- `GET /api/miniapp/cart-order/cart/detail-summary`
+- `POST /api/miniapp/cart-order/cart/settle`
+- `GET /api/miniapp/cart-order/order/default-delivery`
+- `GET /api/miniapp/cart-order/order/default-delivery-summary`
+- `GET /api/miniapp/cart-order/order/deliveries`
+- `GET /api/miniapp/cart-order/order/deliveries-summary`
+- `POST /api/miniapp/cart-order/order/address/analyse`
+- `POST /api/miniapp/cart-order/order/address/add`
+- `GET /api/miniapp/cart-order/order/freight-cost?scenario=preview|selected_delivery`
+- `GET /api/miniapp/cart-order/order/freight-summary`
+- `POST /api/miniapp/cart-order/order/submit`
+- `GET /api/miniapp/cart-order/order/submit-summary`
+- `GET /api/miniapp/cart-order/checkout-summary`
 
 ## 下一步
 

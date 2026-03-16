@@ -1,0 +1,341 @@
+[
+    {
+        "id": "cart_order_add",
+        "name": "Cart Add",
+        "method": "POST",
+        "originalPath": "/gateway/goodsservice/api/v1/wx/cart/addCart",
+        "localPath": "/api/miniapp/cart-order/cart/add",
+        "role": "Add a sku/unit combination into the shopping cart",
+        "request": {
+            "bodyKeys": [
+                "cost",
+                "discountCost",
+                "num",
+                "skuId",
+                "spuId",
+                "unitId",
+                "priceSource",
+                "warehouseId",
+                "isFromBuyNow"
+            ]
+        },
+        "responseKeys": [
+            "code",
+            "message",
+            "data"
+        ],
+        "tags": [
+            "cart-order",
+            "cart",
+            "write"
+        ]
+    },
+    {
+        "id": "cart_order_change_num",
+        "name": "Cart Change Num",
+        "method": "POST",
+        "originalPath": "/gateway/goodsservice/api/v1/wx/cart/change_cart_num",
+        "localPath": "/api/miniapp/cart-order/cart/change-num",
+        "role": "Increase or decrease the quantity of one cart line",
+        "request": {
+            "bodyKeys": [
+                "id",
+                "changeNum",
+                "isIntegralList",
+                "discountCost"
+            ]
+        },
+        "responseKeys": [
+            "code",
+            "message",
+            "data"
+        ],
+        "tags": [
+            "cart-order",
+            "cart",
+            "write"
+        ]
+    },
+    {
+        "id": "cart_order_list",
+        "name": "Cart List",
+        "method": "POST",
+        "originalPath": "/gateway/goodsservice/api/v1/wx/cart/list",
+        "localPath": "/api/miniapp/cart-order/cart/list",
+        "role": "Load paged cart lines and cart totals",
+        "request": {
+            "bodyKeys": [
+                "isBuyLogo",
+                "levelId",
+                "isIntegralList",
+                "page"
+            ]
+        },
+        "responseKeys": [
+            "code",
+            "message",
+            "data"
+        ],
+        "tags": [
+            "cart-order",
+            "cart",
+            "read"
+        ]
+    },
+    {
+        "id": "cart_order_detail",
+        "name": "Cart Detail",
+        "method": "GET",
+        "originalPath": "/gateway/goodsservice/api/v1/wx/cart/detail",
+        "localPath": "/api/miniapp/cart-order/cart/detail",
+        "role": "Load settlement-ready cart detail with coupon context",
+        "request": {
+            "queryKeys": [
+                "isFirst",
+                "isIntegralList",
+                "isFromBuyNow",
+                "specialAttr"
+            ]
+        },
+        "responseKeys": [
+            "code",
+            "message",
+            "data"
+        ],
+        "tags": [
+            "cart-order",
+            "cart",
+            "detail"
+        ]
+    },
+    {
+        "id": "cart_order_settle",
+        "name": "Cart Settle",
+        "method": "POST",
+        "originalPath": "/gateway/goodsservice/api/v1/wx/cart/settle",
+        "localPath": "/api/miniapp/cart-order/cart/settle",
+        "role": "Trigger cart settle validation before checkout",
+        "request": {
+            "bodyKeys": [
+                "isIntegralList",
+                "isFromBuyNow"
+            ]
+        },
+        "responseKeys": [
+            "code",
+            "message",
+            "data"
+        ],
+        "tags": [
+            "cart-order",
+            "cart",
+            "write"
+        ]
+    },
+    {
+        "id": "cart_order_default_delivery",
+        "name": "Order Default Delivery",
+        "method": "POST",
+        "originalPath": "/gateway/customer-service/api/v1/order/get_default_delivery",
+        "localPath": "/api/miniapp/cart-order/order/default-delivery",
+        "role": "Read the current default delivery address for checkout",
+        "request": {
+            "bodyKeys": [
+                "businessId"
+            ]
+        },
+        "responseKeys": [
+            "code",
+            "message",
+            "data"
+        ],
+        "tags": [
+            "cart-order",
+            "order",
+            "address"
+        ]
+    },
+    {
+        "id": "cart_order_deliveries",
+        "name": "Order Deliveries",
+        "method": "POST",
+        "originalPath": "/gateway/customer-service/api/v1/order/get_deliverys",
+        "localPath": "/api/miniapp/cart-order/order/deliveries",
+        "role": "Read all saved delivery addresses for checkout",
+        "request": {
+            "bodyKeys": [
+                "businessId",
+                "showNum"
+            ]
+        },
+        "responseKeys": [
+            "code",
+            "message",
+            "data"
+        ],
+        "tags": [
+            "cart-order",
+            "order",
+            "address"
+        ]
+    },
+    {
+        "id": "cart_order_analyse_address",
+        "name": "Order Analyse Address",
+        "method": "POST",
+        "originalPath": "/gateway/saas-platform-service/api/v1/address/analyse_address",
+        "localPath": "/api/miniapp/cart-order/order/address/analyse",
+        "role": "Parse free-form address text into province/city/district detail",
+        "request": {
+            "bodyKeys": [
+                "text"
+            ]
+        },
+        "responseKeys": [
+            "code",
+            "message",
+            "data"
+        ],
+        "tags": [
+            "cart-order",
+            "order",
+            "address"
+        ]
+    },
+    {
+        "id": "cart_order_add_delivery",
+        "name": "Order Add Delivery",
+        "method": "POST",
+        "originalPath": "/gateway/customer-service/api/v1/order/add_delivery",
+        "localPath": "/api/miniapp/cart-order/order/address/add",
+        "role": "Add a new delivery address for the customer",
+        "request": {
+            "bodyKeys": [
+                "businessId",
+                "customerId",
+                "customerName",
+                "deliveryId",
+                "deliveryMethod",
+                "detailAddress",
+                "district",
+                "fullAddress",
+                "isDefault",
+                "latitude",
+                "longitude",
+                "phone",
+                "province",
+                "city"
+            ]
+        },
+        "responseKeys": [
+            "code",
+            "message",
+            "data"
+        ],
+        "tags": [
+            "cart-order",
+            "order",
+            "address",
+            "write"
+        ]
+    },
+    {
+        "id": "cart_order_freight_preview",
+        "name": "Order Freight Cost Preview",
+        "method": "POST",
+        "originalPath": "/gateway/logisticsservice/api/v1/freight/cost",
+        "localPath": "/api/miniapp/cart-order/order/freight-cost",
+        "role": "Estimate freight before a delivery method is selected",
+        "request": {
+            "bodyKeys": [
+                "deliveryMethodId",
+                "customerId",
+                "qty",
+                "weight",
+                "price",
+                "skuList"
+            ]
+        },
+        "responseKeys": [
+            "code",
+            "message",
+            "data"
+        ],
+        "tags": [
+            "cart-order",
+            "order",
+            "freight"
+        ],
+        "notes": {
+            "scenario": "preview"
+        }
+    },
+    {
+        "id": "cart_order_freight_selected_delivery",
+        "name": "Order Freight Cost Selected Delivery",
+        "method": "POST",
+        "originalPath": "/gateway/logisticsservice/api/v1/freight/cost",
+        "localPath": "/api/miniapp/cart-order/order/freight-cost",
+        "role": "Estimate freight after a delivery method and region are selected",
+        "request": {
+            "bodyKeys": [
+                "deliveryMethodId",
+                "customerId",
+                "province",
+                "city",
+                "district",
+                "qty",
+                "weight",
+                "price",
+                "skuList"
+            ]
+        },
+        "responseKeys": [
+            "code",
+            "message",
+            "data"
+        ],
+        "tags": [
+            "cart-order",
+            "order",
+            "freight"
+        ],
+        "notes": {
+            "scenario": "selected_delivery"
+        }
+    },
+    {
+        "id": "cart_order_submit",
+        "name": "Order Submit",
+        "method": "POST",
+        "originalPath": "/gateway/billservice/api/v1/wx/sale_bill/save",
+        "localPath": "/api/miniapp/cart-order/order/submit",
+        "role": "Submit the order and receive the pre-payment result envelope",
+        "request": {
+            "bodyKeys": [
+                "deliveryTime",
+                "customerId",
+                "cartIdList",
+                "freight",
+                "preferentialMoneyList",
+                "remark",
+                "receiveAddressInfo",
+                "deliveryMethodId",
+                "dueMoney",
+                "isFromBuyNow",
+                "specialAttr",
+                "wappEnv"
+            ]
+        },
+        "responseKeys": [
+            "code",
+            "message",
+            "data"
+        ],
+        "tags": [
+            "cart-order",
+            "order",
+            "submit"
+        ]
+    }
+]

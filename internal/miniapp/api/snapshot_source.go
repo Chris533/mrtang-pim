@@ -13,20 +13,22 @@ import (
 )
 
 type SnapshotSource struct {
-	homepagePath string
-	categoryPath string
-	productPath  string
+	homepagePath  string
+	categoryPath  string
+	productPath   string
+	cartOrderPath string
 
 	mu     sync.RWMutex
 	loaded bool
 	data   model.Dataset
 }
 
-func NewSnapshotSource(homepagePath string, categoryPath string, productPath string) *SnapshotSource {
+func NewSnapshotSource(homepagePath string, categoryPath string, productPath string, cartOrderPath string) *SnapshotSource {
 	return &SnapshotSource{
-		homepagePath: homepagePath,
-		categoryPath: categoryPath,
-		productPath:  productPath,
+		homepagePath:  homepagePath,
+		categoryPath:  categoryPath,
+		productPath:   productPath,
+		cartOrderPath: cartOrderPath,
 	}
 }
 
@@ -61,6 +63,9 @@ func (s *SnapshotSource) FetchDataset(ctx context.Context) (*model.Dataset, erro
 		return nil, err
 	}
 	if err := s.mergeProductSnapshot(&dataset); err != nil {
+		return nil, err
+	}
+	if err := s.mergeCartOrderSnapshot(&dataset); err != nil {
 		return nil, err
 	}
 
@@ -152,6 +157,38 @@ func (s *SnapshotSource) mergeProductSnapshot(dataset *model.Dataset) error {
 	return nil
 }
 
+func (s *SnapshotSource) mergeCartOrderSnapshot(dataset *model.Dataset) error {
+	if dataset == nil || s.cartOrderPath == "" {
+		return nil
+	}
+
+	info, err := os.Stat(s.cartOrderPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("stat miniapp cart-order snapshot: %w", err)
+	}
+
+	var cartOrderDataset model.Dataset
+	if info.IsDir() {
+		cartOrderDataset, err = loadCartOrderSnapshotDir(s.cartOrderPath)
+	} else {
+		cartOrderDataset, err = loadDatasetFile(s.cartOrderPath, "cart-order")
+	}
+	if err != nil {
+		return err
+	}
+
+	dataset.Contracts = append(dataset.Contracts, cartOrderDataset.Contracts...)
+	if len(cartOrderDataset.Meta.Notes) > 0 {
+		dataset.Meta.Notes = append(dataset.Meta.Notes, cartOrderDataset.Meta.Notes...)
+	}
+	dataset.CartOrder = cartOrderDataset.CartOrder
+
+	return nil
+}
+
 func loadDatasetFile(path string, label string) (model.Dataset, error) {
 	body, err := os.ReadFile(path)
 	if err != nil {
@@ -237,6 +274,25 @@ func loadProductSnapshotDir(root string) (model.Dataset, error) {
 		return model.Dataset{}, err
 	}
 	dataset.ProductPage.Products = products
+
+	return dataset, nil
+}
+
+func loadCartOrderSnapshotDir(root string) (model.Dataset, error) {
+	var dataset model.Dataset
+
+	if err := readJSONFile(filepath.Join(root, "meta.json"), &dataset.Meta, "cart-order meta"); err != nil {
+		return model.Dataset{}, err
+	}
+	if err := readJSONFile(filepath.Join(root, "contracts.json"), &dataset.Contracts, "cart-order contracts"); err != nil {
+		return model.Dataset{}, err
+	}
+	if err := readJSONFile(filepath.Join(root, "cart.json"), &dataset.CartOrder.Cart, "cart-order cart"); err != nil {
+		return model.Dataset{}, err
+	}
+	if err := readJSONFile(filepath.Join(root, "order.json"), &dataset.CartOrder.Order, "cart-order order"); err != nil {
+		return model.Dataset{}, err
+	}
 
 	return dataset, nil
 }

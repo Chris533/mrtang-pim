@@ -117,6 +117,29 @@ func main() {
 			})
 		})
 
+		se.Router.GET("/api/miniapp/contracts/cart-order", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			dataset, err := miniappService.Dataset(re.Request.Context())
+			if err != nil {
+				return re.InternalServerError("load miniapp cart-order contracts failed", err)
+			}
+
+			return re.JSON(http.StatusOK, map[string]any{
+				"meta":      dataset.Meta,
+				"contracts": filterContractsByPrefix(dataset.Contracts, "/api/miniapp/cart-order"),
+				"clientConfig": map[string]any{
+					"sourceMode":        cfg.MiniApp.SourceMode,
+					"sourceURL":         cfg.MiniApp.SourceURL,
+					"userAgent":         cfg.MiniApp.UserAgent,
+					"authHeader":        "Authorization: Bearer <authorized-account-id>",
+					"authorizationMode": miniAppAuthorizationMode(cfg),
+				},
+			})
+		})
+
 		se.Router.GET("/api/miniapp/homepage", func(re *core.RequestEvent) error {
 			if !authorizedMiniApp(re, cfg) {
 				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
@@ -467,6 +490,211 @@ func main() {
 			return re.JSON(http.StatusOK, summary)
 		})
 
+		se.Router.GET("/api/miniapp/cart-order", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			cartOrder, err := miniappService.CartOrder(re.Request.Context())
+			if err != nil {
+				return re.InternalServerError("load miniapp cart-order failed", err)
+			}
+
+			return re.JSON(http.StatusOK, cartOrder)
+		})
+
+		se.Router.GET("/api/miniapp/cart-order/cart", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			cart, err := miniappService.Cart(re.Request.Context())
+			if err != nil {
+				return re.InternalServerError("load miniapp cart failed", err)
+			}
+
+			return re.JSON(http.StatusOK, cart)
+		})
+
+		se.Router.GET("/api/miniapp/cart-order/order", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			order, err := miniappService.Order(re.Request.Context())
+			if err != nil {
+				return re.InternalServerError("load miniapp order failed", err)
+			}
+
+			return re.JSON(http.StatusOK, order)
+		})
+
+		se.Router.POST("/api/miniapp/cart-order/cart/add", func(re *core.RequestEvent) error {
+			return serveMiniAppCartOperation(re, cfg, miniappService, "add", "add cart")
+		})
+
+		se.Router.POST("/api/miniapp/cart-order/cart/change-num", func(re *core.RequestEvent) error {
+			return serveMiniAppCartOperation(re, cfg, miniappService, "change-num", "change cart quantity")
+		})
+
+		se.Router.GET("/api/miniapp/cart-order/cart/list", func(re *core.RequestEvent) error {
+			return serveMiniAppCartOperation(re, cfg, miniappService, "list", "load cart list")
+		})
+		se.Router.POST("/api/miniapp/cart-order/cart/list", func(re *core.RequestEvent) error {
+			return serveMiniAppCartOperation(re, cfg, miniappService, "list", "load cart list")
+		})
+		se.Router.GET("/api/miniapp/cart-order/cart/list-summary", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			summary, err := miniappService.CartListSummary(re.Request.Context())
+			if err != nil {
+				return re.InternalServerError("load miniapp cart list summary failed", err)
+			}
+
+			return re.JSON(http.StatusOK, summary)
+		})
+
+		se.Router.GET("/api/miniapp/cart-order/cart/detail", func(re *core.RequestEvent) error {
+			return serveMiniAppCartOperation(re, cfg, miniappService, "detail", "load cart detail")
+		})
+		se.Router.GET("/api/miniapp/cart-order/cart/detail-summary", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			summary, err := miniappService.CartDetailSummary(re.Request.Context())
+			if err != nil {
+				return re.InternalServerError("load miniapp cart detail summary failed", err)
+			}
+
+			return re.JSON(http.StatusOK, summary)
+		})
+
+		se.Router.POST("/api/miniapp/cart-order/cart/settle", func(re *core.RequestEvent) error {
+			return serveMiniAppCartOperation(re, cfg, miniappService, "settle", "settle cart")
+		})
+
+		se.Router.GET("/api/miniapp/cart-order/order/default-delivery", func(re *core.RequestEvent) error {
+			return serveMiniAppOrderOperation(re, cfg, miniappService, "default-delivery", "load default delivery")
+		})
+		se.Router.POST("/api/miniapp/cart-order/order/default-delivery", func(re *core.RequestEvent) error {
+			return serveMiniAppOrderOperation(re, cfg, miniappService, "default-delivery", "load default delivery")
+		})
+		se.Router.GET("/api/miniapp/cart-order/order/default-delivery-summary", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			summary, err := miniappService.DefaultDeliverySummary(re.Request.Context())
+			if err != nil {
+				return re.InternalServerError("load miniapp default delivery summary failed", err)
+			}
+
+			return re.JSON(http.StatusOK, summary)
+		})
+
+		se.Router.GET("/api/miniapp/cart-order/order/deliveries", func(re *core.RequestEvent) error {
+			return serveMiniAppOrderOperation(re, cfg, miniappService, "deliveries", "load delivery list")
+		})
+		se.Router.POST("/api/miniapp/cart-order/order/deliveries", func(re *core.RequestEvent) error {
+			return serveMiniAppOrderOperation(re, cfg, miniappService, "deliveries", "load delivery list")
+		})
+		se.Router.GET("/api/miniapp/cart-order/order/deliveries-summary", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			summary, err := miniappService.DeliveriesSummary(re.Request.Context())
+			if err != nil {
+				return re.InternalServerError("load miniapp deliveries summary failed", err)
+			}
+
+			return re.JSON(http.StatusOK, summary)
+		})
+
+		se.Router.POST("/api/miniapp/cart-order/order/address/analyse", func(re *core.RequestEvent) error {
+			return serveMiniAppOrderOperation(re, cfg, miniappService, "analyse-address", "analyse address")
+		})
+
+		se.Router.POST("/api/miniapp/cart-order/order/address/add", func(re *core.RequestEvent) error {
+			return serveMiniAppOrderOperation(re, cfg, miniappService, "add-delivery", "add delivery address")
+		})
+
+		se.Router.GET("/api/miniapp/cart-order/order/freight-cost", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			freight, err := miniappService.FreightCost(re.Request.Context(), miniAppFreightScenario(re))
+			if err != nil {
+				return re.InternalServerError("load miniapp freight cost failed", err)
+			}
+
+			if freight == nil {
+				return re.NotFoundError("freight cost scenario not found", nil)
+			}
+
+			return re.JSON(http.StatusOK, freight.Response)
+		})
+		se.Router.GET("/api/miniapp/cart-order/order/freight-summary", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			summary, err := miniappService.FreightSummary(re.Request.Context())
+			if err != nil {
+				return re.InternalServerError("load miniapp freight summary failed", err)
+			}
+
+			return re.JSON(http.StatusOK, summary)
+		})
+		se.Router.POST("/api/miniapp/cart-order/order/freight-cost", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			freight, err := miniappService.FreightCost(re.Request.Context(), miniAppFreightScenario(re))
+			if err != nil {
+				return re.InternalServerError("load miniapp freight cost failed", err)
+			}
+
+			if freight == nil {
+				return re.NotFoundError("freight cost scenario not found", nil)
+			}
+
+			return re.JSON(http.StatusOK, freight.Response)
+		})
+
+		se.Router.POST("/api/miniapp/cart-order/order/submit", func(re *core.RequestEvent) error {
+			return serveMiniAppOrderOperation(re, cfg, miniappService, "submit", "submit order")
+		})
+		se.Router.GET("/api/miniapp/cart-order/order/submit-summary", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			summary, err := miniappService.OrderSubmitSummary(re.Request.Context())
+			if err != nil {
+				return re.InternalServerError("load miniapp order submit summary failed", err)
+			}
+
+			return re.JSON(http.StatusOK, summary)
+		})
+		se.Router.GET("/api/miniapp/cart-order/checkout-summary", func(re *core.RequestEvent) error {
+			if !authorizedMiniApp(re, cfg) {
+				return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+			}
+
+			summary, err := miniappService.CheckoutSummary(re.Request.Context())
+			if err != nil {
+				return re.InternalServerError("load miniapp checkout summary failed", err)
+			}
+
+			return re.JSON(http.StatusOK, summary)
+		})
+
 		se.Router.POST("/api/pim/harvest", func(re *core.RequestEvent) error {
 			if !authorized(re, cfg.Security.APIKey) {
 				return re.UnauthorizedError("missing or invalid api key", nil)
@@ -653,21 +881,68 @@ func miniAppProductID(re *core.RequestEvent) string {
 	return spuID + "_" + skuID
 }
 
+func miniAppFreightScenario(re *core.RequestEvent) string {
+	scenario := strings.TrimSpace(re.Request.URL.Query().Get("scenario"))
+	if scenario == "" {
+		return "preview"
+	}
+
+	return scenario
+}
+
+func serveMiniAppCartOperation(re *core.RequestEvent, cfg config.Config, service *miniappservice.Service, id string, label string) error {
+	if !authorizedMiniApp(re, cfg) {
+		return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+	}
+
+	operation, err := service.CartOperation(re.Request.Context(), id)
+	if err != nil {
+		return re.InternalServerError(label+" failed", err)
+	}
+
+	if operation == nil {
+		return re.NotFoundError("cart operation not found", nil)
+	}
+
+	return re.JSON(http.StatusOK, operation.Response)
+}
+
+func serveMiniAppOrderOperation(re *core.RequestEvent, cfg config.Config, service *miniappservice.Service, id string, label string) error {
+	if !authorizedMiniApp(re, cfg) {
+		return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
+	}
+
+	operation, err := service.OrderOperation(re.Request.Context(), id)
+	if err != nil {
+		return re.InternalServerError(label+" failed", err)
+	}
+
+	if operation == nil {
+		return re.NotFoundError("order operation not found", nil)
+	}
+
+	return re.JSON(http.StatusOK, operation.Response)
+}
+
 func newMiniAppSource(cfg config.Config) miniappapi.Source {
+	var base miniappapi.Source
 	if strings.EqualFold(strings.TrimSpace(cfg.MiniApp.SourceMode), "http") {
-		return miniappapi.NewHTTPSource(miniappapi.HTTPSourceConfig{
+		base = miniappapi.NewHTTPSource(miniappapi.HTTPSourceConfig{
 			URL:                 cfg.MiniApp.SourceURL,
 			AuthorizedAccountID: cfg.MiniApp.AuthorizedAccountID,
 			UserAgent:           cfg.MiniApp.UserAgent,
 			Timeout:             cfg.MiniApp.SourceTimeout,
 		})
+	} else {
+		base = miniappapi.NewSnapshotSource(
+			cfg.MiniApp.HomepageSnapshotFile,
+			cfg.MiniApp.CategorySnapshotFile,
+			cfg.MiniApp.ProductSnapshotFile,
+			cfg.MiniApp.CartOrderSnapshotFile,
+		)
 	}
 
-	return miniappapi.NewSnapshotSource(
-		cfg.MiniApp.HomepageSnapshotFile,
-		cfg.MiniApp.CategorySnapshotFile,
-		cfg.MiniApp.ProductSnapshotFile,
-	)
+	return miniappapi.NewOverlaySource(base)
 }
 
 func init() {

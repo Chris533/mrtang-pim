@@ -13,6 +13,7 @@ func TestSnapshotServiceLoadsHomepageAndSection(t *testing.T) {
 			"../../../datasets/miniapp/homepage",
 			"../../../datasets/miniapp/category-page",
 			"../../../datasets/miniapp/product-page",
+			"../../../datasets/miniapp/cart-order",
 		),
 		nil,
 	)
@@ -158,5 +159,107 @@ func TestSnapshotServiceLoadsHomepageAndSection(t *testing.T) {
 	}
 	if len(coverageSummary.FirstBatch) == 0 || coverageSummary.FirstBatch[0].Priority != "homepage_dual_unit" {
 		t.Fatal("expected homepage dual-unit first batch in coverage summary")
+	}
+
+	cartOrder, err := svc.CartOrder(context.Background())
+	if err != nil {
+		t.Fatalf("load cart order: %v", err)
+	}
+	if cartOrder.Cart.Add.ContractID == "" || cartOrder.Order.Submit.ContractID == "" {
+		t.Fatal("expected cart-order operations")
+	}
+	if len(cartOrder.Order.FreightCosts) != 2 {
+		t.Fatalf("expected two freight cost scenarios, got %d", len(cartOrder.Order.FreightCosts))
+	}
+
+	cartContracts, err := svc.Contracts(context.Background(), "/api/miniapp/cart-order")
+	if err != nil {
+		t.Fatalf("load cart-order contracts: %v", err)
+	}
+	if len(cartContracts) == 0 {
+		t.Fatal("expected cart-order contracts")
+	}
+
+	addCart, err := svc.CartOperation(context.Background(), "add")
+	if err != nil {
+		t.Fatalf("load cart add operation: %v", err)
+	}
+	if addCart == nil || addCart.Response == nil {
+		t.Fatal("expected cart add response")
+	}
+
+	submitOrder, err := svc.OrderOperation(context.Background(), "submit")
+	if err != nil {
+		t.Fatalf("load order submit operation: %v", err)
+	}
+	if submitOrder == nil || submitOrder.Response == nil {
+		t.Fatal("expected order submit response")
+	}
+
+	selectedFreight, err := svc.FreightCost(context.Background(), "selected_delivery")
+	if err != nil {
+		t.Fatalf("load selected freight scenario: %v", err)
+	}
+	if selectedFreight == nil || selectedFreight.Scenario != "selected_delivery" {
+		t.Fatal("expected selected_delivery freight scenario")
+	}
+
+	cartSummary, err := svc.CartDetailSummary(context.Background())
+	if err != nil {
+		t.Fatalf("load cart detail summary: %v", err)
+	}
+	if cartSummary.ItemCount == 0 || len(cartSummary.CartIDs) == 0 {
+		t.Fatal("expected normalized cart detail summary")
+	}
+
+	submitSummary, err := svc.OrderSubmitSummary(context.Background())
+	if err != nil {
+		t.Fatalf("load order submit summary: %v", err)
+	}
+	if submitSummary.BillID == "" || submitSummary.AddressID == "" || len(submitSummary.CartIDs) == 0 {
+		t.Fatal("expected normalized order submit summary")
+	}
+	if !submitSummary.RequiresPayment {
+		t.Fatal("expected submit summary to indicate payment is required")
+	}
+
+	cartListSummary, err := svc.CartListSummary(context.Background())
+	if err != nil {
+		t.Fatalf("load cart list summary: %v", err)
+	}
+	if cartListSummary.ItemCount == 0 || len(cartListSummary.Items) == 0 {
+		t.Fatal("expected normalized cart list summary")
+	}
+
+	freightSummary, err := svc.FreightSummary(context.Background())
+	if err != nil {
+		t.Fatalf("load freight summary: %v", err)
+	}
+	if len(freightSummary.Scenarios) != 2 {
+		t.Fatalf("expected two freight scenarios in summary, got %d", len(freightSummary.Scenarios))
+	}
+
+	defaultDeliverySummary, err := svc.DefaultDeliverySummary(context.Background())
+	if err != nil {
+		t.Fatalf("load default delivery summary: %v", err)
+	}
+	if !defaultDeliverySummary.Found || defaultDeliverySummary.Address == nil {
+		t.Fatal("expected default delivery summary fallback")
+	}
+
+	deliveriesSummary, err := svc.DeliveriesSummary(context.Background())
+	if err != nil {
+		t.Fatalf("load deliveries summary: %v", err)
+	}
+	if deliveriesSummary.Count == 0 || len(deliveriesSummary.Items) == 0 {
+		t.Fatal("expected deliveries summary items")
+	}
+
+	checkoutSummary, err := svc.CheckoutSummary(context.Background())
+	if err != nil {
+		t.Fatalf("load checkout summary: %v", err)
+	}
+	if checkoutSummary.CartDetail.ItemCount == 0 || !checkoutSummary.DefaultDelivery.Found || checkoutSummary.Submit.BillID == "" {
+		t.Fatal("expected checkout summary to aggregate cart, address and submit state")
 	}
 }

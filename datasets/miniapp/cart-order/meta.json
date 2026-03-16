@@ -1,0 +1,8 @@
+{
+    "source": "sanitized-rr-cart-order",
+    "description": "Sanitized cart, address and order-submit snapshot derived from mrtang-pim/docs/rr/cart-order/1. Sensitive customer, cart, address and payment identifiers are replaced with demo placeholders.",
+    "notes": [
+        "Covers add-to-cart, cart quantity change, cart list/detail, settle, address parsing, address add, freight estimate and order submit before payment.",
+        "Action endpoints replay sanitized upstream response envelopes; aggregate endpoints also keep request snapshots for frontend wiring."
+    ]
+}

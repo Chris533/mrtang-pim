@@ -9,12 +9,14 @@
 
 它是 `README.md`、`docs/start.md` 和 `docs/rr/categories/README.md` 的总览补充，不替代启动说明。
 
+如果你只关心结算页该怎么接，直接看 [checkout-api.md](./checkout-api.md)。
+
 ## 一眼看懂
 
 ```text
 源站 API / 抓包样本
     -> 脱敏整理
-    -> datasets/miniapp/homepage | datasets/miniapp/category-page | datasets/miniapp/product-page
+    -> datasets/miniapp/homepage | datasets/miniapp/category-page | datasets/miniapp/product-page | datasets/miniapp/cart-order
     -> snapshot/http source
     -> internal/miniapp/service
     -> /api/miniapp/**
@@ -31,7 +33,7 @@
 
 | 模式 | 读取位置 | 用途 |
 | --- | --- | --- |
-| `snapshot` | `datasets/miniapp/homepage` + `datasets/miniapp/category-page` + `datasets/miniapp/product-page` | 本地联调、脱网开发、固定样本回放 |
+| `snapshot` | `datasets/miniapp/homepage` + `datasets/miniapp/category-page` + `datasets/miniapp/product-page` + `datasets/miniapp/cart-order` | 本地联调、脱网开发、固定样本回放 |
 | `http` | `MINIAPP_SOURCE_URL` | 接入你自己的上游 connector 或标准化聚合服务 |
 
 相关配置：
@@ -41,6 +43,7 @@
 - `MINIAPP_HOMEPAGE_SNAPSHOT=./datasets/miniapp/homepage`
 - `MINIAPP_CATEGORY_SNAPSHOT=./datasets/miniapp/category-page`
 - `MINIAPP_PRODUCT_SNAPSHOT=./datasets/miniapp/product-page`
+- `MINIAPP_CART_ORDER_SNAPSHOT=./datasets/miniapp/cart-order`
 - `MINIAPP_AUTH_ACCOUNT_ID=...`
 - `MINIAPP_USER_AGENT=...`
 
@@ -94,6 +97,27 @@
 - 已为当前首页 `new/hot` 和分类 `chicken` 中出现的商品补齐 list-derived skeleton 商品记录
 - 样本主键使用 `spuId_skuId`
 - 首页和分类页继续以 `spuId + skuId` 关联到商品页
+
+### 购物车与下单
+
+目录：[datasets/miniapp/cart-order](../datasets/miniapp/cart-order)
+
+| 文件 | 含义 |
+| --- | --- |
+| `meta.json` | 数据来源说明、脱敏说明、补充备注 |
+| `contracts.json` | 购物车和下单链路原始 API 到本地接口的契约映射 |
+| `cart.json` | 加购、改数量、购物车列表、购物车详情、结算前校验 |
+| `order.json` | 默认地址、地址列表、地址解析、添加地址、运费试算、提交订单 |
+
+当前 cart-order 状态：
+
+- 已接入加入购物车、更新购物车、购物车列表、购物车详情、结算前校验
+- 已接入地址解析、添加地址、运费试算、提交订单
+- 当前 `submit` 只保留“提交订单到待支付结果”的响应，不处理支付动作本身
+- `customerId`、`cartId`、`addressId`、`openId` 等敏感值已替换成 demo 占位值
+- 同时提供 `detail-summary` 和 `submit-summary` 两个派生接口，给前端读取稳定摘要字段
+- `default-delivery-summary` 和 `deliveries-summary` 会在原始接口为空时回退到 `add_delivery` 响应，避免 checkout 前置页面拿到空地址
+- `checkout-summary` 会把购物车、地址、运费和提交预览摘要聚到一个响应里，适合前端一次性拉取结算页数据
 
 ## 源站到本地接口映射
 
@@ -171,6 +195,39 @@
 - `/api/miniapp/product-page/coverage?priority=homepage_dual_unit` 可以直接只看“首页双单位优先批次”
 - `/api/miniapp/product-page/coverage-summary` 会返回总数、分桶统计和 `firstBatch`
 
+### 购物车与下单链路
+
+购物车与下单原始样本归档说明见 [docs/rr/cart-order/README.md](./rr/cart-order/README.md)。
+
+| 源站 API | rr 样本编号 | Dataset 落点 | 本地接口 | 作用 |
+| --- | --- | --- | --- | --- |
+| `/gateway/goodsservice/api/v1/wx/cart/addCart` | `[5195]` | `cart-order/cart.json.add` | `POST /api/miniapp/cart-order/cart/add` | 加入购物车 |
+| `/gateway/goodsservice/api/v1/wx/cart/change_cart_num` | `[5215]` | `cart-order/cart.json.changeNum` | `POST /api/miniapp/cart-order/cart/change-num` | 更新购物车数量 |
+| `/gateway/goodsservice/api/v1/wx/cart/list` | `[5197]` | `cart-order/cart.json.list` | `GET /api/miniapp/cart-order/cart/list` | 购物车列表和合计 |
+| `/gateway/goodsservice/api/v1/wx/cart/detail` | `[5224]` | `cart-order/cart.json.detail` | `GET /api/miniapp/cart-order/cart/detail` | 结算页购物车详情 |
+| `/gateway/goodsservice/api/v1/wx/cart/settle` | `[5216]` | `cart-order/cart.json.settle` | `POST /api/miniapp/cart-order/cart/settle` | 结算前校验 |
+| `/gateway/customer-service/api/v1/order/get_default_delivery` | `[5221]` | `cart-order/order.json.defaultDelivery` | `GET /api/miniapp/cart-order/order/default-delivery` | 默认收货地址 |
+| `/gateway/customer-service/api/v1/order/get_deliverys` | `[5232]` | `cart-order/order.json.deliveries` | `GET /api/miniapp/cart-order/order/deliveries` | 收货地址列表 |
+| `/gateway/saas-platform-service/api/v1/address/analyse_address` | `[5265]` | `cart-order/order.json.analyseAddress` | `POST /api/miniapp/cart-order/order/address/analyse` | 文本地址解析 |
+| `/gateway/customer-service/api/v1/order/add_delivery` | `[5266]` | `cart-order/order.json.addDelivery` | `POST /api/miniapp/cart-order/order/address/add` | 添加收货地址 |
+| `/gateway/logisticsservice/api/v1/freight/cost` | `[5225]` | `cart-order/order.json.freightCosts[preview]` | `GET /api/miniapp/cart-order/order/freight-cost?scenario=preview` | 未选配送方式时运费试算 |
+| `/gateway/logisticsservice/api/v1/freight/cost` | `[5269]` | `cart-order/order.json.freightCosts[selected_delivery]` | `GET /api/miniapp/cart-order/order/freight-cost?scenario=selected_delivery` | 选定配送方式后的运费试算 |
+| `/gateway/billservice/api/v1/wx/sale_bill/save` | `[5276]` | `cart-order/order.json.submit` | `POST /api/miniapp/cart-order/order/submit` | 提交订单到待支付结果 |
+
+cart-order 聚合接口：
+
+- `GET /api/miniapp/contracts/cart-order`
+- `GET /api/miniapp/cart-order`
+- `GET /api/miniapp/cart-order/cart`
+- `GET /api/miniapp/cart-order/order`
+- `GET /api/miniapp/cart-order/cart/list-summary`
+- `GET /api/miniapp/cart-order/cart/detail-summary`
+- `GET /api/miniapp/cart-order/order/default-delivery-summary`
+- `GET /api/miniapp/cart-order/order/deliveries-summary`
+- `GET /api/miniapp/cart-order/order/freight-summary`
+- `GET /api/miniapp/cart-order/order/submit-summary`
+- `GET /api/miniapp/cart-order/checkout-summary`
+
 ## 运行时读取规则
 
 实现位置：
@@ -181,17 +238,19 @@
 
 规则如下：
 
-1. `snapshot` 模式先加载首页 dataset，再合并分类页和商品页 dataset。
+1. `snapshot` 模式先加载首页 dataset，再合并分类页、商品页和 cart-order dataset。
 2. `snapshot` 支持“目录模式”和“单文件兼容模式”，但当前推荐目录模式。
 3. `http` 模式只请求一次 `MINIAPP_SOURCE_URL`，要求对方直接返回标准化后的 `Dataset` JSON。
 4. `http` 模式会自动附带：
    - `Authorization: Bearer <MINIAPP_AUTH_ACCOUNT_ID>`
    - `User-Agent: <MINIAPP_USER_AGENT>`
+5. cart-order 中的 `customerId`、`customerName`、`phone`、`openId`、`addressId`、`cartIdList`、`deliveryMethodId`、`dueMoney` 都会从前序样本自动串联，但不会改写 `datasets/miniapp/**` 原始脱敏样本。
 
 ## 维护建议
 
 - 新增首页商品模块时，优先补 `datasets/miniapp/homepage/sections/<id>.json`。
 - 新增分类商品样本时，优先补 `datasets/miniapp/category-page/sections/<id>.json`。
 - 新增商品详情样本时，优先补 `datasets/miniapp/product-page/products/<spuId>_<skuId>.json`。
+- 新增购物车或下单样本时，优先补 `datasets/miniapp/cart-order/cart.json` 或 `datasets/miniapp/cart-order/order.json`。
 - 原始抓包只追加到 `docs/rr/**`，不要让运行时代码直接依赖 rr 目录。
 - 如果接入真实源站，先把源站返回整理成标准化 `Dataset`，再接到 `http` 模式，不要把源站字段直接泄漏到本地接口层。
