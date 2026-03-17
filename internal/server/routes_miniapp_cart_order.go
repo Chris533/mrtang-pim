@@ -143,7 +143,7 @@ func registerMiniAppCartOrderRoutes(se *core.ServeEvent, cfg config.Config, mini
 			return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
 		}
 
-		freight, err := miniappService.FreightCost(re.Request.Context(), miniAppFreightScenario(re))
+		freight, err := miniappService.ExecuteFreightCost(re.Request.Context(), miniAppFreightScenario(re), nil)
 		if err != nil {
 			return re.InternalServerError("load miniapp freight cost failed", err)
 		}
@@ -159,7 +159,12 @@ func registerMiniAppCartOrderRoutes(se *core.ServeEvent, cfg config.Config, mini
 			return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
 		}
 
-		freight, err := miniappService.FreightCost(re.Request.Context(), miniAppFreightScenario(re))
+		requestBody, err := readOptionalJSONBody(re)
+		if err != nil {
+			return re.BadRequestError("invalid request body", err)
+		}
+
+		freight, err := miniappService.ExecuteFreightCost(re.Request.Context(), miniAppFreightScenario(re), requestBody)
 		if err != nil {
 			return re.InternalServerError("load miniapp freight cost failed", err)
 		}

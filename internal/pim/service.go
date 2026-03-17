@@ -27,6 +27,7 @@ const (
 	CollectionCategoryMappings      = "category_mappings"
 	CollectionProcurementOrders     = "procurement_orders"
 	CollectionProcurementActionLogs = "procurement_action_logs"
+	CollectionMiniappActionLogs     = "miniapp_action_logs"
 
 	StatusPending      = "pending"
 	StatusAIProcessing = "ai_processing"

@@ -117,6 +117,25 @@ type TargetSyncSummary struct {
 	Runs                    []TargetSyncRun          `json:"runs"`
 	ScopeOptions            []TargetSyncScopeOption  `json:"scopeOptions"`
 	CategoryDiffs           []TargetCategoryDiffItem `json:"categoryDiffs"`
+	CheckoutSources         []TargetCheckoutSource   `json:"checkoutSources"`
+	RecentMiniappWrites     []TargetMiniappWrite     `json:"recentMiniappWrites"`
+}
+
+type TargetCheckoutSource struct {
+	Key        string `json:"key"`
+	Label      string `json:"label"`
+	Status     string `json:"status"`
+	ContractID string `json:"contractId"`
+	Note       string `json:"note"`
+}
+
+type TargetMiniappWrite struct {
+	OperationID    string `json:"operationId"`
+	OperationLabel string `json:"operationLabel"`
+	ContractID     string `json:"contractId"`
+	Status         string `json:"status"`
+	Message        string `json:"message"`
+	CreatedAt      string `json:"createdAt"`
 }
 
 type targetCategorySyncResult struct {
@@ -240,7 +259,85 @@ func (s *Service) TargetSyncSummary(_ context.Context, app core.App, dataset min
 		Runs:                    runs,
 		ScopeOptions:            scopeOptions,
 		CategoryDiffs:           diffItems,
+		CheckoutSources:         targetCheckoutSources(dataset),
+		RecentMiniappWrites:     targetMiniappWrites(app, 8),
 	}, nil
+}
+
+func targetCheckoutSources(dataset miniappmodel.Dataset) []TargetCheckoutSource {
+	freightPreview := ""
+	if action := findScenarioAction(dataset.CartOrder.Order.FreightCosts, "preview"); action != nil {
+		freightPreview = action.ContractID
+	}
+	freightSelected := ""
+	if action := findScenarioAction(dataset.CartOrder.Order.FreightCosts, "selected_delivery"); action != nil {
+		freightSelected = action.ContractID
+	}
+
+	return []TargetCheckoutSource{
+		newTargetCheckoutSource("cart_list", "购物车列表", dataset.CartOrder.Cart.List.ContractID, "读取购物车清单与合计"),
+		newTargetCheckoutSource("cart_detail", "购物车详情", dataset.CartOrder.Cart.Detail.ContractID, "读取结算页商品明细"),
+		newTargetCheckoutSource("cart_settle", "结算预览", dataset.CartOrder.Cart.Settle.ContractID, "读取结算前校验结果"),
+		newTargetCheckoutSource("default_delivery", "默认地址", dataset.CartOrder.Order.DefaultDelivery.ContractID, "读取默认收货地址"),
+		newTargetCheckoutSource("deliveries", "地址列表", dataset.CartOrder.Order.Deliveries.ContractID, "读取全部收货地址"),
+		newTargetCheckoutSource("analyse_address", "地址解析", dataset.CartOrder.Order.AnalyseAddress.ContractID, "解析文本地址"),
+		newTargetCheckoutSource("freight_preview", "运费预估", freightPreview, "未选择配送方式时的运费试算"),
+		newTargetCheckoutSource("freight_selected_delivery", "运费确认", freightSelected, "已选择配送方式后的运费试算"),
+		newTargetCheckoutSource("add_delivery", "添加地址", dataset.CartOrder.Order.AddDelivery.ContractID, "显式调用时真实写入"),
+		newTargetCheckoutSource("submit", "提交订单", dataset.CartOrder.Order.Submit.ContractID, "显式调用时真实下单"),
+	}
+}
+
+func newTargetCheckoutSource(key string, label string, contractID string, note string) TargetCheckoutSource {
+	status := "fallback"
+	trimmed := strings.TrimSpace(contractID)
+	switch {
+	case strings.HasPrefix(trimmed, "raw_"):
+		status = "raw_live"
+		if key == "default_delivery" || key == "deliveries" || key == "analyse_address" || key == "freight_preview" || key == "freight_selected_delivery" {
+			status = "raw_readonly"
+		}
+		if key == "add_delivery" || key == "submit" {
+			status = "explicit_write"
+		}
+	case trimmed == "":
+		status = "fallback"
+	}
+	return TargetCheckoutSource{
+		Key:        key,
+		Label:      label,
+		Status:     status,
+		ContractID: contractID,
+		Note:       note,
+	}
+}
+
+func findScenarioAction(items []miniappmodel.ScenarioAction, scenario string) *miniappmodel.ScenarioAction {
+	for idx := range items {
+		if items[idx].Scenario == scenario {
+			return &items[idx]
+		}
+	}
+	return nil
+}
+
+func targetMiniappWrites(app core.App, limit int) []TargetMiniappWrite {
+	records, err := app.FindRecordsByFilter(CollectionMiniappActionLogs, "", "-created", limit, 0, nil)
+	if err != nil {
+		return nil
+	}
+	items := make([]TargetMiniappWrite, 0, len(records))
+	for _, record := range records {
+		items = append(items, TargetMiniappWrite{
+			OperationID:    record.GetString("operation_id"),
+			OperationLabel: record.GetString("operation_label"),
+			ContractID:     record.GetString("contract_id"),
+			Status:         record.GetString("status"),
+			Message:        record.GetString("message"),
+			CreatedAt:      record.GetString("created"),
+		})
+	}
+	return items
 }
 
 func (s *Service) EnsureTargetSyncJob(_ context.Context, app core.App, dataset miniappmodel.Dataset, entityType string, scopeKey string) (TargetSyncJob, error) {

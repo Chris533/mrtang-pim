@@ -5,10 +5,11 @@ import (
 	"html/template"
 	"strings"
 
+	"mrtang-pim/internal/config"
 	"mrtang-pim/internal/pim"
 )
 
-func RenderTargetSyncHTML(summary pim.TargetSyncSummary, flashMessage string, flashError string) string {
+func RenderTargetSyncHTML(cfg config.Config, summary pim.TargetSyncSummary, flashMessage string, flashError string) string {
 	const page = `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -84,6 +85,13 @@ func RenderTargetSyncHTML(summary pim.TargetSyncSummary, flashMessage string, fl
         <div class="eyebrow">当前来源</div>
         <div style="margin-top:10px;"><span class="badge {{modeClass .Summary.SourceMode}}">{{modeLabel .Summary.SourceMode}}</span></div>
         <div class="list" style="margin-top:12px;">
+          <div class="list-item">
+            <strong>接口接入提示</strong>
+            <div class="small" style="margin-top:6px;">
+              {{if .RequiresAuth}}当前 API 需要携带 Authorization: Bearer ...。{{else}}当前 API 默认公开，无需本地 Bearer 头。{{end}}
+              {{if .SourceURL}}<br>当前上游地址：<code>{{.SourceURL}}</code>{{end}}
+            </div>
+          </div>
           <div class="list-item"><strong>顶级分类</strong><div class="small">{{.Summary.TopLevelCount}} 个</div></div>
           <div class="list-item"><strong>目标分类节点</strong><div class="small">{{.Summary.ExpectedNodeCount}} 个</div></div>
           <div class="list-item"><strong>本地已落库分类</strong><div class="small">{{.Summary.CategoryCount}} 个</div></div>
@@ -142,6 +150,48 @@ func RenderTargetSyncHTML(summary pim.TargetSyncSummary, flashMessage string, fl
           <div class="list-item">
             <strong>图片资产</strong>
             <div class="small" style="margin-top:6px;">当图片地址、角色或排序变化时，会自动清空处理结果并回到 <code>pending</code>，重新进入图片处理链。</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="content">
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px;">
+          <h3 style="margin:0;">Checkout 来源矩阵</h3>
+          <span class="small">这里显示的是当前实际 contractId，不是静态推断</span>
+        </div>
+        <table>
+          <thead><tr><th>链路</th><th>当前状态</th><th>contractId</th><th>说明</th></tr></thead>
+          <tbody>
+          {{range .Summary.CheckoutSources}}
+            <tr>
+              <td><strong>{{.Label}}</strong></td>
+              <td><span class="badge {{sourceStatusClass .Status}}">{{sourceStatusLabel .Status}}</span></td>
+              <td class="small"><code>{{blank .ContractID "-"}}</code></td>
+              <td class="small">{{.Note}}</td>
+            </tr>
+          {{else}}
+            <tr><td colspan="4" class="small">当前还没有 checkout 来源数据。</td></tr>
+          {{end}}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-top:0;">真实写操作提示</h3>
+        <div class="list">
+          <div class="list-item">
+            <strong>添加收货地址</strong>
+            <div class="small" style="margin-top:6px;"><code>POST /api/miniapp/cart-order/order/address/add</code> 在 raw 模式下会真实调用源站。必须显式传请求体，不再默认复用 fallback 样本。</div>
+          </div>
+          <div class="list-item">
+            <strong>提交订单</strong>
+            <div class="small" style="margin-top:6px;"><code>POST /api/miniapp/cart-order/order/submit</code> 在 raw 模式下会真实下单。必须显式传请求体，建议只在确认购物车、地址和运费后手动触发。</div>
+          </div>
+          <div class="list-item">
+            <strong>安全边界</strong>
+            <div class="small" style="margin-top:6px;">后台总览、target-sync 和 source 审核流不会自动执行写操作；raw 自动抓取阶段仍保持只读优先。</div>
           </div>
         </div>
       </div>
@@ -209,6 +259,28 @@ func RenderTargetSyncHTML(summary pim.TargetSyncSummary, flashMessage string, fl
           </tbody>
         </table>
       </div>
+
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px;">
+          <h3 style="margin:0;">最近真实写操作</h3>
+          <span class="small">仅记录 raw 模式下的显式真实写入</span>
+        </div>
+        <table>
+          <thead><tr><th>时间</th><th>操作</th><th>结果</th><th>contractId</th></tr></thead>
+          <tbody>
+          {{range .Summary.RecentMiniappWrites}}
+            <tr>
+              <td class="small">{{blank .CreatedAt "-"}}</td>
+              <td><strong>{{.OperationLabel}}</strong><div class="small">{{.OperationID}}</div></td>
+              <td><span class="badge {{writeStatusClass .Status}}">{{writeStatusLabel .Status}}</span><div class="small">{{blank .Message "-"}}</div></td>
+              <td class="small"><code>{{blank .ContractID "-"}}</code></td>
+            </tr>
+          {{else}}
+            <tr><td colspan="4" class="small">目前还没有记录到 raw 模式下的真实写操作。</td></tr>
+          {{end}}
+          </tbody>
+        </table>
+      </div>
     </section>
 
     <section class="content">
@@ -257,6 +329,8 @@ func RenderTargetSyncHTML(summary pim.TargetSyncSummary, flashMessage string, fl
 		Summary      pim.TargetSyncSummary
 		FlashMessage string
 		FlashError   string
+		RequiresAuth bool
+		SourceURL    string
 	}
 
 	tpl := template.Must(template.New("target-sync").Funcs(template.FuncMap{
@@ -267,16 +341,64 @@ func RenderTargetSyncHTML(summary pim.TargetSyncSummary, flashMessage string, fl
 			return value
 		},
 		"modeClass": func(mode string) string {
-			if strings.EqualFold(strings.TrimSpace(mode), "http") {
+			switch strings.ToLower(strings.TrimSpace(mode)) {
+			case "raw":
 				return "ok"
+			case "snapshot":
+				return "warning"
 			}
-			return "warning"
+			return ""
 		},
 		"modeLabel": func(mode string) string {
-			if strings.EqualFold(strings.TrimSpace(mode), "http") {
-				return "HTTP 模式"
+			switch strings.ToLower(strings.TrimSpace(mode)) {
+			case "raw":
+				return "RAW 真实源站模式"
+			case "snapshot":
+				return "快照模式"
 			}
-			return "快照模式"
+			return "未识别模式"
+		},
+		"sourceStatusClass": func(status string) string {
+			switch strings.ToLower(strings.TrimSpace(status)) {
+			case "raw_live":
+				return "ok"
+			case "raw_readonly", "fallback":
+				return "warning"
+			case "explicit_write":
+				return "danger"
+			default:
+				return ""
+			}
+		},
+		"sourceStatusLabel": func(status string) string {
+			switch strings.ToLower(strings.TrimSpace(status)) {
+			case "raw_live":
+				return "raw live"
+			case "raw_readonly":
+				return "raw 只读"
+			case "explicit_write":
+				return "显式真实写入"
+			default:
+				return "fallback"
+			}
+		},
+		"writeStatusClass": func(status string) string {
+			if strings.EqualFold(strings.TrimSpace(status), "success") {
+				return "ok"
+			}
+			if strings.EqualFold(strings.TrimSpace(status), "failed") {
+				return "danger"
+			}
+			return ""
+		},
+		"writeStatusLabel": func(status string) string {
+			if strings.EqualFold(strings.TrimSpace(status), "success") {
+				return "成功"
+			}
+			if strings.EqualFold(strings.TrimSpace(status), "failed") {
+				return "失败"
+			}
+			return "未知"
 		},
 		"scopeLabel": func(scopeType string, scopeLabel string) string {
 			if strings.EqualFold(scopeType, pim.TargetSyncScopeAll) {
@@ -362,6 +484,8 @@ func RenderTargetSyncHTML(summary pim.TargetSyncSummary, flashMessage string, fl
 		Summary:      summary,
 		FlashMessage: strings.TrimSpace(flashMessage),
 		FlashError:   strings.TrimSpace(flashError),
+		RequiresAuth: strings.TrimSpace(cfg.MiniApp.AuthorizedAccountID) != "",
+		SourceURL:    strings.TrimSpace(cfg.MiniApp.SourceURL),
 	}); err != nil {
 		return fmt.Sprintf("<pre>render target sync failed: %s</pre>", template.HTMLEscapeString(err.Error()))
 	}

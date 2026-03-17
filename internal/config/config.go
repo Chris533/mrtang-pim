@@ -36,6 +36,8 @@ type MiniAppConfig struct {
 	SourceMode            string
 	SourceURL             string
 	SourceTimeout         time.Duration
+	RawTemplateID         string
+	RawReferer            string
 	HomepageSnapshotFile  string
 	CategorySnapshotFile  string
 	ProductSnapshotFile   string
@@ -99,6 +101,8 @@ func Load() Config {
 			SourceMode:            getEnv("MINIAPP_SOURCE_MODE", "snapshot"),
 			SourceURL:             strings.TrimSpace(os.Getenv("MINIAPP_SOURCE_URL")),
 			SourceTimeout:         getEnvDuration("MINIAPP_SOURCE_TIMEOUT", 20*time.Second),
+			RawTemplateID:         getEnv("MINIAPP_RAW_TEMPLATE_ID", "962"),
+			RawReferer:            getEnv("MINIAPP_RAW_REFERER", "https://servicewechat.com/wx57f975d225fcd0bf/9/page-frame.html"),
 			HomepageSnapshotFile:  getEnv("MINIAPP_HOMEPAGE_SNAPSHOT", "./datasets/miniapp/homepage"),
 			CategorySnapshotFile:  getEnv("MINIAPP_CATEGORY_SNAPSHOT", "./datasets/miniapp/category-page"),
 			ProductSnapshotFile:   getEnv("MINIAPP_PRODUCT_SNAPSHOT", "./datasets/miniapp/product-page"),

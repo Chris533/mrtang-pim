@@ -148,6 +148,17 @@ func (s *Service) CartOperation(ctx context.Context, id string) (*model.Operatio
 	return s.importer.CartOperation(dataset, id), nil
 }
 
+func (s *Service) ExecuteCartOperation(ctx context.Context, id string, requestBody any) (*model.OperationSnapshot, error) {
+	if actionSource, ok := s.source.(api.ActionSource); ok {
+		operation, err := actionSource.ExecuteCartOperation(ctx, id, requestBody)
+		if err != nil || operation != nil {
+			return operation, err
+		}
+	}
+
+	return s.CartOperation(ctx, id)
+}
+
 func (s *Service) OrderOperation(ctx context.Context, id string) (*model.OperationSnapshot, error) {
 	dataset, err := s.Dataset(ctx)
 	if err != nil {
@@ -157,6 +168,17 @@ func (s *Service) OrderOperation(ctx context.Context, id string) (*model.Operati
 	return s.importer.OrderOperation(dataset, id), nil
 }
 
+func (s *Service) ExecuteOrderOperation(ctx context.Context, id string, requestBody any) (*model.OperationSnapshot, error) {
+	if actionSource, ok := s.source.(api.ActionSource); ok {
+		operation, err := actionSource.ExecuteOrderOperation(ctx, id, requestBody)
+		if err != nil || operation != nil {
+			return operation, err
+		}
+	}
+
+	return s.OrderOperation(ctx, id)
+}
+
 func (s *Service) FreightCost(ctx context.Context, scenario string) (*model.ScenarioAction, error) {
 	dataset, err := s.Dataset(ctx)
 	if err != nil {
@@ -164,6 +186,17 @@ func (s *Service) FreightCost(ctx context.Context, scenario string) (*model.Scen
 	}
 
 	return s.importer.FreightCost(dataset, scenario), nil
+}
+
+func (s *Service) ExecuteFreightCost(ctx context.Context, scenario string, requestBody any) (*model.ScenarioAction, error) {
+	if actionSource, ok := s.source.(api.ActionSource); ok {
+		action, err := actionSource.ExecuteFreightScenario(ctx, scenario, requestBody)
+		if err != nil || action != nil {
+			return action, err
+		}
+	}
+
+	return s.FreightCost(ctx, scenario)
 }
 
 func (s *Service) CartDetailSummary(ctx context.Context) (model.CartDetailSummary, error) {

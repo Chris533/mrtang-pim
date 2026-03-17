@@ -1,12 +1,14 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pocketbase/pocketbase/core"
 
@@ -77,15 +79,29 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		if !authorizedAdminModule(re, cfg, "source") {
 			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无目标站同步权限", "当前账号没有目标站同步权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
 		}
-		dataset, err := miniappService.Dataset(re.Request.Context())
+		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 4*time.Second)
+		defer cancel()
+
+		dataset, err := miniappService.Dataset(loadCtx)
 		if err != nil {
-			return re.InternalServerError("load target sync dataset failed", err)
+			return re.HTML(http.StatusOK, admin.RenderTargetSyncHTML(
+				cfg,
+				pim.TargetSyncSummary{SourceMode: strings.TrimSpace(cfg.MiniApp.SourceMode)},
+				strings.TrimSpace(re.Request.URL.Query().Get("message")),
+				"加载 miniapp dataset 失败："+err.Error(),
+			))
 		}
-		summary, err := service.TargetSyncSummary(re.Request.Context(), re.App, *dataset)
+		summary, err := service.TargetSyncSummary(loadCtx, re.App, *dataset)
 		if err != nil {
-			return re.InternalServerError("load target sync summary failed", err)
+			return re.HTML(http.StatusOK, admin.RenderTargetSyncHTML(
+				cfg,
+				pim.TargetSyncSummary{SourceMode: strings.TrimSpace(dataset.Meta.Source)},
+				strings.TrimSpace(re.Request.URL.Query().Get("message")),
+				"生成目标同步摘要失败："+err.Error(),
+			))
 		}
 		return re.HTML(http.StatusOK, admin.RenderTargetSyncHTML(
+			cfg,
 			summary,
 			strings.TrimSpace(re.Request.URL.Query().Get("message")),
 			strings.TrimSpace(re.Request.URL.Query().Get("error")),

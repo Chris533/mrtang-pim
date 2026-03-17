@@ -112,9 +112,11 @@ go run ./cmd/pim serve
 - `PIM_HTTP_ADDR=127.0.0.1:26228`
 - `PIM_SOURCE_ADMIN_EMAILS=ops@example.com,source@example.com`
 - `PIM_PROCUREMENT_ADMIN_EMAILS=buyer@example.com`
-- `MINIAPP_SOURCE_MODE=snapshot|http`
+- `MINIAPP_SOURCE_MODE=snapshot|raw`
 - `MINIAPP_SOURCE_URL=...`
 - `MINIAPP_SOURCE_TIMEOUT=20s`
+- `MINIAPP_RAW_TEMPLATE_ID=962`
+- `MINIAPP_RAW_REFERER=https://servicewechat.com/wx57f975d225fcd0bf/9/page-frame.html`
 - `MINIAPP_HOMEPAGE_SNAPSHOT=./datasets/miniapp/homepage`
 - `MINIAPP_CATEGORY_SNAPSHOT=./datasets/miniapp/category-page`
 - `MINIAPP_PRODUCT_SNAPSHOT=./datasets/miniapp/product-page`
@@ -126,10 +128,10 @@ go run ./cmd/pim serve
 
 - `MINIAPP_SOURCE_MODE=snapshot`
   读取本地 snapshot 目录，并组装 homepage/category-page/product-page/cart-order dataset
-- `MINIAPP_SOURCE_MODE=http`
-  从 `MINIAPP_SOURCE_URL` 拉取标准化后的 `Dataset` JSON
+- `MINIAPP_SOURCE_MODE=raw`
+  直接请求目标站原始 API，并在本项目内部标准化为 `Dataset`
 
-当使用 `http` source 时，请求会自动带上:
+当使用 `raw` source 时，请求会自动带上:
 
 - `Authorization: Bearer <MINIAPP_AUTH_ACCOUNT_ID>`
 - `User-Agent: <MINIAPP_USER_AGENT>`

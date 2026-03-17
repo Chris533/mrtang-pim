@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -34,6 +35,19 @@ func readProcurementStatusUpdateRequest(re *core.RequestEvent) (pim.ProcurementS
 	}
 
 	return request, nil
+}
+
+func readOptionalJSONBody(re *core.RequestEvent) (any, error) {
+	defer re.Request.Body.Close()
+
+	var payload any
+	if err := json.NewDecoder(re.Request.Body).Decode(&payload); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return payload, nil
 }
 
 func readIntQuery(re *core.RequestEvent, key string, fallback int) int {
@@ -136,7 +150,12 @@ func serveMiniAppCartOperation(re *core.RequestEvent, cfg config.Config, service
 		return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
 	}
 
-	operation, err := service.CartOperation(re.Request.Context(), id)
+	requestBody, err := readOptionalJSONBody(re)
+	if err != nil {
+		return re.BadRequestError("invalid request body", err)
+	}
+
+	operation, err := service.ExecuteCartOperation(re.Request.Context(), id, requestBody)
 	if err != nil {
 		return re.InternalServerError(label+" failed", err)
 	}
@@ -144,6 +163,8 @@ func serveMiniAppCartOperation(re *core.RequestEvent, cfg config.Config, service
 	if operation == nil {
 		return re.NotFoundError("cart operation not found", nil)
 	}
+
+	logMiniappWriteAction(re.App, cfg, id, label, requestBody, operation)
 
 	return re.JSON(http.StatusOK, operation.Response)
 }
@@ -153,7 +174,12 @@ func serveMiniAppOrderOperation(re *core.RequestEvent, cfg config.Config, servic
 		return re.UnauthorizedError("missing or invalid miniapp authorization", nil)
 	}
 
-	operation, err := service.OrderOperation(re.Request.Context(), id)
+	requestBody, err := readOptionalJSONBody(re)
+	if err != nil {
+		return re.BadRequestError("invalid request body", err)
+	}
+
+	operation, err := service.ExecuteOrderOperation(re.Request.Context(), id, requestBody)
 	if err != nil {
 		return re.InternalServerError(label+" failed", err)
 	}
@@ -162,5 +188,49 @@ func serveMiniAppOrderOperation(re *core.RequestEvent, cfg config.Config, servic
 		return re.NotFoundError("order operation not found", nil)
 	}
 
+	logMiniappWriteAction(re.App, cfg, id, label, requestBody, operation)
+
 	return re.JSON(http.StatusOK, operation.Response)
+}
+
+func logMiniappWriteAction(app core.App, cfg config.Config, operationID string, operationLabel string, requestBody any, operation *miniappmodel.OperationSnapshot) {
+	if operation == nil || !strings.EqualFold(strings.TrimSpace(cfg.MiniApp.SourceMode), "raw") {
+		return
+	}
+	if !isMiniappWriteOperation(operationID) || !strings.HasPrefix(strings.TrimSpace(operation.ContractID), "raw_") {
+		return
+	}
+
+	collection, err := app.FindCollectionByNameOrId(pim.CollectionMiniappActionLogs)
+	if err != nil {
+		return
+	}
+	record := core.NewRecord(collection)
+	record.Set("source_mode", strings.TrimSpace(cfg.MiniApp.SourceMode))
+	record.Set("operation_id", operationID)
+	record.Set("operation_label", operationLabel)
+	record.Set("contract_id", strings.TrimSpace(operation.ContractID))
+	record.Set("status", "success")
+	record.Set("message", miniappActionMessage(operation.Response))
+	record.Set("request_json", requestBody)
+	record.Set("response_json", operation.Response)
+	_ = app.Save(record)
+}
+
+func isMiniappWriteOperation(id string) bool {
+	switch strings.TrimSpace(id) {
+	case "add", "change-num", "add-delivery", "submit":
+		return true
+	default:
+		return false
+	}
+}
+
+func miniappActionMessage(response any) string {
+	if mapped, ok := response.(map[string]any); ok {
+		if message, ok := mapped["message"].(string); ok {
+			return strings.TrimSpace(message)
+		}
+	}
+	return ""
 }

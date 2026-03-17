@@ -194,7 +194,9 @@ func renderMrtangAdminHTML(pageData mrtangAdminPageData) string {
         <div class="stat"><div class="eyebrow">Checkout</div><div class="metric">{{.Miniapp.OrderOperationCount}}</div><div class="desc">{{.Miniapp.CartOperationCount}} cart / {{.Miniapp.FreightScenarioCount}} freight</div></div>
       </div>
       <div class="inline-list">
+        <span class="pill">configMode: <code>{{blank .Miniapp.ConfigSourceMode "-"}}</code></span>
         <span class="pill">sourceMode: <code>{{blank .Miniapp.SourceMode "snapshot"}}</code></span>
+        <span class="pill">datasetSource: <code>{{blank .Miniapp.DatasetSource "-"}}</code></span>
         <span class="pill">sourceURL: <code>{{blank .Miniapp.SourceURL "-"}}</code></span>
         <span class="pill">multiUnitVisible: <code>{{.Miniapp.MultiUnitTotal}}</code></span>
         <span class="pill">categoryProducts: <code>{{.Miniapp.CategoryProductCount}}</code></span>
@@ -381,14 +383,14 @@ func renderMrtangAdminHTML(pageData mrtangAdminPageData) string {
 			}
 		},
 		"sourceModeClass": func(mode string) string {
-			if strings.EqualFold(strings.TrimSpace(mode), "http") {
+			if strings.EqualFold(strings.TrimSpace(mode), "raw") {
 				return "ok"
 			}
 			return "warning"
 		},
 		"sourceModeLabel": func(mode string) string {
-			if strings.EqualFold(strings.TrimSpace(mode), "http") {
-				return "HTTP Source"
+			if strings.EqualFold(strings.TrimSpace(mode), "raw") {
+				return "RAW Source"
 			}
 			return "Snapshot Source"
 		},

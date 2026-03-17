@@ -33,6 +33,7 @@ type mrtangAdminPageData struct {
 
 type mrtangAdminMiniappData struct {
 	SourceMode                  string
+	ConfigSourceMode            string
 	SourceURL                   string
 	DatasetSource               string
 	ContractCount               int
@@ -293,14 +294,22 @@ func buildMrtangAdminSourceCaptureData(ctx context.Context, app core.App, pimSer
 }
 
 func buildMrtangAdminMiniappData(ctx context.Context, cfg config.Config, service *miniappservice.Service) (mrtangAdminMiniappData, error) {
-	dataset, err := service.Dataset(ctx)
+	loadCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+
+	dataset, err := service.Dataset(loadCtx)
 	if err != nil {
 		return mrtangAdminMiniappData{}, err
 	}
 
 	coverageSummary := miniappimporter.NewHomepageImporter().ProductCoverageSummary(dataset)
+	actualSourceMode := strings.TrimSpace(dataset.Meta.Source)
+	if actualSourceMode == "" {
+		actualSourceMode = strings.TrimSpace(cfg.MiniApp.SourceMode)
+	}
 	data := mrtangAdminMiniappData{
-		SourceMode:            strings.TrimSpace(cfg.MiniApp.SourceMode),
+		SourceMode:            actualSourceMode,
+		ConfigSourceMode:      strings.TrimSpace(cfg.MiniApp.SourceMode),
 		SourceURL:             strings.TrimSpace(cfg.MiniApp.SourceURL),
 		DatasetSource:         strings.TrimSpace(dataset.Meta.Source),
 		ContractCount:         len(dataset.Contracts),
@@ -407,16 +416,16 @@ func buildMrtangAdminBacklog(data mrtangAdminMiniappData) []mrtangAdminBacklogIt
 	items := make([]mrtangAdminBacklogItem, 0, 6)
 
 	sourceStatus := "partial"
-	sourceSummary := "http 模式和标准化 Dataset 边界已支持，当前运行模式为 " + blankFallback(data.SourceMode, "snapshot")
-	if strings.EqualFold(data.SourceMode, "http") && strings.TrimSpace(data.SourceURL) != "" {
+	sourceSummary := "raw 真实源站链路已接入，当前运行模式为 " + blankFallback(data.SourceMode, "snapshot")
+	if strings.EqualFold(data.SourceMode, "raw") && strings.TrimSpace(data.SourceURL) != "" {
 		sourceStatus = "done"
-		sourceSummary = "当前已切到 http 模式，并配置了上游标准化 Dataset 地址"
+		sourceSummary = "当前已切到 raw 模式，并配置了目标站源地址"
 	}
 	items = append(items, mrtangAdminBacklogItem{
 		Area:        "目标 API 接入",
 		Status:      sourceStatus,
 		Summary:     sourceSummary,
-		Detail:      "后续真实分类、商品、购物车下单链路应优先通过目标 API 整理成标准化 Dataset，再接入 http source。",
+		Detail:      "后续真实分类、商品、购物车和下单链路应直接通过 raw 模式接入目标 API，并在本项目内部标准化。",
 		ActionLabel: "查看总览",
 		ActionPath:  "/api/miniapp/contracts/homepage",
 	})

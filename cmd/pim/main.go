@@ -56,21 +56,26 @@ func applyDefaultServeHTTPAddr(defaultAddr string) {
 }
 
 func newMiniAppSource(cfg config.Config) miniappapi.Source {
+	snapshot := miniappapi.NewSnapshotSource(
+		cfg.MiniApp.HomepageSnapshotFile,
+		cfg.MiniApp.CategorySnapshotFile,
+		cfg.MiniApp.ProductSnapshotFile,
+		cfg.MiniApp.CartOrderSnapshotFile,
+	)
+
 	var base miniappapi.Source
-	if strings.EqualFold(strings.TrimSpace(cfg.MiniApp.SourceMode), "http") {
-		base = miniappapi.NewHTTPSource(miniappapi.HTTPSourceConfig{
-			URL:                 cfg.MiniApp.SourceURL,
+	switch strings.ToLower(strings.TrimSpace(cfg.MiniApp.SourceMode)) {
+	case "raw":
+		base = miniappapi.NewRawSource(miniappapi.RawSourceConfig{
+			BaseURL:             cfg.MiniApp.SourceURL,
 			AuthorizedAccountID: cfg.MiniApp.AuthorizedAccountID,
 			UserAgent:           cfg.MiniApp.UserAgent,
+			TemplateID:          cfg.MiniApp.RawTemplateID,
+			Referer:             cfg.MiniApp.RawReferer,
 			Timeout:             cfg.MiniApp.SourceTimeout,
-		})
-	} else {
-		base = miniappapi.NewSnapshotSource(
-			cfg.MiniApp.HomepageSnapshotFile,
-			cfg.MiniApp.CategorySnapshotFile,
-			cfg.MiniApp.ProductSnapshotFile,
-			cfg.MiniApp.CartOrderSnapshotFile,
-		)
+		}, snapshot)
+	default:
+		base = snapshot
 	}
 
 	return miniappapi.NewOverlaySource(base)

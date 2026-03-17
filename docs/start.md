@@ -9,7 +9,7 @@
 1. PIM 商品链路
    `Supplier -> PocketBase -> Image Processor -> Admin Review -> Vendure`
 2. Miniapp 契约链路
-   `Snapshot/HTTP Source -> miniapp importer/service -> API -> 后续入库`
+   `Snapshot/Raw Source -> miniapp importer/service -> API -> 后续入库`
 
 当前目录重点如下：
 
@@ -83,7 +83,7 @@ mrtang-pim/
 Miniapp 模块已经拆成明确分层：
 
 - `internal/miniapp/api`
-  数据源层。支持 `snapshot` 和 `http` 两种 source。
+  数据源层。支持 `snapshot` 和 `raw` 两种 source。
 - `internal/miniapp/importer`
   把上游 `Dataset` 整理成标准首页模型。
 - `internal/miniapp/model`
@@ -97,10 +97,10 @@ Miniapp 模块已经拆成明确分层：
 
 - `MINIAPP_SOURCE_MODE=snapshot`
   从 `MINIAPP_HOMEPAGE_SNAPSHOT` 读取本地脱敏快照。
-- `MINIAPP_SOURCE_MODE=http`
-  从 `MINIAPP_SOURCE_URL` 拉取标准化后的首页 `Dataset` JSON。
+- `MINIAPP_SOURCE_MODE=raw`
+  直接请求目标站原始 API，并在本项目内部标准化成 `Dataset`。
 
-当使用 `http` source 时，会自动带上：
+当使用 `raw` source 时，会自动带上：
 
 - `Authorization: Bearer <MINIAPP_AUTH_ACCOUNT_ID>`
 - `User-Agent: <MINIAPP_USER_AGENT>`
@@ -125,6 +125,8 @@ Miniapp 模块已经拆成明确分层：
 - `MINIAPP_SOURCE_MODE`
 - `MINIAPP_SOURCE_URL`
 - `MINIAPP_SOURCE_TIMEOUT`
+- `MINIAPP_RAW_TEMPLATE_ID`
+- `MINIAPP_RAW_REFERER`
 - `MINIAPP_HOMEPAGE_SNAPSHOT=./datasets/miniapp/homepage`
 - `MINIAPP_CATEGORY_SNAPSHOT=./datasets/miniapp/category-page`
 - `MINIAPP_PRODUCT_SNAPSHOT=./datasets/miniapp/product-page`

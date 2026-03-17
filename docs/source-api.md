@@ -17,7 +17,7 @@
 源站 API / 抓包样本
     -> 脱敏整理
     -> datasets/miniapp/homepage | datasets/miniapp/category-page | datasets/miniapp/product-page | datasets/miniapp/cart-order
-    -> snapshot/http source
+    -> snapshot/raw source
     -> internal/miniapp/service
     -> /api/miniapp/**
 ```
@@ -26,7 +26,7 @@
 
 - `docs/rr/**` 只保留原始抓包归档，不参与运行时读取。
 - `snapshot` 模式只从 `datasets/miniapp/**` 组装标准化 `Dataset`。
-- `http` 模式只从 `MINIAPP_SOURCE_URL` 拉取同构的标准化 `Dataset` JSON。
+- `raw` 模式直接请求目标站原始 API，并在本项目内标准化成 `Dataset`。
 - 本地接口不重放源站敏感鉴权，不保留 token、openId、customerId 等敏感值。
 
 ## 运行模式
@@ -34,11 +34,18 @@
 | 模式 | 读取位置 | 用途 |
 | --- | --- | --- |
 | `snapshot` | `datasets/miniapp/homepage` + `datasets/miniapp/category-page` + `datasets/miniapp/product-page` + `datasets/miniapp/cart-order` | 本地联调、脱网开发、固定样本回放 |
-| `http` | `MINIAPP_SOURCE_URL` | 接入你自己的上游 connector 或标准化聚合服务 |
+| `raw` | 目标站原始 API | 由 `mrtang-pim` 直接请求真实源站并本地标准化 |
+
+### 三种模式的职责差异
+
+| 模式 | 谁负责理解目标站原始协议 | 是否实时 | 典型用途 |
+| --- | --- | --- | --- |
+| `snapshot` | 无 | 否 | 本地稳定联调 |
+| `raw` | `mrtang-pim` 自己 | 是 | 直接接目标站原始 API |
 
 相关配置：
 
-- `MINIAPP_SOURCE_MODE=snapshot|http`
+- `MINIAPP_SOURCE_MODE=snapshot|raw`
 - `MINIAPP_SOURCE_URL=...`
 - `MINIAPP_HOMEPAGE_SNAPSHOT=./datasets/miniapp/homepage`
 - `MINIAPP_CATEGORY_SNAPSHOT=./datasets/miniapp/category-page`
@@ -46,6 +53,26 @@
 - `MINIAPP_CART_ORDER_SNAPSHOT=./datasets/miniapp/cart-order`
 - `MINIAPP_AUTH_ACCOUNT_ID=...`
 - `MINIAPP_USER_AGENT=...`
+- `MINIAPP_RAW_TEMPLATE_ID=962`
+- `MINIAPP_RAW_REFERER=https://servicewechat.com/.../page-frame.html`
+
+### raw 模式当前边界
+
+- 已接入：分类树、分类商品、商品详情、价格、多单位、套餐、商品上下文、购物车列表、购物车详情、结算预览、默认地址、地址列表、地址解析、运费试算
+- 显式写操作：加入购物车、改数量、添加地址、提交订单
+- 安全策略：`FetchDataset()` 自动抓取阶段保持只读优先，不自动触发真实添加地址和真实下单
+
+### 关于旧 http 模式
+
+`http` 模式已经废弃，不再作为正式运行模式保留。当前统一只保留：
+
+- `snapshot`
+- `raw`
+
+如果历史上曾将 `MINIAPP_SOURCE_URL` 指向标准化 Dataset 服务，请直接改为：
+
+- 开发与回归时使用 `snapshot`
+- 真实接源站时使用 `raw`
 
 ## Dataset 目录
 
@@ -233,15 +260,15 @@ cart-order 聚合接口：
 实现位置：
 
 - [snapshot_source.go](../internal/miniapp/api/snapshot_source.go)
-- [http_source.go](../internal/miniapp/api/http_source.go)
+- [raw_source.go](../internal/miniapp/api/raw_source.go)
 - [config.go](../internal/config/config.go)
 
 规则如下：
 
 1. `snapshot` 模式先加载首页 dataset，再合并分类页、商品页和 cart-order dataset。
 2. `snapshot` 支持“目录模式”和“单文件兼容模式”，但当前推荐目录模式。
-3. `http` 模式只请求一次 `MINIAPP_SOURCE_URL`，要求对方直接返回标准化后的 `Dataset` JSON。
-4. `http` 模式会自动附带：
+3. `raw` 模式直接请求目标站原始 API，并在本项目内部标准化成 `Dataset`。
+4. `raw` 模式会自动附带：
    - `Authorization: Bearer <MINIAPP_AUTH_ACCOUNT_ID>`
    - `User-Agent: <MINIAPP_USER_AGENT>`
 5. cart-order 中的 `customerId`、`customerName`、`phone`、`openId`、`addressId`、`cartIdList`、`deliveryMethodId`、`dueMoney` 都会从前序样本自动串联，但不会改写 `datasets/miniapp/**` 原始脱敏样本。
@@ -253,4 +280,4 @@ cart-order 聚合接口：
 - 新增商品详情样本时，优先补 `datasets/miniapp/product-page/products/<spuId>_<skuId>.json`。
 - 新增购物车或下单样本时，优先补 `datasets/miniapp/cart-order/cart.json` 或 `datasets/miniapp/cart-order/order.json`。
 - 原始抓包只追加到 `docs/rr/**`，不要让运行时代码直接依赖 rr 目录。
-- 如果接入真实源站，先把源站返回整理成标准化 `Dataset`，再接到 `http` 模式，不要把源站字段直接泄漏到本地接口层。
+- 如果接入真实源站，优先通过 `raw` 模式在本项目内部标准化，不要把源站字段直接泄漏到本地接口层。
