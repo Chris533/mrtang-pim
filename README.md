@@ -72,7 +72,13 @@ go run ./cmd/pim serve
 
 - PocketBase Admin UI: `http://127.0.0.1:26228/_/`
 - Mrtang Admin: `http://127.0.0.1:26228/_/mrtang-admin`
-- Procurement Workbench: `http://127.0.0.1:26228/_/procurement-workbench`
+- Target Sync: `http://127.0.0.1:26228/_/mrtang-admin/target-sync`
+- Source Home: `http://127.0.0.1:26228/_/mrtang-admin/source`
+- Source Products: `http://127.0.0.1:26228/_/mrtang-admin/source/products`
+- Source Assets: `http://127.0.0.1:26228/_/mrtang-admin/source/assets`
+- Source Logs: `http://127.0.0.1:26228/_/mrtang-admin/source/logs`
+- Procurement: `http://127.0.0.1:26228/_/mrtang-admin/procurement`
+- Procurement Workbench: `http://127.0.0.1:26228/_/procurement-workbench`（兼容保留）
 - 健康检查: `http://127.0.0.1:26228/api/pim/healthz`
 
 本地生成目录:
@@ -97,10 +103,15 @@ go run ./cmd/pim serve
 
 如果你需要直接看“源站 API -> rr 样本 -> dataset -> 本地接口”的总览，见 [docs/source-api.md](./docs/source-api.md)。
 如果你需要直接看 checkout 摘要接口和推荐字段，见 [docs/checkout-api.md](./docs/checkout-api.md)。
+如果你需要直接看目标站同步任务、运行记录和变更详情，见 [docs/target-sync.md](./docs/target-sync.md)。
+如果你需要直接看 source 商品审核、图片处理、桥接与同步工作台，见 [docs/source-review-workbench.md](./docs/source-review-workbench.md)。
+如果你需要直接看后台模块结构和页面入口，见 [docs/mrtang-admin.md](./docs/mrtang-admin.md)。
 
 环境变量:
 
 - `PIM_HTTP_ADDR=127.0.0.1:26228`
+- `PIM_SOURCE_ADMIN_EMAILS=ops@example.com,source@example.com`
+- `PIM_PROCUREMENT_ADMIN_EMAILS=buyer@example.com`
 - `MINIAPP_SOURCE_MODE=snapshot|http`
 - `MINIAPP_SOURCE_URL=...`
 - `MINIAPP_SOURCE_TIMEOUT=20s`
@@ -188,6 +199,15 @@ curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/minia
 - `MINIAPP_USER_AGENT` 用于保存你未来正式授权数据源客户端的默认 UA 配置
 - 默认值已经切到“较新的 iPhone 微信小程序”模板，便于后续正式授权数据源接入时直接复用
 - 当前会在 `/api/miniapp/contracts/homepage` 的 `clientConfig.userAgent` 中返回，方便前后端或后续 connector 统一读取
+
+后台模块权限:
+
+- `PIM_SOURCE_ADMIN_EMAILS`
+  - 为空时，所有 superuser 都能访问源数据模块
+  - 配置后，仅白名单邮箱可访问 `/_/mrtang-admin/source*`
+- `PIM_PROCUREMENT_ADMIN_EMAILS`
+  - 为空时，所有 superuser 都能访问采购模块
+  - 配置后，仅白名单邮箱可访问 `/_/mrtang-admin/procurement`
 
 ## 管理员初始化
 
@@ -298,6 +318,45 @@ curl -X POST 'http://127.0.0.1:26228/api/pim/procurement/order/status?id=<procur
 2. 人工确认图片和文案
 3. 设置 `sync_status = approved`
 4. 等待定时同步，或调用 `/api/pim/sync`
+
+## Source Review Workbench
+
+可视化 source 审核链路入口：
+
+- `http://127.0.0.1:26228/_/mrtang-admin`
+- `http://127.0.0.1:26228/_/mrtang-admin/target-sync`
+- `http://127.0.0.1:26228/_/mrtang-admin/source`
+- `http://127.0.0.1:26228/_/mrtang-admin/source/products`
+- `http://127.0.0.1:26228/_/mrtang-admin/source/assets`
+- `http://127.0.0.1:26228/_/mrtang-admin/source/logs`
+- `http://127.0.0.1:26228/_/source-review-workbench`（兼容保留）
+
+这条链路使用三张集合：
+
+- `source_categories`
+- `source_products`
+- `source_assets`
+
+统一状态术语：
+
+- `source_products.review_status`
+  - `imported`
+  - `approved`
+  - `promoted`
+  - `rejected`
+- `source_assets.image_processing_status`
+  - `pending`
+  - `processing`
+  - `processed`
+  - `failed`
+
+更完整的操作流和状态说明，见 [docs/source-review-workbench.md](./docs/source-review-workbench.md)。
+
+推荐顺序：
+
+1. 在 `/_/mrtang-admin/target-sync` 同步目标站分类、商品规格和图片。
+2. 在 `/_/mrtang-admin/source/products` 审核商品，在 `/_/mrtang-admin/source/assets` 处理图片。
+3. 审核通过后桥接到 `supplier_products`，再走同步到 backend 的既有链路。
 
 ## Vendure 对接约束
 

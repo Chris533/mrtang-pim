@@ -1,6 +1,7 @@
 package pim
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -123,5 +124,56 @@ func TestApplyProcurementStatus(t *testing.T) {
 
 	if err := applyProcurementStatus(record, ProcurementStatusReceived, "skipped"); err == nil {
 		t.Fatal("expected invalid transition to fail")
+	}
+}
+
+func TestNormalizeSourceReviewFilter(t *testing.T) {
+	filter := normalizeSourceReviewFilter(SourceReviewFilter{
+		ProductStatus: " Approved ",
+		AssetStatus:   " Failed ",
+		SyncState:     " Synced ",
+		Query:         "  chicken  ",
+	})
+
+	if filter.ProductStatus != "approved" {
+		t.Fatalf("unexpected product status: %q", filter.ProductStatus)
+	}
+	if filter.AssetStatus != "failed" {
+		t.Fatalf("unexpected asset status: %q", filter.AssetStatus)
+	}
+	if filter.SyncState != "synced" {
+		t.Fatalf("unexpected sync state: %q", filter.SyncState)
+	}
+	if filter.Query != "chicken" {
+		t.Fatalf("unexpected query: %q", filter.Query)
+	}
+	if filter.ProductPage != 1 || filter.AssetPage != 1 {
+		t.Fatalf("expected default pages to be 1, got product=%d asset=%d", filter.ProductPage, filter.AssetPage)
+	}
+	if filter.PageSize != 24 {
+		t.Fatalf("expected default page size 24, got %d", filter.PageSize)
+	}
+}
+
+func TestSortAssetFailureReasons(t *testing.T) {
+	reasons := sortAssetFailureReasons(map[string]int{
+		"timeout":          3,
+		"decode failed":    5,
+		"bad source image": 5,
+		"network":          1,
+		"empty":            2,
+		"overflow":         4,
+	})
+
+	expected := []SourceAssetFailureReason{
+		{Message: "bad source image", Count: 5},
+		{Message: "decode failed", Count: 5},
+		{Message: "overflow", Count: 4},
+		{Message: "timeout", Count: 3},
+		{Message: "empty", Count: 2},
+	}
+
+	if !reflect.DeepEqual(reasons, expected) {
+		t.Fatalf("unexpected sorted reasons: %#v", reasons)
 	}
 }

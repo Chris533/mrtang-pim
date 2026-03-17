@@ -16,12 +16,19 @@ import (
 )
 
 type mrtangAdminPageData struct {
-	Procurement      pim.ProcurementWorkbenchSummary
-	ProcurementError string
-	Miniapp          mrtangAdminMiniappData
-	MiniappError     string
-	QuickActions     []mrtangAdminLink
-	GeneratedAt      string
+	Procurement          pim.ProcurementWorkbenchSummary
+	ProcurementError     string
+	Miniapp              mrtangAdminMiniappData
+	MiniappError         string
+	SourceCapture        mrtangAdminSourceCaptureData
+	SourceError          string
+	FlashMessage         string
+	FlashError           string
+	CanAccessSource      bool
+	CanAccessProcurement bool
+	QuickActions         []mrtangAdminLink
+	RecentActions        []mrtangAdminRecentAction
+	GeneratedAt          string
 }
 
 type mrtangAdminMiniappData struct {
@@ -63,15 +70,128 @@ type mrtangAdminLink struct {
 	Href    string
 }
 
+type mrtangAdminSourceCaptureData struct {
+	CategoryCount       int
+	ProductCount        int
+	AssetCount          int
+	ApprovedCount       int
+	ImportedCount       int
+	PromotedCount       int
+	LinkedCount         int
+	SyncedCount         int
+	SyncErrorCount      int
+	ProcessedAssetCount int
+	FailedAssetCount    int
+	RecentActions       []pim.SourceActionLog
+}
+
+type mrtangAdminRecentAction struct {
+	Domain  string
+	Label   string
+	Target  string
+	Status  string
+	Message string
+	Actor   string
+	Note    string
+	Created string
+}
+
 func RenderMrtangAdminHTML(
 	ctx context.Context,
 	app core.App,
 	cfg config.Config,
 	pimService *pim.Service,
 	miniappService *miniappservice.Service,
+	canAccessSource bool,
+	canAccessProcurement bool,
+	flashMessage string,
+	flashError string,
 ) string {
 	pageData := buildMrtangAdminPageData(ctx, app, cfg, pimService, miniappService)
+	pageData.CanAccessSource = canAccessSource
+	pageData.CanAccessProcurement = canAccessProcurement
+	pageData.FlashMessage = strings.TrimSpace(flashMessage)
+	pageData.FlashError = strings.TrimSpace(flashError)
 	return renderMrtangAdminHTML(pageData)
+}
+
+func RenderAuditHTML(
+	ctx context.Context,
+	app core.App,
+	cfg config.Config,
+	pimService *pim.Service,
+	miniappService *miniappservice.Service,
+	filter AuditFilter,
+	flashMessage string,
+	flashError string,
+) string {
+	pageData := buildMrtangAdminPageData(ctx, app, cfg, pimService, miniappService)
+	return RenderAuditPageHTML(
+		filterAuditActions(pageData.RecentActions, filter),
+		strings.TrimSpace(flashMessage),
+		strings.TrimSpace(flashError),
+	)
+}
+
+func filterAuditActions(items []mrtangAdminRecentAction, filter AuditFilter) AuditPageData {
+	if filter.Page <= 0 {
+		filter.Page = 1
+	}
+	if filter.PageSize <= 0 {
+		filter.PageSize = 20
+	}
+	filtered := make([]mrtangAdminRecentAction, 0, len(items))
+	successCount := 0
+	failedCount := 0
+	query := strings.ToLower(strings.TrimSpace(filter.Query))
+	for _, item := range items {
+		if filter.Domain != "" && !strings.EqualFold(strings.TrimSpace(item.Domain), filter.Domain) {
+			continue
+		}
+		if filter.Status != "" && !strings.EqualFold(strings.TrimSpace(item.Status), filter.Status) {
+			continue
+		}
+		if query != "" {
+			search := strings.ToLower(strings.Join([]string{item.Domain, item.Label, item.Target, item.Actor, item.Message, item.Note}, " "))
+			if !strings.Contains(search, query) {
+				continue
+			}
+		}
+		if strings.EqualFold(item.Status, "success") {
+			successCount++
+		}
+		if strings.EqualFold(item.Status, "failed") {
+			failedCount++
+		}
+		filtered = append(filtered, item)
+	}
+	pages := 1
+	if len(filtered) > 0 {
+		pages = len(filtered) / filter.PageSize
+		if len(filtered)%filter.PageSize != 0 {
+			pages++
+		}
+		if pages <= 0 {
+			pages = 1
+		}
+	}
+	start := (filter.Page - 1) * filter.PageSize
+	if start > len(filtered) {
+		start = len(filtered)
+	}
+	end := start + filter.PageSize
+	if end > len(filtered) {
+		end = len(filtered)
+	}
+	return AuditPageData{
+		Items:        filtered[start:end],
+		Filter:       filter,
+		Total:        len(filtered),
+		Page:         filter.Page,
+		Pages:        pages,
+		SuccessCount: successCount,
+		FailedCount:  failedCount,
+	}
 }
 
 func buildMrtangAdminPageData(
@@ -111,7 +231,65 @@ func buildMrtangAdminPageData(
 		}
 	}
 
+	sourceCapture, err := buildMrtangAdminSourceCaptureData(ctx, app, pimService)
+	if err != nil {
+		page.SourceError = err.Error()
+	} else {
+		page.SourceCapture = sourceCapture
+	}
+	page.RecentActions = buildMrtangAdminRecentActions(page.SourceCapture.RecentActions, page.Procurement.RecentActions)
+
 	return page
+}
+
+func buildMrtangAdminSourceCaptureData(ctx context.Context, app core.App, pimService *pim.Service) (mrtangAdminSourceCaptureData, error) {
+	categories, err := app.FindAllRecords(pim.CollectionSourceCategories)
+	if err != nil {
+		return mrtangAdminSourceCaptureData{}, err
+	}
+	products, err := app.FindAllRecords(pim.CollectionSourceProducts)
+	if err != nil {
+		return mrtangAdminSourceCaptureData{}, err
+	}
+	assets, err := app.FindAllRecords(pim.CollectionSourceAssets)
+	if err != nil {
+		return mrtangAdminSourceCaptureData{}, err
+	}
+
+	data := mrtangAdminSourceCaptureData{
+		CategoryCount: len(categories),
+		ProductCount:  len(products),
+		AssetCount:    len(assets),
+	}
+	for _, product := range products {
+		switch strings.ToLower(strings.TrimSpace(product.GetString("review_status"))) {
+		case "approved":
+			data.ApprovedCount++
+		case "promoted":
+			data.ApprovedCount++
+			data.PromotedCount++
+		case "imported":
+			data.ImportedCount++
+		}
+	}
+	for _, asset := range assets {
+		switch strings.ToLower(strings.TrimSpace(asset.GetString("image_processing_status"))) {
+		case pim.ImageStatusProcessed:
+			data.ProcessedAssetCount++
+		case pim.ImageStatusFailed:
+			data.FailedAssetCount++
+		}
+	}
+	if pimService != nil {
+		summary, err := pimService.SourceReviewWorkbench(ctx, app, 1, 1, pim.SourceReviewFilter{PageSize: 1})
+		if err == nil {
+			data.LinkedCount = summary.LinkedCount
+			data.SyncedCount = summary.SyncedCount
+			data.SyncErrorCount = summary.SyncErrorCount
+			data.RecentActions = append([]pim.SourceActionLog(nil), summary.RecentActions...)
+		}
+	}
+	return data, nil
 }
 
 func buildMrtangAdminMiniappData(ctx context.Context, cfg config.Config, service *miniappservice.Service) (mrtangAdminMiniappData, error) {
@@ -157,6 +335,72 @@ func buildMrtangAdminMiniappData(ctx context.Context, cfg config.Config, service
 
 	data.Backlog = buildMrtangAdminBacklog(data)
 	return data, nil
+}
+
+func buildMrtangAdminRecentActions(source []pim.SourceActionLog, procurement []pim.ProcurementActionLog) []mrtangAdminRecentAction {
+	items := make([]mrtangAdminRecentAction, 0, len(source)+len(procurement))
+	for _, item := range source {
+		actor := strings.TrimSpace(item.ActorName)
+		if actor == "" {
+			actor = strings.TrimSpace(item.ActorEmail)
+		}
+		if actor == "" {
+			actor = "系统"
+		}
+		items = append(items, mrtangAdminRecentAction{
+			Domain:  "源数据",
+			Label:   sourceActionTypeLabel(item.ActionType),
+			Target:  strings.TrimSpace(item.TargetLabel),
+			Status:  strings.TrimSpace(item.Status),
+			Message: strings.TrimSpace(item.Message),
+			Actor:   actor,
+			Note:    strings.TrimSpace(item.Note),
+			Created: strings.TrimSpace(item.Created),
+		})
+	}
+	for _, item := range procurement {
+		actor := strings.TrimSpace(item.ActorName)
+		if actor == "" {
+			actor = strings.TrimSpace(item.ActorEmail)
+		}
+		if actor == "" {
+			actor = "系统"
+		}
+		items = append(items, mrtangAdminRecentAction{
+			Domain:  "采购",
+			Label:   procurementActionLabel(item.ActionType),
+			Target:  strings.TrimSpace(item.ExternalRef),
+			Status:  strings.TrimSpace(item.Status),
+			Message: strings.TrimSpace(item.Message),
+			Actor:   actor,
+			Note:    strings.TrimSpace(item.Note),
+			Created: strings.TrimSpace(item.Created),
+		})
+	}
+	for i := 0; i < len(items); i++ {
+		for j := i + 1; j < len(items); j++ {
+			if items[j].Created > items[i].Created {
+				items[i], items[j] = items[j], items[i]
+			}
+		}
+	}
+	if len(items) > 10 {
+		items = items[:10]
+	}
+	return items
+}
+
+func procurementActionLabel(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "create_order":
+		return "创建采购单"
+	case "export_order":
+		return "导出采购单"
+	case "update_status":
+		return "更新采购状态"
+	default:
+		return action
+	}
 }
 
 func buildMrtangAdminBacklog(data mrtangAdminMiniappData) []mrtangAdminBacklogItem {
@@ -336,12 +580,4 @@ func countOrderOperations(order miniappmodel.OrderAggregate) int {
 		total++
 	}
 	return total
-}
-
-func blankFallback(value string, fallback string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return fallback
-	}
-	return value
 }

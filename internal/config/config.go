@@ -9,6 +9,7 @@ import (
 
 type Config struct {
 	App      AppConfig
+	Admin    AdminConfig
 	Security SecurityConfig
 	MiniApp  MiniAppConfig
 	Supplier SupplierConfig
@@ -20,6 +21,11 @@ type Config struct {
 type AppConfig struct {
 	HTTPAddr  string
 	PublicURL string
+}
+
+type AdminConfig struct {
+	SourceAdmins      []string
+	ProcurementAdmins []string
 }
 
 type SecurityConfig struct {
@@ -81,6 +87,10 @@ func Load() Config {
 		App: AppConfig{
 			HTTPAddr:  getEnv("PIM_HTTP_ADDR", "127.0.0.1:26228"),
 			PublicURL: getEnv("PIM_PUBLIC_URL", "http://127.0.0.1:26228"),
+		},
+		Admin: AdminConfig{
+			SourceAdmins:      splitCSV(getEnv("PIM_SOURCE_ADMIN_EMAILS", "")),
+			ProcurementAdmins: splitCSV(getEnv("PIM_PROCUREMENT_ADMIN_EMAILS", "")),
 		},
 		Security: SecurityConfig{
 			APIKey: strings.TrimSpace(os.Getenv("PIM_API_KEY")),

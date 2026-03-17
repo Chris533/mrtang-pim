@@ -23,9 +23,10 @@ import (
 )
 
 const (
-	CollectionSupplierProducts  = "supplier_products"
-	CollectionCategoryMappings  = "category_mappings"
-	CollectionProcurementOrders = "procurement_orders"
+	CollectionSupplierProducts      = "supplier_products"
+	CollectionCategoryMappings      = "category_mappings"
+	CollectionProcurementOrders     = "procurement_orders"
+	CollectionProcurementActionLogs = "procurement_action_logs"
 
 	StatusPending      = "pending"
 	StatusAIProcessing = "ai_processing"
@@ -160,17 +161,42 @@ type ProcurementOrder struct {
 	CanceledAt      string                         `json:"canceledAt,omitempty"`
 }
 
+type ProcurementActionActor struct {
+	Email string `json:"email"`
+	Name  string `json:"name"`
+}
+
+type ProcurementActionLog struct {
+	ID          string `json:"id"`
+	OrderID     string `json:"orderId"`
+	ExternalRef string `json:"externalRef"`
+	ActionType  string `json:"actionType"`
+	Status      string `json:"status"`
+	Message     string `json:"message"`
+	ActorEmail  string `json:"actorEmail"`
+	ActorName   string `json:"actorName"`
+	Note        string `json:"note"`
+	Created     string `json:"created"`
+}
+
 type ProcurementWorkbenchSummary struct {
-	TotalOrders     int                `json:"totalOrders"`
-	DraftOrders     int                `json:"draftOrders"`
-	ReviewedOrders  int                `json:"reviewedOrders"`
-	ExportedOrders  int                `json:"exportedOrders"`
-	OrderedOrders   int                `json:"orderedOrders"`
-	ReceivedOrders  int                `json:"receivedOrders"`
-	CanceledOrders  int                `json:"canceledOrders"`
-	OpenRiskyOrders int                `json:"openRiskyOrders"`
-	OpenOrderCount  int                `json:"openOrderCount"`
-	RecentOrders    []ProcurementOrder `json:"recentOrders"`
+	TotalOrders     int                    `json:"totalOrders"`
+	DraftOrders     int                    `json:"draftOrders"`
+	ReviewedOrders  int                    `json:"reviewedOrders"`
+	ExportedOrders  int                    `json:"exportedOrders"`
+	OrderedOrders   int                    `json:"orderedOrders"`
+	ReceivedOrders  int                    `json:"receivedOrders"`
+	CanceledOrders  int                    `json:"canceledOrders"`
+	OpenRiskyOrders int                    `json:"openRiskyOrders"`
+	OpenOrderCount  int                    `json:"openOrderCount"`
+	RecentOrders    []ProcurementOrder     `json:"recentOrders"`
+	RecentActions   []ProcurementActionLog `json:"recentActions"`
+	Page            int                    `json:"page"`
+	Pages           int                    `json:"pages"`
+	PageSize        int                    `json:"pageSize"`
+	FilterStatus    string                 `json:"filterStatus"`
+	FilterRisk      string                 `json:"filterRisk"`
+	Query           string                 `json:"query"`
 }
 
 type procurementCatalogItem struct {
@@ -336,6 +362,9 @@ func (s *Service) CreateProcurementOrder(ctx context.Context, app core.App, req 
 	if err := app.Save(record); err != nil {
 		return ProcurementOrder{}, err
 	}
+	s.logProcurementAction(app, record, "create_order", "success", "created procurement draft order", ProcurementActionActor{}, strings.TrimSpace(req.Notes), map[string]any{
+		"itemCount": summary.ItemCount,
+	})
 
 	return procurementOrderFromRecord(record)
 }
@@ -397,10 +426,18 @@ func (s *Service) GetProcurementOrder(_ context.Context, app core.App, id string
 }
 
 func (s *Service) ReviewProcurementOrder(ctx context.Context, app core.App, id string, note string) (ProcurementOrder, error) {
-	return s.UpdateProcurementOrderStatus(ctx, app, id, ProcurementStatusReviewed, note)
+	return s.ReviewProcurementOrderWithAudit(ctx, app, id, note, ProcurementActionActor{})
+}
+
+func (s *Service) ReviewProcurementOrderWithAudit(ctx context.Context, app core.App, id string, note string, actor ProcurementActionActor) (ProcurementOrder, error) {
+	return s.UpdateProcurementOrderStatusWithAudit(ctx, app, id, ProcurementStatusReviewed, note, actor)
 }
 
 func (s *Service) ExportProcurementOrder(ctx context.Context, app core.App, id string) (ProcurementOrder, error) {
+	return s.ExportProcurementOrderWithAudit(ctx, app, id, ProcurementActionActor{}, "")
+}
+
+func (s *Service) ExportProcurementOrderWithAudit(ctx context.Context, app core.App, id string, actor ProcurementActionActor, note string) (ProcurementOrder, error) {
 	record, err := app.FindRecordById(CollectionProcurementOrders, id)
 	if err != nil {
 		return ProcurementOrder{}, err
@@ -420,15 +457,23 @@ func (s *Service) ExportProcurementOrder(ctx context.Context, app core.App, id s
 	if err := applyProcurementStatus(record, ProcurementStatusExported, "exported csv generated"); err != nil {
 		return ProcurementOrder{}, err
 	}
+	if strings.TrimSpace(note) != "" {
+		record.Set("last_action_note", strings.TrimSpace(note))
+	}
 
 	if err := app.Save(record); err != nil {
 		return ProcurementOrder{}, err
 	}
+	s.logProcurementAction(app, record, "export_order", "success", "exported procurement csv", actor, note, nil)
 
 	return procurementOrderFromRecord(record)
 }
 
 func (s *Service) UpdateProcurementOrderStatus(_ context.Context, app core.App, id string, status string, note string) (ProcurementOrder, error) {
+	return s.UpdateProcurementOrderStatusWithAudit(context.Background(), app, id, status, note, ProcurementActionActor{})
+}
+
+func (s *Service) UpdateProcurementOrderStatusWithAudit(_ context.Context, app core.App, id string, status string, note string, actor ProcurementActionActor) (ProcurementOrder, error) {
 	record, err := app.FindRecordById(CollectionProcurementOrders, id)
 	if err != nil {
 		return ProcurementOrder{}, err
@@ -441,19 +486,32 @@ func (s *Service) UpdateProcurementOrderStatus(_ context.Context, app core.App, 
 	if err := app.Save(record); err != nil {
 		return ProcurementOrder{}, err
 	}
+	s.logProcurementAction(app, record, "update_status", "success", "updated procurement order status", actor, note, map[string]any{
+		"status": status,
+	})
 
 	return procurementOrderFromRecord(record)
 }
 
 func (s *Service) ProcurementWorkbenchSummary(ctx context.Context, app core.App, limit int) (ProcurementWorkbenchSummary, error) {
-	orders, err := s.ListProcurementOrders(ctx, app, limit, "")
+	return s.ProcurementWorkbenchSummaryFiltered(ctx, app, limit, "", "", "", 1)
+}
+
+func (s *Service) ProcurementWorkbenchSummaryFiltered(ctx context.Context, app core.App, limit int, status string, risk string, query string, page int) (ProcurementWorkbenchSummary, error) {
+	orders, err := s.ListProcurementOrders(ctx, app, 200, "")
 	if err != nil {
 		return ProcurementWorkbenchSummary{}, err
 	}
 
 	summary := ProcurementWorkbenchSummary{
-		RecentOrders: orders,
+		Page:         page,
+		PageSize:     limit,
+		FilterStatus: strings.TrimSpace(status),
+		FilterRisk:   strings.TrimSpace(risk),
+		Query:        strings.TrimSpace(query),
 	}
+	filteredOrders := make([]ProcurementOrder, 0, len(orders))
+	query = strings.ToLower(strings.TrimSpace(query))
 	for _, order := range orders {
 		summary.TotalOrders++
 		if order.Status != ProcurementStatusReceived && order.Status != ProcurementStatusCanceled {
@@ -477,9 +535,77 @@ func (s *Service) ProcurementWorkbenchSummary(ctx context.Context, app core.App,
 		case ProcurementStatusCanceled:
 			summary.CanceledOrders++
 		}
+
+		if summary.FilterStatus != "" && !strings.EqualFold(order.Status, summary.FilterStatus) {
+			continue
+		}
+		if !matchProcurementRiskFilter(order, summary.FilterRisk) {
+			continue
+		}
+		if query != "" {
+			search := strings.ToLower(strings.Join([]string{order.ExternalRef, order.ID, order.LastActionNote}, " "))
+			if !strings.Contains(search, query) {
+				continue
+			}
+		}
+		filteredOrders = append(filteredOrders, order)
 	}
+	if summary.Page <= 0 {
+		summary.Page = 1
+	}
+	if summary.PageSize <= 0 {
+		summary.PageSize = 20
+	}
+	summary.Pages = 1
+	if len(filteredOrders) > 0 {
+		summary.Pages = len(filteredOrders) / summary.PageSize
+		if len(filteredOrders)%summary.PageSize != 0 {
+			summary.Pages++
+		}
+		if summary.Pages <= 0 {
+			summary.Pages = 1
+		}
+	}
+	start := (summary.Page - 1) * summary.PageSize
+	if start > len(filteredOrders) {
+		start = len(filteredOrders)
+	}
+	end := start + summary.PageSize
+	if end > len(filteredOrders) {
+		end = len(filteredOrders)
+	}
+	summary.RecentOrders = filteredOrders[start:end]
+	summary.RecentActions, _ = s.listRecentProcurementActions(app, limit)
 
 	return summary, nil
+}
+
+func matchProcurementRiskFilter(order ProcurementOrder, risk string) bool {
+	switch strings.ToLower(strings.TrimSpace(risk)) {
+	case "", "all":
+		return true
+	case "has_risk":
+		return order.RiskyItemCount > 0
+	case "loss":
+		return procurementSummaryHasRiskLevel(order.Summary, "loss")
+	case "warning":
+		return procurementSummaryHasRiskLevel(order.Summary, "warning")
+	case "normal":
+		return order.RiskyItemCount == 0
+	default:
+		return true
+	}
+}
+
+func procurementSummaryHasRiskLevel(summary ProcurementSummary, level string) bool {
+	for _, supplier := range summary.Suppliers {
+		for _, item := range supplier.Items {
+			if strings.EqualFold(item.RiskLevel, level) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Service) Harvest(ctx context.Context, app core.App) (Result, error) {
@@ -1221,4 +1347,52 @@ func readJSONAttribute(record *core.Record, key string) string {
 	}
 
 	return ""
+}
+
+func (s *Service) logProcurementAction(app core.App, record *core.Record, actionType string, status string, message string, actor ProcurementActionActor, note string, details any) {
+	collection, err := app.FindCollectionByNameOrId(CollectionProcurementActionLogs)
+	if err != nil {
+		return
+	}
+	logRecord := core.NewRecord(collection)
+	logRecord.Set("order_id", record.Id)
+	logRecord.Set("external_ref", strings.TrimSpace(record.GetString("external_ref")))
+	logRecord.Set("action_type", strings.TrimSpace(actionType))
+	logRecord.Set("status", strings.TrimSpace(status))
+	logRecord.Set("message", strings.TrimSpace(message))
+	logRecord.Set("actor_email", strings.TrimSpace(actor.Email))
+	logRecord.Set("actor_name", strings.TrimSpace(actor.Name))
+	logRecord.Set("note", strings.TrimSpace(note))
+	if details != nil {
+		if err := setJSONField(logRecord, "details_json", details); err != nil {
+			return
+		}
+	}
+	_ = app.Save(logRecord)
+}
+
+func (s *Service) listRecentProcurementActions(app core.App, limit int) ([]ProcurementActionLog, error) {
+	if limit <= 0 {
+		limit = 8
+	}
+	records, err := app.FindRecordsByFilter(CollectionProcurementActionLogs, "", "-created", limit, 0, nil)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]ProcurementActionLog, 0, len(records))
+	for _, record := range records {
+		items = append(items, ProcurementActionLog{
+			ID:          record.Id,
+			OrderID:     record.GetString("order_id"),
+			ExternalRef: record.GetString("external_ref"),
+			ActionType:  record.GetString("action_type"),
+			Status:      record.GetString("status"),
+			Message:     record.GetString("message"),
+			ActorEmail:  record.GetString("actor_email"),
+			ActorName:   record.GetString("actor_name"),
+			Note:        record.GetString("note"),
+			Created:     record.GetString("created"),
+		})
+	}
+	return items, nil
 }

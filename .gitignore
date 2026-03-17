@@ -1,4 +1,6 @@
 .env
 .cache/
+.debug/
 pb_data/
 docs/rr/
+cmd/pim/__debug_bin*.exe

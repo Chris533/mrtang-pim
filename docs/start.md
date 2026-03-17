@@ -109,6 +109,9 @@ Miniapp 模块已经拆成明确分层：
 
 如果要快速理解“源站 API、抓包归档、dataset 和本地接口”之间的关系，直接看 [source-api.md](./source-api.md)。
 如果要直接对接结算页，优先看 [checkout-api.md](./checkout-api.md)。
+如果要直接看目标站同步模块、运行记录和变更详情，见 [target-sync.md](./target-sync.md)。
+如果要直接操作 source 商品审核、图片处理和桥接同步，见 [source-review-workbench.md](./source-review-workbench.md)。
+如果要理解后台模块结构和页面入口，见 [mrtang-admin.md](./mrtang-admin.md)。
 
 ## 环境变量
 
@@ -149,8 +152,33 @@ go run ./cmd/pim serve
 
 - Admin UI: `http://127.0.0.1:26228/_/`
 - Mrtang Admin: `http://127.0.0.1:26228/_/mrtang-admin`
-- Procurement Workbench: `http://127.0.0.1:26228/_/procurement-workbench`
+- Target Sync: `http://127.0.0.1:26228/_/mrtang-admin/target-sync`
+- Source Home: `http://127.0.0.1:26228/_/mrtang-admin/source`
+- Source Products: `http://127.0.0.1:26228/_/mrtang-admin/source/products`
+- Source Assets: `http://127.0.0.1:26228/_/mrtang-admin/source/assets`
+- Source Logs: `http://127.0.0.1:26228/_/mrtang-admin/source/logs`
+- Procurement: `http://127.0.0.1:26228/_/mrtang-admin/procurement`
+- Source Review Workbench: `http://127.0.0.1:26228/_/source-review-workbench`（兼容保留）
+- Procurement Workbench: `http://127.0.0.1:26228/_/procurement-workbench`（兼容保留）
 - Health: `http://127.0.0.1:26228/api/pim/healthz`
+
+## Source Workbench 状态流
+
+推荐操作顺序：
+
+1. 先在 `/_/mrtang-admin/target-sync` 同步目标站分类、商品规格和图片。
+2. 再进入 `/_/mrtang-admin/source/products` 和 `/_/mrtang-admin/source/assets` 处理待审核商品与待处理图片。
+3. 商品桥接到 `supplier_products` 后，再进入既有 backend 同步链。
+
+商品审核状态：
+
+- `imported -> approved -> promoted`
+- 允许人工转为 `rejected`
+
+图片处理状态：
+
+- `pending -> processing -> processed`
+- `failed` 可重试并重新进入处理链
 
 ## 当前可用接口
 
