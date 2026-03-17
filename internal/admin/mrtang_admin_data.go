@@ -238,7 +238,7 @@ func buildMrtangAdminPageData(
 	} else {
 		page.SourceCapture = sourceCapture
 	}
-	page.RecentActions = buildMrtangAdminRecentActions(page.SourceCapture.RecentActions, page.Procurement.RecentActions)
+	page.RecentActions = buildMrtangAdminRecentActions(app, page.SourceCapture.RecentActions, page.Procurement.RecentActions)
 
 	return page
 }
@@ -346,7 +346,7 @@ func buildMrtangAdminMiniappData(ctx context.Context, cfg config.Config, service
 	return data, nil
 }
 
-func buildMrtangAdminRecentActions(source []pim.SourceActionLog, procurement []pim.ProcurementActionLog) []mrtangAdminRecentAction {
+func buildMrtangAdminRecentActions(app core.App, source []pim.SourceActionLog, procurement []pim.ProcurementActionLog) []mrtangAdminRecentAction {
 	items := make([]mrtangAdminRecentAction, 0, len(source)+len(procurement))
 	for _, item := range source {
 		actor := strings.TrimSpace(item.ActorName)
@@ -385,6 +385,37 @@ func buildMrtangAdminRecentActions(source []pim.SourceActionLog, procurement []p
 			Note:    strings.TrimSpace(item.Note),
 			Created: strings.TrimSpace(item.Created),
 		})
+	}
+	if assetJobs, err := app.FindRecordsByFilter(pim.CollectionSourceAssetJobs, "", "-created", 6, 0, nil); err == nil {
+		for _, record := range assetJobs {
+			jobType := strings.TrimSpace(record.GetString("job_type"))
+			mode := strings.TrimSpace(record.GetString("mode"))
+			label := "图片任务"
+			switch strings.ToLower(jobType) {
+			case "download_original":
+				label = "原图下载任务"
+			case "process_asset":
+				if strings.EqualFold(mode, "failed") {
+					label = "失败图片重处理任务"
+				} else {
+					label = "图片处理任务"
+				}
+			}
+			message := strings.TrimSpace(record.GetString("error"))
+			if message == "" {
+				message = fmt.Sprintf("已处理 %d / %d，失败 %d", record.GetInt("processed"), record.GetInt("total"), record.GetInt("failed_count"))
+			}
+			items = append(items, mrtangAdminRecentAction{
+				Domain:  "图片任务",
+				Label:   label,
+				Target:  strings.TrimSpace(record.GetString("current_item")),
+				Status:  strings.TrimSpace(record.GetString("status")),
+				Message: message,
+				Actor:   "系统",
+				Note:    "",
+				Created: strings.TrimSpace(record.GetString("created")),
+			})
+		}
 	}
 	for i := 0; i < len(items); i++ {
 		for j := i + 1; j < len(items); j++ {

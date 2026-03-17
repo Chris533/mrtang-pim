@@ -21,6 +21,7 @@ type Config struct {
 type AppConfig struct {
 	HTTPAddr  string
 	PublicURL string
+	DataDir   string
 }
 
 type AdminConfig struct {
@@ -38,6 +39,9 @@ type MiniAppConfig struct {
 	SourceTimeout         time.Duration
 	RawTemplateID         string
 	RawReferer            string
+	RawConcurrency        int
+	RawMinInterval        time.Duration
+	RawRetryMax           int
 	HomepageSnapshotFile  string
 	CategorySnapshotFile  string
 	ProductSnapshotFile   string
@@ -89,6 +93,7 @@ func Load() Config {
 		App: AppConfig{
 			HTTPAddr:  getEnv("PIM_HTTP_ADDR", "127.0.0.1:26228"),
 			PublicURL: getEnv("PIM_PUBLIC_URL", "http://127.0.0.1:26228"),
+			DataDir:   getEnv("PIM_DATA_DIR", "./pb_data"),
 		},
 		Admin: AdminConfig{
 			SourceAdmins:      splitCSV(getEnv("PIM_SOURCE_ADMIN_EMAILS", "")),
@@ -103,6 +108,9 @@ func Load() Config {
 			SourceTimeout:         getEnvDuration("MINIAPP_SOURCE_TIMEOUT", 20*time.Second),
 			RawTemplateID:         getEnv("MINIAPP_RAW_TEMPLATE_ID", "962"),
 			RawReferer:            getEnv("MINIAPP_RAW_REFERER", "https://servicewechat.com/wx57f975d225fcd0bf/9/page-frame.html"),
+			RawConcurrency:        getEnvInt("MINIAPP_RAW_CONCURRENCY", 4),
+			RawMinInterval:        getEnvDuration("MINIAPP_RAW_MIN_INTERVAL", 300*time.Millisecond),
+			RawRetryMax:           getEnvInt("MINIAPP_RAW_RETRY_MAX", 2),
 			HomepageSnapshotFile:  getEnv("MINIAPP_HOMEPAGE_SNAPSHOT", "./datasets/miniapp/homepage"),
 			CategorySnapshotFile:  getEnv("MINIAPP_CATEGORY_SNAPSHOT", "./datasets/miniapp/category-page"),
 			ProductSnapshotFile:   getEnv("MINIAPP_PRODUCT_SNAPSHOT", "./datasets/miniapp/product-page"),

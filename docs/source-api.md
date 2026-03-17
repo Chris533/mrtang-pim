@@ -55,6 +55,9 @@
 - `MINIAPP_USER_AGENT=...`
 - `MINIAPP_RAW_TEMPLATE_ID=962`
 - `MINIAPP_RAW_REFERER=https://servicewechat.com/.../page-frame.html`
+- `MINIAPP_RAW_CONCURRENCY=4`
+- `MINIAPP_RAW_MIN_INTERVAL=300ms`
+- `MINIAPP_RAW_RETRY_MAX=2`
 
 ### raw 模式当前边界
 
@@ -271,7 +274,11 @@ cart-order 聚合接口：
 4. `raw` 模式会自动附带：
    - `Authorization: Bearer <MINIAPP_AUTH_ACCOUNT_ID>`
    - `User-Agent: <MINIAPP_USER_AGENT>`
-5. cart-order 中的 `customerId`、`customerName`、`phone`、`openId`、`addressId`、`cartIdList`、`deliveryMethodId`、`dueMoney` 都会从前序样本自动串联，但不会改写 `datasets/miniapp/**` 原始脱敏样本。
+5. `raw` 模式当前支持通过配置限制抓取压力：
+   - `MINIAPP_RAW_CONCURRENCY`
+   - `MINIAPP_RAW_MIN_INTERVAL`
+   - `MINIAPP_RAW_RETRY_MAX`
+6. cart-order 中的 `customerId`、`customerName`、`phone`、`openId`、`addressId`、`cartIdList`、`deliveryMethodId`、`dueMoney` 都会从前序样本自动串联，但不会改写 `datasets/miniapp/**` 原始脱敏样本。
 
 ## 维护建议
 

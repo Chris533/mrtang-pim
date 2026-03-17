@@ -52,26 +52,32 @@ type TargetSyncJob struct {
 }
 
 type TargetSyncRun struct {
-	ID               string                 `json:"id"`
-	JobKey           string                 `json:"jobKey"`
-	JobName          string                 `json:"jobName"`
-	EntityType       string                 `json:"entityType"`
-	ScopeType        string                 `json:"scopeType"`
-	ScopeKey         string                 `json:"scopeKey"`
-	ScopeLabel       string                 `json:"scopeLabel"`
-	Status           string                 `json:"status"`
-	SourceMode       string                 `json:"sourceMode"`
-	StartedAt        string                 `json:"startedAt"`
-	FinishedAt       string                 `json:"finishedAt"`
-	TriggeredByEmail string                 `json:"triggeredByEmail"`
-	TriggeredByName  string                 `json:"triggeredByName"`
-	CreatedCount     int                    `json:"createdCount"`
-	UpdatedCount     int                    `json:"updatedCount"`
-	UnchangedCount   int                    `json:"unchangedCount"`
-	MissingCount     int                    `json:"missingCount"`
-	ScopedNodeCount  int                    `json:"scopedNodeCount"`
-	ErrorMessage     string                 `json:"errorMessage"`
-	Details          []TargetSyncChangeItem `json:"details"`
+	ID               string                  `json:"id"`
+	JobKey           string                  `json:"jobKey"`
+	JobName          string                  `json:"jobName"`
+	EntityType       string                  `json:"entityType"`
+	ScopeType        string                  `json:"scopeType"`
+	ScopeKey         string                  `json:"scopeKey"`
+	ScopeLabel       string                  `json:"scopeLabel"`
+	Status           string                  `json:"status"`
+	SourceMode       string                  `json:"sourceMode"`
+	StartedAt        string                  `json:"startedAt"`
+	FinishedAt       string                  `json:"finishedAt"`
+	TriggeredByEmail string                  `json:"triggeredByEmail"`
+	TriggeredByName  string                  `json:"triggeredByName"`
+	CreatedCount     int                     `json:"createdCount"`
+	UpdatedCount     int                     `json:"updatedCount"`
+	UnchangedCount   int                     `json:"unchangedCount"`
+	MissingCount     int                     `json:"missingCount"`
+	ScopedNodeCount  int                     `json:"scopedNodeCount"`
+	ProgressTotal    int                     `json:"progressTotal"`
+	ProgressDone     int                     `json:"progressDone"`
+	CurrentStage     string                  `json:"currentStage"`
+	CurrentItem      string                  `json:"currentItem"`
+	LastProgressAt   string                  `json:"lastProgressAt"`
+	ErrorMessage     string                  `json:"errorMessage"`
+	Details          []TargetSyncChangeItem  `json:"details"`
+	Logs             []TargetSyncProgressLog `json:"logs"`
 }
 
 type TargetSyncScopeOption struct {
@@ -163,6 +169,19 @@ type TargetSyncChangeItem struct {
 	Label      string `json:"label"`
 	Path       string `json:"path"`
 	Note       string `json:"note"`
+}
+
+type TargetSyncProgressLog struct {
+	Time    string `json:"time"`
+	Stage   string `json:"stage"`
+	Level   string `json:"level"`
+	Message string `json:"message"`
+}
+
+type targetSyncProgressTracker struct {
+	app    core.App
+	record *core.Record
+	logs   []TargetSyncProgressLog
 }
 
 func (s *Service) TargetSyncSummary(_ context.Context, app core.App, dataset miniappmodel.Dataset) (TargetSyncSummary, error) {
@@ -341,19 +360,19 @@ func targetMiniappWrites(app core.App, limit int) []TargetMiniappWrite {
 }
 
 func (s *Service) EnsureTargetSyncJob(_ context.Context, app core.App, dataset miniappmodel.Dataset, entityType string, scopeKey string) (TargetSyncJob, error) {
+	return s.EnsureTargetSyncJobSpec(app, dataset.Meta.Source, entityType, scopeKey, resolveTargetSyncScopeLabel(&dataset, scopeKey, ""))
+}
+
+func (s *Service) EnsureTargetSyncJobSpec(app core.App, sourceMode string, entityType string, scopeKey string, scopeLabel string) (TargetSyncJob, error) {
 	entityType = normalizeTargetSyncEntity(entityType)
-	scopeType := TargetSyncScopeAll
-	scopeLabel := "全量"
+	scopeType := targetScopeType(scopeKey)
+	scopeKey = strings.TrimSpace(scopeKey)
+	scopeLabel = resolveTargetSyncScopeLabel(nil, scopeKey, scopeLabel)
 	jobKey := entityType + ":all"
-	if key := strings.TrimSpace(scopeKey); key != "" {
-		scopeType = TargetSyncScopeTopLevel
-		scopeLabel = key
-		jobKey = entityType + ":" + key
-		if node := findCategoryNode(dataset.CategoryPage.Tree, key); node != nil {
-			scopeLabel = node.Label
-		}
+	if scopeType == TargetSyncScopeTopLevel {
+		jobKey = entityType + ":" + scopeKey
 	}
-	name := targetSyncEntityLabel(entityType) + "同步"
+	name := targetSyncEntityLabel(entityType) + "抓取入库"
 	if scopeType == TargetSyncScopeTopLevel {
 		name = name + " / " + scopeLabel
 	}
@@ -363,12 +382,12 @@ func (s *Service) EnsureTargetSyncJob(_ context.Context, app core.App, dataset m
 		record.Set("name", name)
 		record.Set("entity_type", entityType)
 		record.Set("scope_type", scopeType)
-		record.Set("scope_key", strings.TrimSpace(scopeKey))
+		record.Set("scope_key", scopeKey)
 		record.Set("scope_label", scopeLabel)
 		record.Set("status", defaultTargetSyncStatus(record.GetString("status"), created))
-		record.Set("source_mode", dataset.Meta.Source)
+		record.Set("source_mode", strings.TrimSpace(sourceMode))
 		return setJSON(record, "config_json", map[string]any{
-			"scopeKey":   strings.TrimSpace(scopeKey),
+			"scopeKey":   scopeKey,
 			"scopeLabel": scopeLabel,
 		})
 	})
@@ -383,48 +402,143 @@ func (s *Service) EnsureTargetSyncJob(_ context.Context, app core.App, dataset m
 	return targetSyncJobFromRecord(record), nil
 }
 
+func (s *Service) StartTargetSyncAsync(app core.App, sourceLoader func(context.Context) (*miniappmodel.Dataset, error), entityType string, scopeKey string, scopeLabel string, actor TargetSyncActor) (TargetSyncRun, error) {
+	if sourceLoader == nil {
+		return TargetSyncRun{}, fmt.Errorf("target sync source loader is nil")
+	}
+	job, err := s.EnsureTargetSyncJobSpec(app, strings.TrimSpace(s.cfg.MiniApp.SourceMode), entityType, scopeKey, scopeLabel)
+	if err != nil {
+		return TargetSyncRun{}, err
+	}
+	if existingID, ok := s.activeTargetSyncRun(job.JobKey); ok {
+		existing, existingErr := s.GetTargetSyncRun(app, existingID)
+		if existingErr == nil {
+			return existing, fmt.Errorf("该抓取任务已在执行中")
+		}
+		return TargetSyncRun{}, fmt.Errorf("该抓取任务已在执行中")
+	}
+
+	runRecord, err := s.createTargetSyncRun(app, job, actor)
+	if err != nil {
+		return TargetSyncRun{}, err
+	}
+	s.setActiveTargetSyncRun(job.JobKey, runRecord.Id)
+
+	go func(job TargetSyncJob, record *core.Record) {
+		defer s.clearActiveTargetSyncRun(job.JobKey, record.Id)
+
+		runCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+
+		tracker := newTargetSyncProgressTracker(app, record)
+		_ = tracker.setStage("loading_dataset", "加载源站数据集", 0)
+		_ = tracker.addLog("loading_dataset", "info", "开始读取当前源站数据集。")
+
+		dataset, loadErr := sourceLoader(runCtx)
+		if loadErr != nil {
+			result := targetCategorySyncResult{
+				entityType:   job.EntityType,
+				jobKey:       job.JobKey,
+				jobName:      job.Name,
+				scopeType:    job.ScopeType,
+				scopeKey:     job.ScopeKey,
+				scopeLabel:   job.ScopeLabel,
+				status:       TargetSyncStatusFailed,
+				sourceMode:   strings.TrimSpace(s.cfg.MiniApp.SourceMode),
+				errorMessage: "加载源站数据集失败：" + loadErr.Error(),
+			}
+			_, _ = s.finalizeTargetSyncRun(app, record, result)
+			_ = s.updateTargetSyncJobStatus(app, job.JobKey, result)
+			return
+		}
+
+		job.ScopeLabel = resolveTargetSyncScopeLabel(dataset, job.ScopeKey, job.ScopeLabel)
+		job.SourceMode = strings.TrimSpace(dataset.Meta.Source)
+		record.Set("source_mode", job.SourceMode)
+		record.Set("scope_label", job.ScopeLabel)
+		_ = app.Save(record)
+
+		result, runErr := s.executeTargetSync(runCtx, app, *dataset, job, tracker)
+		if runErr != nil {
+			result.status = TargetSyncStatusFailed
+			result.errorMessage = runErr.Error()
+		}
+
+		_, _ = s.finalizeTargetSyncRun(app, record, result)
+		_ = s.updateTargetSyncJobStatus(app, job.JobKey, result)
+	}(job, runRecord)
+
+	return targetSyncRunFromRecord(runRecord), nil
+}
+
 func (s *Service) RunTargetSync(ctx context.Context, app core.App, dataset miniappmodel.Dataset, entityType string, scopeKey string, actor TargetSyncActor) (TargetSyncRun, error) {
 	entityType = normalizeTargetSyncEntity(entityType)
 	job, err := s.EnsureTargetSyncJob(ctx, app, dataset, entityType, scopeKey)
 	if err != nil {
 		return TargetSyncRun{}, err
 	}
-
-	var result targetCategorySyncResult
-	switch entityType {
-	case TargetSyncEntityProducts:
-		result, err = s.syncTargetProducts(ctx, app, dataset, job.ScopeKey)
-	case TargetSyncEntityAssets:
-		result, err = s.syncTargetAssets(ctx, app, dataset, job.ScopeKey)
-	default:
-		result, err = s.syncTargetCategories(ctx, app, dataset, job.ScopeKey)
+	if existingID, ok := s.activeTargetSyncRun(job.JobKey); ok {
+		existing, existingErr := s.GetTargetSyncRun(app, existingID)
+		if existingErr == nil {
+			return existing, fmt.Errorf("该抓取任务已在执行中")
+		}
+		return TargetSyncRun{}, fmt.Errorf("该抓取任务已在执行中")
 	}
+
+	runRecord, err := s.createTargetSyncRun(app, job, actor)
 	if err != nil {
-		result.status = TargetSyncStatusFailed
-		result.errorMessage = err.Error()
+		return TargetSyncRun{}, err
 	}
-	result.jobKey = job.JobKey
-	result.jobName = job.Name
-	result.scopeType = job.ScopeType
-	result.scopeKey = job.ScopeKey
-	result.scopeLabel = job.ScopeLabel
-	result.sourceMode = dataset.Meta.Source
-	result.entityType = entityType
+	s.setActiveTargetSyncRun(job.JobKey, runRecord.Id)
+	defer s.clearActiveTargetSyncRun(job.JobKey, runRecord.Id)
 
-	runRecord, saveErr := s.saveTargetSyncRun(app, result, actor)
+	tracker := newTargetSyncProgressTracker(app, runRecord)
+	_ = tracker.setStage("loading_dataset", "准备执行抓取入库", 0)
+	_ = tracker.addLog("loading_dataset", "info", "已加载数据集，准备执行抓取入库。")
+
+	result, runErr := s.executeTargetSync(ctx, app, dataset, job, tracker)
+	if runErr != nil {
+		result.status = TargetSyncStatusFailed
+		result.errorMessage = runErr.Error()
+	}
+
+	finalRun, saveErr := s.finalizeTargetSyncRun(app, runRecord, result)
 	if saveErr != nil {
 		return TargetSyncRun{}, saveErr
 	}
 	if updateErr := s.updateTargetSyncJobStatus(app, job.JobKey, result); updateErr != nil {
 		return TargetSyncRun{}, updateErr
 	}
-	if err != nil {
-		return runRecord, err
+	if runErr != nil {
+		return finalRun, runErr
 	}
-	return runRecord, nil
+	return finalRun, nil
 }
 
-func (s *Service) syncTargetCategories(_ context.Context, app core.App, dataset miniappmodel.Dataset, scopeKey string) (targetCategorySyncResult, error) {
+func (s *Service) executeTargetSync(ctx context.Context, app core.App, dataset miniappmodel.Dataset, job TargetSyncJob, tracker *targetSyncProgressTracker) (targetCategorySyncResult, error) {
+	var (
+		result targetCategorySyncResult
+		err    error
+	)
+	switch normalizeTargetSyncEntity(job.EntityType) {
+	case TargetSyncEntityProducts:
+		result, err = s.syncTargetProducts(ctx, app, dataset, job.ScopeKey, tracker)
+	case TargetSyncEntityAssets:
+		result, err = s.syncTargetAssets(ctx, app, dataset, job.ScopeKey, tracker)
+	default:
+		result, err = s.syncTargetCategories(ctx, app, dataset, job.ScopeKey, tracker)
+	}
+	result.jobKey = job.JobKey
+	result.jobName = job.Name
+	result.scopeType = job.ScopeType
+	result.scopeKey = job.ScopeKey
+	result.scopeLabel = resolveTargetSyncScopeLabel(&dataset, job.ScopeKey, job.ScopeLabel)
+	result.sourceMode = dataset.Meta.Source
+	result.entityType = normalizeTargetSyncEntity(job.EntityType)
+	return result, err
+}
+
+func (s *Service) syncTargetCategories(_ context.Context, app core.App, dataset miniappmodel.Dataset, scopeKey string, tracker *targetSyncProgressTracker) (targetCategorySyncResult, error) {
 	result := targetCategorySyncResult{
 		entityType: TargetSyncEntityCategoryTree,
 		status:     TargetSyncStatusSuccess,
@@ -448,6 +562,10 @@ func (s *Service) syncTargetCategories(_ context.Context, app core.App, dataset 
 
 	scopedNodes := flattenCategoryNodes(nodes)
 	result.scopedNodeCount = len(scopedNodes)
+	if tracker != nil {
+		_ = tracker.setStage("categories", "写入分类", len(scopedNodes))
+		_ = tracker.addLog("categories", "info", fmt.Sprintf("开始抓取入库 %d 个分类节点。", len(scopedNodes)))
+	}
 	scopeMap := make(map[string]miniappmodel.CategoryNode, len(scopedNodes))
 	for _, node := range scopedNodes {
 		scopeMap[node.Key] = node
@@ -455,6 +573,9 @@ func (s *Service) syncTargetCategories(_ context.Context, app core.App, dataset 
 
 	categoryPathByKey, parentKeyByKey := buildCategoryTreeMeta(nodes)
 	for _, node := range scopedNodes {
+		if tracker != nil {
+			_ = tracker.step(node.Label)
+		}
 		expectedPath := categoryPathByKey[node.Key]
 		created, changed, upsertErr := upsertTargetCategoryNode(app, node, expectedPath, parentKeyByKey[node.Key])
 		if upsertErr != nil {
@@ -491,11 +612,14 @@ func (s *Service) syncTargetCategories(_ context.Context, app core.App, dataset 
 	if result.missingCount > 0 && result.status == TargetSyncStatusSuccess {
 		result.status = TargetSyncStatusPartial
 	}
+	if tracker != nil {
+		_ = tracker.addLog("categories", "info", fmt.Sprintf("分类抓取入库完成：新增 %d，更新 %d，未变化 %d。", result.createdCount, result.updatedCount, result.unchangedCount))
+	}
 
 	return result, nil
 }
 
-func (s *Service) syncTargetProducts(ctx context.Context, app core.App, dataset miniappmodel.Dataset, scopeKey string) (targetCategorySyncResult, error) {
+func (s *Service) syncTargetProducts(ctx context.Context, app core.App, dataset miniappmodel.Dataset, scopeKey string, tracker *targetSyncProgressTracker) (targetCategorySyncResult, error) {
 	result := targetCategorySyncResult{
 		entityType: TargetSyncEntityProducts,
 		status:     TargetSyncStatusSuccess,
@@ -506,9 +630,16 @@ func (s *Service) syncTargetProducts(ctx context.Context, app core.App, dataset 
 	result.scopeKey = strings.TrimSpace(scopeKey)
 	result.scopeLabel = targetScopeLabel(dataset, scopeKey)
 	result.scopedNodeCount = len(products)
+	if tracker != nil {
+		_ = tracker.setStage("products", "写入商品规格", len(products))
+		_ = tracker.addLog("products", "info", fmt.Sprintf("开始抓取入库 %d 个商品规格。", len(products)))
+	}
 
 	sections := buildCategorySectionLookup(dataset.CategoryPage.Sections)
 	for _, product := range products {
+		if tracker != nil {
+			_ = tracker.step(product.Summary.Name)
+		}
 		categoryKey := firstCategoryKey(product.SourceSections, sections)
 		categoryPath := ""
 		if section, ok := sections[categoryKey]; ok {
@@ -537,10 +668,13 @@ func (s *Service) syncTargetProducts(ctx context.Context, app core.App, dataset 
 		}
 		result.unchangedCount++
 	}
+	if tracker != nil {
+		_ = tracker.addLog("products", "info", fmt.Sprintf("商品规格抓取入库完成：新增 %d，更新 %d，未变化 %d。", result.createdCount, result.updatedCount, result.unchangedCount))
+	}
 	return result, nil
 }
 
-func (s *Service) syncTargetAssets(_ context.Context, app core.App, dataset miniappmodel.Dataset, scopeKey string) (targetCategorySyncResult, error) {
+func (s *Service) syncTargetAssets(_ context.Context, app core.App, dataset miniappmodel.Dataset, scopeKey string, tracker *targetSyncProgressTracker) (targetCategorySyncResult, error) {
 	result := targetCategorySyncResult{
 		entityType: TargetSyncEntityAssets,
 		status:     TargetSyncStatusSuccess,
@@ -550,10 +684,21 @@ func (s *Service) syncTargetAssets(_ context.Context, app core.App, dataset mini
 	result.scopeType = targetScopeType(scopeKey)
 	result.scopeKey = strings.TrimSpace(scopeKey)
 	result.scopeLabel = targetScopeLabel(dataset, scopeKey)
+	totalAssets := 0
+	for _, product := range products {
+		totalAssets += len(collectProductAssets(product))
+	}
+	result.scopedNodeCount = totalAssets
+	if tracker != nil {
+		_ = tracker.setStage("assets", "写入图片资源", totalAssets)
+		_ = tracker.addLog("assets", "info", fmt.Sprintf("开始抓取入库 %d 个图片资源。", totalAssets))
+	}
 	for _, product := range products {
 		assets := collectProductAssets(product)
-		result.scopedNodeCount += len(assets)
 		for _, asset := range assets {
+			if tracker != nil {
+				_ = tracker.step(product.Summary.Name + " / " + asset.Role)
+			}
 			existing, _ := app.FindFirstRecordByFilter(CollectionSourceAssets, "asset_key = {:asset_key}", dbx.Params{"asset_key": asset.Key})
 			before := sourceAssetSignature(existing)
 			created, err := upsertTargetAssetItem(app, product, asset)
@@ -577,6 +722,9 @@ func (s *Service) syncTargetAssets(_ context.Context, app core.App, dataset mini
 			}
 			result.unchangedCount++
 		}
+	}
+	if tracker != nil {
+		_ = tracker.addLog("assets", "info", fmt.Sprintf("图片抓取入库完成：新增 %d，更新 %d，未变化 %d。", result.createdCount, result.updatedCount, result.unchangedCount))
 	}
 	return result, nil
 }
@@ -604,7 +752,7 @@ func upsertTargetCategoryNode(app core.App, node miniappmodel.CategoryNode, cate
 		record.Set("path_name", node.PathName)
 		record.Set("category_path", categoryPath)
 		record.Set("parent_key", parentKey)
-		record.Set("image_url", node.ImageURL)
+		record.Set("image_url", sanitizeAbsoluteURL(node.ImageURL))
 		record.Set("depth", node.Depth)
 		record.Set("sort", node.Sort)
 		record.Set("has_children", node.HasChildren)
@@ -633,14 +781,64 @@ func targetCategoryRecordSignature(record *core.Record) string {
 	}, "|")
 }
 
-func (s *Service) saveTargetSyncRun(app core.App, result targetCategorySyncResult, actor TargetSyncActor) (TargetSyncRun, error) {
+func (s *Service) createTargetSyncRun(app core.App, job TargetSyncJob, actor TargetSyncActor) (*core.Record, error) {
 	collection, err := app.FindCollectionByNameOrId(CollectionTargetSyncRuns)
 	if err != nil {
-		return TargetSyncRun{}, err
+		return nil, err
 	}
 	startedAt := time.Now().Format(time.RFC3339)
-	finishedAt := startedAt
 	record := core.NewRecord(collection)
+	record.Set("job_key", job.JobKey)
+	record.Set("job_name", job.Name)
+	record.Set("entity_type", normalizeTargetSyncEntity(job.EntityType))
+	record.Set("scope_type", job.ScopeType)
+	record.Set("scope_key", job.ScopeKey)
+	record.Set("scope_label", job.ScopeLabel)
+	record.Set("status", TargetSyncStatusRunning)
+	record.Set("source_mode", job.SourceMode)
+	record.Set("started_at", startedAt)
+	record.Set("finished_at", "")
+	record.Set("triggered_by_email", strings.TrimSpace(actor.Email))
+	record.Set("triggered_by_name", strings.TrimSpace(actor.Name))
+	record.Set("created_count", 0)
+	record.Set("updated_count", 0)
+	record.Set("unchanged_count", 0)
+	record.Set("missing_count", 0)
+	record.Set("scoped_node_count", 0)
+	record.Set("progress_total", 0)
+	record.Set("progress_done", 0)
+	record.Set("current_stage", "queued")
+	record.Set("current_item", "")
+	record.Set("last_progress_at", startedAt)
+	record.Set("error_message", "")
+	if err := setJSON(record, "summary_json", map[string]any{
+		"createdCount":    0,
+		"updatedCount":    0,
+		"unchangedCount":  0,
+		"missingCount":    0,
+		"scopedNodeCount": 0,
+	}); err != nil {
+		return nil, err
+	}
+	if err := setJSON(record, "details_json", []TargetSyncChangeItem{}); err != nil {
+		return nil, err
+	}
+	if err := setJSON(record, "progress_logs_json", []TargetSyncProgressLog{{
+		Time:    startedAt,
+		Stage:   "queued",
+		Level:   "info",
+		Message: "任务已创建，等待执行。",
+	}}); err != nil {
+		return nil, err
+	}
+	if err := app.Save(record); err != nil {
+		return nil, err
+	}
+	return record, s.markTargetSyncJobRunning(app, job.JobKey, job.SourceMode)
+}
+
+func (s *Service) finalizeTargetSyncRun(app core.App, record *core.Record, result targetCategorySyncResult) (TargetSyncRun, error) {
+	now := time.Now().Format(time.RFC3339)
 	record.Set("job_key", result.jobKey)
 	record.Set("job_name", result.jobName)
 	record.Set("entity_type", normalizeTargetSyncEntity(result.entityType))
@@ -649,15 +847,17 @@ func (s *Service) saveTargetSyncRun(app core.App, result targetCategorySyncResul
 	record.Set("scope_label", result.scopeLabel)
 	record.Set("status", result.status)
 	record.Set("source_mode", result.sourceMode)
-	record.Set("started_at", startedAt)
-	record.Set("finished_at", finishedAt)
-	record.Set("triggered_by_email", strings.TrimSpace(actor.Email))
-	record.Set("triggered_by_name", strings.TrimSpace(actor.Name))
+	record.Set("finished_at", now)
 	record.Set("created_count", result.createdCount)
 	record.Set("updated_count", result.updatedCount)
 	record.Set("unchanged_count", result.unchangedCount)
 	record.Set("missing_count", result.missingCount)
 	record.Set("scoped_node_count", result.scopedNodeCount)
+	record.Set("progress_total", targetSyncMaxInt(record.GetInt("progress_total"), result.scopedNodeCount))
+	record.Set("progress_done", targetSyncMaxInt(record.GetInt("progress_done"), result.scopedNodeCount))
+	record.Set("current_stage", "completed")
+	record.Set("current_item", "")
+	record.Set("last_progress_at", now)
 	record.Set("error_message", result.errorMessage)
 	if err := setJSON(record, "summary_json", map[string]any{
 		"createdCount":    result.createdCount,
@@ -670,6 +870,12 @@ func (s *Service) saveTargetSyncRun(app core.App, result targetCategorySyncResul
 	}
 	if err := setJSON(record, "details_json", result.details); err != nil {
 		return TargetSyncRun{}, err
+	}
+	tracker := newTargetSyncProgressTracker(app, record)
+	if result.status == TargetSyncStatusFailed {
+		_ = tracker.addLog("completed", "error", targetSyncFirstNonEmpty(result.errorMessage, "抓取入库执行失败。"))
+	} else {
+		_ = tracker.addLog("completed", "info", fmt.Sprintf("抓取入库完成：新增 %d，更新 %d，未变化 %d。", result.createdCount, result.updatedCount, result.unchangedCount))
 	}
 	if err := app.Save(record); err != nil {
 		return TargetSyncRun{}, err
@@ -691,6 +897,106 @@ func (s *Service) updateTargetSyncJobStatus(app core.App, jobKey string, result 
 		record.Set("last_success_at", now)
 	}
 	return app.Save(record)
+}
+
+func (s *Service) markTargetSyncJobRunning(app core.App, jobKey string, sourceMode string) error {
+	record, err := app.FindFirstRecordByFilter(CollectionTargetSyncJobs, "job_key = {:job_key}", dbx.Params{"job_key": jobKey})
+	if err != nil {
+		return err
+	}
+	now := time.Now().Format(time.RFC3339)
+	record.Set("status", TargetSyncStatusRunning)
+	record.Set("source_mode", strings.TrimSpace(sourceMode))
+	record.Set("last_run_at", now)
+	record.Set("last_error", "")
+	return app.Save(record)
+}
+
+func (s *Service) activeTargetSyncRun(jobKey string) (string, bool) {
+	s.targetSyncMu.Lock()
+	defer s.targetSyncMu.Unlock()
+	runID, ok := s.activeTargetSyncs[jobKey]
+	return runID, ok
+}
+
+func (s *Service) setActiveTargetSyncRun(jobKey string, runID string) {
+	s.targetSyncMu.Lock()
+	defer s.targetSyncMu.Unlock()
+	s.activeTargetSyncs[jobKey] = runID
+}
+
+func (s *Service) clearActiveTargetSyncRun(jobKey string, runID string) {
+	s.targetSyncMu.Lock()
+	defer s.targetSyncMu.Unlock()
+	if current, ok := s.activeTargetSyncs[jobKey]; ok && current == runID {
+		delete(s.activeTargetSyncs, jobKey)
+	}
+}
+
+func newTargetSyncProgressTracker(app core.App, record *core.Record) *targetSyncProgressTracker {
+	return &targetSyncProgressTracker{
+		app:    app,
+		record: record,
+		logs:   decodeTargetSyncProgressLogs(record.GetString("progress_logs_json")),
+	}
+}
+
+func (t *targetSyncProgressTracker) setStage(stage string, label string, total int) error {
+	now := time.Now().Format(time.RFC3339)
+	t.record.Set("current_stage", strings.TrimSpace(stage))
+	t.record.Set("current_item", strings.TrimSpace(label))
+	t.record.Set("last_progress_at", now)
+	if total >= 0 {
+		t.record.Set("progress_total", total)
+		if t.record.GetInt("progress_done") > total && total > 0 {
+			t.record.Set("progress_done", total)
+		}
+	}
+	return t.save()
+}
+
+func (t *targetSyncProgressTracker) step(currentItem string) error {
+	now := time.Now().Format(time.RFC3339)
+	done := t.record.GetInt("progress_done") + 1
+	total := t.record.GetInt("progress_total")
+	if total > 0 && done > total {
+		done = total
+	}
+	t.record.Set("progress_done", done)
+	t.record.Set("current_item", strings.TrimSpace(currentItem))
+	t.record.Set("last_progress_at", now)
+	return t.save()
+}
+
+func (t *targetSyncProgressTracker) addLog(stage string, level string, message string) error {
+	entry := TargetSyncProgressLog{
+		Time:    time.Now().Format(time.RFC3339),
+		Stage:   strings.TrimSpace(stage),
+		Level:   strings.TrimSpace(level),
+		Message: strings.TrimSpace(message),
+	}
+	if entry.Stage == "" {
+		entry.Stage = t.record.GetString("current_stage")
+	}
+	if entry.Level == "" {
+		entry.Level = "info"
+	}
+	if entry.Message == "" {
+		return nil
+	}
+	t.logs = append(t.logs, entry)
+	if len(t.logs) > 80 {
+		t.logs = t.logs[len(t.logs)-80:]
+	}
+	t.record.Set("last_progress_at", entry.Time)
+	return t.save()
+}
+
+func (t *targetSyncProgressTracker) save() error {
+	if err := setJSON(t.record, "progress_logs_json", t.logs); err != nil {
+		return err
+	}
+	return t.app.Save(t.record)
 }
 
 func (s *Service) listTargetSyncJobs(app core.App, limit int) ([]TargetSyncJob, error) {
@@ -778,8 +1084,14 @@ func targetSyncRunFromRecord(record *core.Record) TargetSyncRun {
 		UnchangedCount:   record.GetInt("unchanged_count"),
 		MissingCount:     record.GetInt("missing_count"),
 		ScopedNodeCount:  record.GetInt("scoped_node_count"),
+		ProgressTotal:    record.GetInt("progress_total"),
+		ProgressDone:     record.GetInt("progress_done"),
+		CurrentStage:     record.GetString("current_stage"),
+		CurrentItem:      record.GetString("current_item"),
+		LastProgressAt:   record.GetString("last_progress_at"),
 		ErrorMessage:     record.GetString("error_message"),
 		Details:          decodeTargetSyncDetails(record.GetString("details_json")),
+		Logs:             decodeTargetSyncProgressLogs(record.GetString("progress_logs_json")),
 	}
 }
 
@@ -788,6 +1100,17 @@ func decodeTargetSyncDetails(raw string) []TargetSyncChangeItem {
 		return nil
 	}
 	var items []TargetSyncChangeItem
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+		return nil
+	}
+	return items
+}
+
+func decodeTargetSyncProgressLogs(raw string) []TargetSyncProgressLog {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var items []TargetSyncProgressLog
 	if err := json.Unmarshal([]byte(raw), &items); err != nil {
 		return nil
 	}
@@ -858,6 +1181,37 @@ func defaultTargetSyncStatus(status string, created bool) string {
 		return TargetSyncStatusPending
 	}
 	return TargetSyncStatusSuccess
+}
+
+func resolveTargetSyncScopeLabel(dataset *miniappmodel.Dataset, scopeKey string, scopeLabel string) string {
+	if strings.TrimSpace(scopeKey) == "" {
+		return "全量"
+	}
+	if strings.TrimSpace(scopeLabel) != "" {
+		return strings.TrimSpace(scopeLabel)
+	}
+	if dataset != nil {
+		if node := findCategoryNode(dataset.CategoryPage.Tree, scopeKey); node != nil {
+			return node.Label
+		}
+	}
+	return strings.TrimSpace(scopeKey)
+}
+
+func targetSyncFirstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func targetSyncMaxInt(left int, right int) int {
+	if left > right {
+		return left
+	}
+	return right
 }
 
 func flattenCategoryNodes(nodes []miniappmodel.CategoryNode) []miniappmodel.CategoryNode {
@@ -1138,9 +1492,12 @@ func upsertTargetAssetItem(app core.App, product miniappmodel.ProductPage, asset
 		record.Set("spu_id", product.SpuID)
 		record.Set("sku_id", product.SkuID)
 		record.Set("name", product.Summary.Name)
-		record.Set("source_url", asset.URL)
+		record.Set("source_url", sanitizeAbsoluteURL(asset.URL))
 		record.Set("asset_role", asset.Role)
 		record.Set("sort", asset.Sort)
+		if created && strings.TrimSpace(record.GetString("original_image_status")) == "" && strings.TrimSpace(record.GetString("source_url")) != "" {
+			record.Set("original_image_status", OriginalImageStatusPending)
+		}
 		if created && strings.TrimSpace(record.GetString("image_processing_status")) == "" {
 			record.Set("image_processing_status", ImageStatusPending)
 		}

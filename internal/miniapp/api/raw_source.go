@@ -29,12 +29,19 @@ type RawSourceConfig struct {
 	TemplateID          string
 	Referer             string
 	Timeout             time.Duration
+	Concurrency         int
+	MinInterval         time.Duration
+	RetryMax            int
 }
 
 type RawSource struct {
-	cfg      RawSourceConfig
-	client   *http.Client
-	fallback Source
+	cfg           RawSourceConfig
+	client        *http.Client
+	fallback      Source
+	workerLimit   int
+	retryMax      int
+	requestMu     sync.Mutex
+	lastRequestAt time.Time
 }
 
 func NewRawSource(cfg RawSourceConfig, fallback Source) *RawSource {
@@ -42,13 +49,23 @@ func NewRawSource(cfg RawSourceConfig, fallback Source) *RawSource {
 	if timeout <= 0 {
 		timeout = 20 * time.Second
 	}
+	workerLimit := cfg.Concurrency
+	if workerLimit <= 0 {
+		workerLimit = 4
+	}
+	retryMax := cfg.RetryMax
+	if retryMax < 0 {
+		retryMax = 0
+	}
 
 	return &RawSource{
 		cfg: cfg,
 		client: &http.Client{
 			Timeout: timeout,
 		},
-		fallback: fallback,
+		fallback:    fallback,
+		workerLimit: workerLimit,
+		retryMax:    retryMax,
 	}
 }
 
@@ -451,8 +468,7 @@ func (s *RawSource) enrichRawProducts(ctx context.Context, products []model.Prod
 	enriched := make([]model.ProductPage, len(products))
 	copy(enriched, products)
 
-	const workerLimit = 8
-	sem := make(chan struct{}, workerLimit)
+	sem := make(chan struct{}, s.workerLimit)
 	var wg sync.WaitGroup
 
 	for idx := range enriched {
@@ -581,52 +597,125 @@ func (s *RawSource) requestJSON(ctx context.Context, method string, path string,
 		fullURL.RawQuery = values.Encode()
 	}
 
-	var payload io.Reader
+	var payloadBytes []byte
 	if body != nil {
 		encoded, err := json.Marshal(body)
 		if err != nil {
 			return err
 		}
-		payload = bytes.NewReader(encoded)
+		payloadBytes = encoded
 	}
+	attempts := s.retryMax + 1
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		if err := s.waitMinInterval(ctx); err != nil {
+			return err
+		}
+		var payload io.Reader
+		if payloadBytes != nil {
+			payload = bytes.NewReader(payloadBytes)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, fullURL.String(), payload)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Accept", "application/json")
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("xweb_xhr", "1")
+		}
+		if strings.TrimSpace(s.cfg.UserAgent) != "" {
+			req.Header.Set("User-Agent", s.cfg.UserAgent)
+		}
+		if strings.TrimSpace(s.cfg.AuthorizedAccountID) != "" {
+			req.Header.Set("Authorization", "Bearer "+s.cfg.AuthorizedAccountID)
+		}
+		if strings.TrimSpace(s.cfg.TemplateID) != "" {
+			req.Header.Set("xcx-template-id", s.cfg.TemplateID)
+		}
+		if strings.TrimSpace(s.cfg.Referer) != "" {
+			req.Header.Set("Referer", s.cfg.Referer)
+		}
 
-	req, err := http.NewRequestWithContext(ctx, method, fullURL.String(), payload)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Accept", "application/json")
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("xweb_xhr", "1")
-	}
-	if strings.TrimSpace(s.cfg.UserAgent) != "" {
-		req.Header.Set("User-Agent", s.cfg.UserAgent)
-	}
-	if strings.TrimSpace(s.cfg.AuthorizedAccountID) != "" {
-		req.Header.Set("Authorization", "Bearer "+s.cfg.AuthorizedAccountID)
-	}
-	if strings.TrimSpace(s.cfg.TemplateID) != "" {
-		req.Header.Set("xcx-template-id", s.cfg.TemplateID)
-	}
-	if strings.TrimSpace(s.cfg.Referer) != "" {
-		req.Header.Set("Referer", s.cfg.Referer)
-	}
+		resp, err := s.client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("request raw source %s %s: %w", method, path, err)
+			if attempt+1 < attempts && s.shouldRetryStatus(0) {
+				s.sleepBackoff(ctx, attempt)
+				continue
+			}
+			return lastErr
+		}
 
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("request raw source %s %s: %w", method, path, err)
-	}
-	defer resp.Body.Close()
+		if resp.StatusCode >= http.StatusBadRequest {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			_ = resp.Body.Close()
+			lastErr = fmt.Errorf("raw source returned status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+			if attempt+1 < attempts && s.shouldRetryStatus(resp.StatusCode) {
+				s.sleepBackoff(ctx, attempt)
+				continue
+			}
+			return lastErr
+		}
 
-	if resp.StatusCode >= http.StatusBadRequest {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("raw source returned status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+		err = json.NewDecoder(resp.Body).Decode(target)
+		_ = resp.Body.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("decode raw source %s %s: %w", method, path, err)
+			if attempt+1 < attempts {
+				s.sleepBackoff(ctx, attempt)
+				continue
+			}
+			return lastErr
+		}
+		return nil
 	}
+	if lastErr != nil {
+		return lastErr
+	}
+	return fmt.Errorf("request raw source %s %s failed", method, path)
+}
 
-	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
-		return fmt.Errorf("decode raw source %s %s: %w", method, path, err)
+func (s *RawSource) waitMinInterval(ctx context.Context) error {
+	if s.cfg.MinInterval <= 0 {
+		return nil
+	}
+	s.requestMu.Lock()
+	now := time.Now()
+	next := s.lastRequestAt
+	if next.Before(now) {
+		next = now
+	}
+	wait := time.Until(next)
+	s.lastRequestAt = next.Add(s.cfg.MinInterval)
+	s.requestMu.Unlock()
+	if wait > 0 {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+		}
 	}
 	return nil
+}
+
+func (s *RawSource) sleepBackoff(ctx context.Context, attempt int) {
+	wait := time.Duration(attempt+1) * 300 * time.Millisecond
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+	}
+}
+
+func (s *RawSource) shouldRetryStatus(status int) bool {
+	if status == 0 {
+		return true
+	}
+	return status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
 }
 
 func (s *RawSource) fetchRawResponse(ctx context.Context, method string, path string, query map[string]any, body any) (map[string]any, error) {

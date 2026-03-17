@@ -72,7 +72,9 @@ go run ./cmd/pim serve
 
 - PocketBase Admin UI: `http://127.0.0.1:26228/_/`
 - Mrtang Admin: `http://127.0.0.1:26228/_/mrtang-admin`
-- Target Sync: `http://127.0.0.1:26228/_/mrtang-admin/target-sync`
+- 抓取入库: `http://127.0.0.1:26228/_/mrtang-admin/target-sync`
+- Legacy Dashboard: `http://127.0.0.1:26228/_/mrtang-admin?legacy=1`
+- Legacy 抓取入库: `http://127.0.0.1:26228/_/mrtang-admin/target-sync?legacy=1`
 - Source Home: `http://127.0.0.1:26228/_/mrtang-admin/source`
 - Source Products: `http://127.0.0.1:26228/_/mrtang-admin/source/products`
 - Source Assets: `http://127.0.0.1:26228/_/mrtang-admin/source/assets`
@@ -103,13 +105,14 @@ go run ./cmd/pim serve
 
 如果你需要直接看“源站 API -> rr 样本 -> dataset -> 本地接口”的总览，见 [docs/source-api.md](./docs/source-api.md)。
 如果你需要直接看 checkout 摘要接口和推荐字段，见 [docs/checkout-api.md](./docs/checkout-api.md)。
-如果你需要直接看目标站同步任务、运行记录和变更详情，见 [docs/target-sync.md](./docs/target-sync.md)。
+如果你需要直接看源站抓取入库任务、运行记录和变更详情，见 [docs/target-sync.md](./docs/target-sync.md)。
 如果你需要直接看 source 商品审核、图片处理、桥接与同步工作台，见 [docs/source-review-workbench.md](./docs/source-review-workbench.md)。
 如果你需要直接看后台模块结构和页面入口，见 [docs/mrtang-admin.md](./docs/mrtang-admin.md)。
 
 环境变量:
 
 - `PIM_HTTP_ADDR=127.0.0.1:26228`
+- `PIM_DATA_DIR=./pb_data`
 - `PIM_SOURCE_ADMIN_EMAILS=ops@example.com,source@example.com`
 - `PIM_PROCUREMENT_ADMIN_EMAILS=buyer@example.com`
 - `MINIAPP_SOURCE_MODE=snapshot|raw`
@@ -356,7 +359,7 @@ curl -X POST 'http://127.0.0.1:26228/api/pim/procurement/order/status?id=<procur
 
 推荐顺序：
 
-1. 在 `/_/mrtang-admin/target-sync` 同步目标站分类、商品规格和图片。
+1. 在 `/_/mrtang-admin/target-sync` 执行目标站分类、商品规格和图片的抓取入库。
 2. 在 `/_/mrtang-admin/source/products` 审核商品，在 `/_/mrtang-admin/source/assets` 处理图片。
 3. 审核通过后桥接到 `supplier_products`，再走同步到 backend 的既有链路。
 

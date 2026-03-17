@@ -15,7 +15,7 @@ func RenderTargetSyncHTML(cfg config.Config, summary pim.TargetSyncSummary, flas
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>目标站同步</title>
+  <title>源站抓取入库</title>
   <style>
     :root { --panel:rgba(8,20,32,.92); --ink:#edf7ff; --muted:#8aa3bb; --line:rgba(123,168,203,.16); --accent:#5ee6ff; --ok:#6ef2b4; --warning:#ffd166; --danger:#ff6b8a; --shadow:0 24px 60px rgba(0,0,0,.34); }
     * { box-sizing:border-box; }
@@ -55,8 +55,8 @@ func RenderTargetSyncHTML(cfg config.Config, summary pim.TargetSyncSummary, flas
     {{if .FlashError}}<div class="flash error">{{.FlashError}}</div>{{end}}
     <section class="hero">
       <div class="card">
-        <div class="eyebrow">目标站同步</div>
-        <h2 style="margin:8px 0 0;">分类树、商品规格与图片同步入口</h2>
+        <div class="eyebrow">抓取入库</div>
+        <h2 style="margin:8px 0 0;">分类树、商品规格与图片抓取入库入口</h2>
         <p class="small" style="margin-top:10px;">当前已经并入三条链：分类树、商品与多单位规格、图片资产。统一登记任务、统一执行、统一查看最近运行。</p>
         <div class="actions">
           <form method="post" action="/_/mrtang-admin/target-sync/jobs/ensure">
@@ -64,20 +64,20 @@ func RenderTargetSyncHTML(cfg config.Config, summary pim.TargetSyncSummary, flas
             <input type="hidden" name="scopeKey" value="">
             <button type="submit" style="width:100%; text-align:left;">登记全量分类任务</button>
           </form>
-          <form method="post" action="/_/mrtang-admin/target-sync/jobs/run" data-confirm="确认执行全量分类树同步吗？">
+          <form method="post" action="/_/mrtang-admin/target-sync/jobs/run" data-confirm="确认执行全量分类抓取入库吗？">
             <input type="hidden" name="entityType" value="category_tree">
             <input type="hidden" name="scopeKey" value="">
-            <button type="submit" style="width:100%; text-align:left;">执行全量分类同步</button>
+            <button type="submit" style="width:100%; text-align:left;">执行全量分类抓取入库</button>
           </form>
-          <form method="post" action="/_/mrtang-admin/target-sync/jobs/run" data-confirm="确认执行全量商品与规格同步吗？">
+          <form method="post" action="/_/mrtang-admin/target-sync/jobs/run" data-confirm="确认执行全量商品规格抓取入库吗？">
             <input type="hidden" name="entityType" value="products">
             <input type="hidden" name="scopeKey" value="">
-            <button type="submit" style="width:100%; text-align:left;">执行全量商品规格同步</button>
+            <button type="submit" style="width:100%; text-align:left;">执行全量商品规格抓取入库</button>
           </form>
-          <form method="post" action="/_/mrtang-admin/target-sync/jobs/run" data-confirm="确认执行全量图片资产同步吗？">
+          <form method="post" action="/_/mrtang-admin/target-sync/jobs/run" data-confirm="确认执行全量图片抓取入库吗？">
             <input type="hidden" name="entityType" value="assets">
             <input type="hidden" name="scopeKey" value="">
-            <button type="submit" style="width:100%; text-align:left;">执行全量图片同步</button>
+            <button type="submit" style="width:100%; text-align:left;">执行全量图片抓取入库</button>
           </form>
         </div>
       </div>
@@ -101,7 +101,7 @@ func RenderTargetSyncHTML(cfg config.Config, summary pim.TargetSyncSummary, flas
     </section>
 
     <section class="metrics" style="margin-top:14px;">
-      <div class="stat"><div class="eyebrow">同步任务</div><div class="metric">{{.Summary.JobCount}}</div></div>
+      <div class="stat"><div class="eyebrow">抓取任务</div><div class="metric">{{.Summary.JobCount}}</div></div>
       <div class="stat"><div class="eyebrow">运行记录</div><div class="metric">{{.Summary.RunCount}}</div></div>
       <div class="stat"><div class="eyebrow">新增差异</div><div class="metric">{{.Summary.DiffNewCount}}</div></div>
       <div class="stat"><div class="eyebrow">变更差异</div><div class="metric">{{.Summary.DiffChangedCount}}</div></div>
@@ -113,7 +113,7 @@ func RenderTargetSyncHTML(cfg config.Config, summary pim.TargetSyncSummary, flas
     <section class="content">
       <div class="card">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px;">
-          <h3 style="margin:0;">同步后待审核</h3>
+          <h3 style="margin:0;">抓取入库后待审核</h3>
           <span class="small">目标站刷新后直接回到 source 流</span>
         </div>
         <div class="actions" style="margin-top:0;">
@@ -191,7 +191,7 @@ func RenderTargetSyncHTML(cfg config.Config, summary pim.TargetSyncSummary, flas
           </div>
           <div class="list-item">
             <strong>安全边界</strong>
-            <div class="small" style="margin-top:6px;">后台总览、target-sync 和 source 审核流不会自动执行写操作；raw 自动抓取阶段仍保持只读优先。</div>
+            <div class="small" style="margin-top:6px;">后台总览、抓取入库和 source 审核流不会自动执行写操作；raw 自动抓取阶段仍保持只读优先。</div>
           </div>
         </div>
       </div>
@@ -200,7 +200,7 @@ func RenderTargetSyncHTML(cfg config.Config, summary pim.TargetSyncSummary, flas
     <section class="content">
       <div class="card">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px;">
-          <h3 style="margin:0;">按顶级分类同步</h3>
+          <h3 style="margin:0;">按顶级分类抓取入库</h3>
           <span class="small">分类、商品规格、图片都支持按顶级分类执行</span>
         </div>
         <div class="list">
@@ -218,20 +218,20 @@ func RenderTargetSyncHTML(cfg config.Config, summary pim.TargetSyncSummary, flas
                     <input type="hidden" name="scopeKey" value="{{.Key}}">
                     <button class="secondary" type="submit">登记分类任务</button>
                   </form>
-                  <form method="post" action="/_/mrtang-admin/target-sync/jobs/run" data-confirm="确认执行该顶级分类同步吗？">
+                  <form method="post" action="/_/mrtang-admin/target-sync/jobs/run" data-confirm="确认执行该顶级分类抓取入库吗？">
                     <input type="hidden" name="entityType" value="category_tree">
                     <input type="hidden" name="scopeKey" value="{{.Key}}">
-                    <button type="submit">同步分类</button>
+                    <button type="submit">抓取分类</button>
                   </form>
-                  <form method="post" action="/_/mrtang-admin/target-sync/jobs/run" data-confirm="确认执行该顶级分类下的商品与规格同步吗？">
+                  <form method="post" action="/_/mrtang-admin/target-sync/jobs/run" data-confirm="确认执行该顶级分类下的商品规格抓取入库吗？">
                     <input type="hidden" name="entityType" value="products">
                     <input type="hidden" name="scopeKey" value="{{.Key}}">
-                    <button class="secondary" type="submit">同步商品规格</button>
+                    <button class="secondary" type="submit">抓取商品规格</button>
                   </form>
-                  <form method="post" action="/_/mrtang-admin/target-sync/jobs/run" data-confirm="确认执行该顶级分类下的图片同步吗？">
+                  <form method="post" action="/_/mrtang-admin/target-sync/jobs/run" data-confirm="确认执行该顶级分类下的图片抓取入库吗？">
                     <input type="hidden" name="entityType" value="assets">
                     <input type="hidden" name="scopeKey" value="{{.Key}}">
-                    <button class="secondary" type="submit">同步图片</button>
+                    <button class="secondary" type="submit">抓取图片</button>
                   </form>
                 </div>
                 <div class="small" style="margin-top:8px;">商品 {{.ProductCount}} 个 / 图片 {{.AssetCount}} 张</div>
@@ -285,7 +285,7 @@ func RenderTargetSyncHTML(cfg config.Config, summary pim.TargetSyncSummary, flas
 
     <section class="content">
       <div class="card">
-        <h3 style="margin-top:0;">同步任务</h3>
+        <h3 style="margin-top:0;">抓取任务</h3>
         <table>
           <thead><tr><th>任务</th><th>范围</th><th>状态</th><th>最近运行</th></tr></thead>
           <tbody>
@@ -297,7 +297,7 @@ func RenderTargetSyncHTML(cfg config.Config, summary pim.TargetSyncSummary, flas
               <td class="small">{{blank .LastRunAt "-"}}{{if .LastError}}<br>{{.LastError}}{{end}}</td>
             </tr>
           {{else}}
-            <tr><td colspan="4" class="small">还没有同步任务，先登记一个分类同步任务。</td></tr>
+            <tr><td colspan="4" class="small">还没有抓取任务，先保存一个分类抓取任务。</td></tr>
           {{end}}
           </tbody>
         </table>
@@ -487,7 +487,7 @@ func RenderTargetSyncHTML(cfg config.Config, summary pim.TargetSyncSummary, flas
 		RequiresAuth: strings.TrimSpace(cfg.MiniApp.AuthorizedAccountID) != "",
 		SourceURL:    strings.TrimSpace(cfg.MiniApp.SourceURL),
 	}); err != nil {
-		return fmt.Sprintf("<pre>render target sync failed: %s</pre>", template.HTMLEscapeString(err.Error()))
+		return fmt.Sprintf("<pre>render ingest sync failed: %s</pre>", template.HTMLEscapeString(err.Error()))
 	}
-	return decorateAdminPageHTML(builder.String(), "target-sync", "目标站同步", "先完成分类树和子分类同步，再逐步并入商品、规格和图片。")
+	return decorateAdminPageHTML(builder.String(), "target-sync", "抓取入库", "先完成分类树和子分类抓取入库，再逐步并入商品、规格和图片。")
 }

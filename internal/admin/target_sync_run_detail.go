@@ -14,7 +14,7 @@ func RenderTargetSyncRunDetailHTML(run pim.TargetSyncRun, backHref string) strin
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>同步运行详情</title>
+  <title>抓取入库运行详情</title>
   <style>
     :root { --panel:rgba(8,20,32,.92); --ink:#edf7ff; --muted:#8aa3bb; --line:rgba(123,168,203,.16); --accent:#5ee6ff; --ok:#6ef2b4; --warning:#ffd166; --danger:#ff6b8a; --shadow:0 24px 60px rgba(0,0,0,.34); }
     * { box-sizing:border-box; }
@@ -42,15 +42,17 @@ func RenderTargetSyncRunDetailHTML(run pim.TargetSyncRun, backHref string) strin
   <div class="wrap">
     <section class="hero">
       <div class="card">
-        <div class="small">同步运行详情</div>
+        <div class="small">抓取入库运行详情</div>
         <h2 style="margin:8px 0 0;">{{entityLabel .EntityType}} / {{.JobName}}</h2>
         <div style="margin-top:10px;">
           <span class="badge {{statusClass .Status}}">{{statusLabel .Status}}</span>
         </div>
         <div class="small" style="margin-top:10px;">范围：{{.ScopeLabel}} / 开始：{{.StartedAt}} / 完成：{{.FinishedAt}}</div>
+        <div class="small">阶段：{{stageLabel .CurrentStage}} / 进度：{{.ProgressDone}} / {{orPositive .ProgressTotal .ScopedNodeCount}}</div>
+        {{if .CurrentItem}}<div class="small">当前项：{{.CurrentItem}}</div>{{end}}
         <div class="small">触发人：{{actorLabel .TriggeredByName .TriggeredByEmail}}</div>
         {{if .ErrorMessage}}<div class="small" style="margin-top:10px;">错误：{{.ErrorMessage}}</div>{{end}}
-        <div class="small" style="margin-top:10px;"><a href="{{.BackHref}}">返回目标同步</a></div>
+        <div class="small" style="margin-top:10px;"><a href="{{.BackHref}}">返回抓取入库</a></div>
       </div>
       <div class="card">
         <div class="small">统计</div>
@@ -63,6 +65,24 @@ func RenderTargetSyncRunDetailHTML(run pim.TargetSyncRun, backHref string) strin
       </div>
     </section>
     <section class="content">
+      <div class="card">
+        <h3 style="margin-top:0;">阶段日志</h3>
+        <table>
+          <thead><tr><th>时间</th><th>阶段</th><th>级别</th><th>内容</th></tr></thead>
+          <tbody>
+          {{range .Logs}}
+            <tr>
+              <td class="small">{{.Time}}</td>
+              <td class="small">{{stageLabel .Stage}}</td>
+              <td><span class="badge {{logClass .Level}}">{{logLabel .Level}}</span></td>
+              <td class="small">{{.Message}}</td>
+            </tr>
+          {{else}}
+            <tr><td colspan="4" class="empty">这次运行还没有阶段日志。</td></tr>
+          {{end}}
+          </tbody>
+        </table>
+      </div>
       <div class="card">
         <h3 style="margin-top:0;">变更明细</h3>
         <table>
@@ -111,6 +131,50 @@ func RenderTargetSyncRunDetailHTML(run pim.TargetSyncRun, backHref string) strin
 				return changeType
 			}
 		},
+		"stageLabel": func(stage string) string {
+			switch strings.ToLower(strings.TrimSpace(stage)) {
+			case "queued":
+				return "排队中"
+			case "loading_dataset":
+				return "加载数据集"
+			case "categories":
+				return "写入分类"
+			case "products":
+				return "写入商品规格"
+			case "assets":
+				return "写入图片资源"
+			case "completed":
+				return "已完成"
+			default:
+				return stage
+			}
+		},
+		"logClass": func(level string) string {
+			switch strings.ToLower(strings.TrimSpace(level)) {
+			case "error":
+				return "danger"
+			case "warning":
+				return "warning"
+			default:
+				return "ok"
+			}
+		},
+		"logLabel": func(level string) string {
+			switch strings.ToLower(strings.TrimSpace(level)) {
+			case "error":
+				return "错误"
+			case "warning":
+				return "警告"
+			default:
+				return "信息"
+			}
+		},
+		"orPositive": func(primary int, fallback int) int {
+			if primary > 0 {
+				return primary
+			}
+			return fallback
+		},
 		"actorLabel": func(name string, email string) string {
 			if strings.TrimSpace(name) != "" {
 				return name
@@ -137,13 +201,18 @@ func RenderTargetSyncRunDetailHTML(run pim.TargetSyncRun, backHref string) strin
 		"UpdatedCount":     run.UpdatedCount,
 		"UnchangedCount":   run.UnchangedCount,
 		"ScopedNodeCount":  run.ScopedNodeCount,
+		"ProgressTotal":    run.ProgressTotal,
+		"ProgressDone":     run.ProgressDone,
+		"CurrentStage":     run.CurrentStage,
+		"CurrentItem":      run.CurrentItem,
 		"ErrorMessage":     run.ErrorMessage,
 		"Details":          run.Details,
+		"Logs":             run.Logs,
 		"BackHref":         strings.TrimSpace(backHref),
 	}); err != nil {
-		return fmt.Sprintf("<pre>render target sync run detail failed: %s</pre>", template.HTMLEscapeString(err.Error()))
+		return fmt.Sprintf("<pre>render ingest run detail failed: %s</pre>", template.HTMLEscapeString(err.Error()))
 	}
-	return decorateAdminPageHTML(builder.String(), "target-sync", "同步运行详情", "查看单次目标站同步到底改了什么。")
+	return decorateAdminPageHTML(builder.String(), "target-sync", "抓取运行详情", "查看单次源站抓取入库到底改了什么。")
 }
 
 func targetSyncEntityLabelHTML(entityType string) string {

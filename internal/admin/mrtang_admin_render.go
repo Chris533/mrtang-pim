@@ -150,7 +150,7 @@ func renderMrtangAdminHTML(pageData mrtangAdminPageData) string {
         <h1>统一后台入口</h1>
         <p class="lead">这里不改 PocketBase 原生前端，把 PIM、采购工作台、Miniapp source coverage、目标 API backlog 和常用联调入口集中放在一个 Admin 扩展页里。</p>
         <div class="actions">
-          {{if .CanAccessSource}}<a class="link-card" href="/_/mrtang-admin/target-sync"><div class="eyebrow">目标同步</div><div class="title">目标站同步</div><div class="desc">分类树、子分类与后续商品规格同步入口。</div></a>{{end}}
+          {{if .CanAccessSource}}<a class="link-card" href="/_/mrtang-admin/target-sync"><div class="eyebrow">抓取入库</div><div class="title">源站抓取入库</div><div class="desc">从目标站抓取分类、商品规格和图片并保存到 source 集合。</div></a>{{end}}
           {{if .CanAccessProcurement}}<a class="link-card" href="/_/mrtang-admin/procurement"><div class="eyebrow">采购模块</div><div class="title">采购工作台</div><div class="desc">复核、导出 CSV、手工推进到已下单 / 已收货。</div></a>{{end}}
           {{if .CanAccessSource}}<a class="link-card" href="/_/mrtang-admin/source"><div class="eyebrow">源数据模块</div><div class="title">源数据管理模块</div><div class="desc">进入源数据模块首页，再分流到商品、图片和日志。</div></a>{{end}}
           <a class="link-card" href="/_/mrtang-admin/audit"><div class="eyebrow">统一审计</div><div class="title">审计与追踪</div><div class="desc">汇总源数据与采购动作，统一回查。</div></a>
@@ -235,9 +235,9 @@ func renderMrtangAdminHTML(pageData mrtangAdminPageData) string {
       </div>
       <div class="ops-grid">
         <a class="link-card" href="/_/mrtang-admin/target-sync">
-          <div class="eyebrow">Target Sync</div>
-          <div class="title">目标站同步</div>
-          <div class="desc">登记同步任务、执行分类树同步并查看差异。</div>
+          <div class="eyebrow">抓取入库</div>
+          <div class="title">源站抓取入库</div>
+          <div class="desc">保存抓取任务、执行分类树抓取入库并查看差异。</div>
         </a>
         <a class="link-card" href="/_/mrtang-admin/source/products?productStatus=imported">
           <div class="eyebrow">Review</div>

@@ -22,6 +22,7 @@ func main() {
 
 	cfg := config.Load()
 	applyDefaultServeHTTPAddr(cfg.App.HTTPAddr)
+	applyDefaultServeDataDir(cfg.App.DataDir)
 
 	app := pocketbase.New()
 	service := pim.NewService(cfg)
@@ -55,6 +56,21 @@ func applyDefaultServeHTTPAddr(defaultAddr string) {
 	os.Args = append(os.Args, "--http="+defaultAddr)
 }
 
+func applyDefaultServeDataDir(defaultDir string) {
+	defaultDir = strings.TrimSpace(defaultDir)
+	if defaultDir == "" || len(os.Args) < 2 || os.Args[1] != "serve" {
+		return
+	}
+
+	for _, arg := range os.Args[2:] {
+		if arg == "--dir" || strings.HasPrefix(arg, "--dir=") {
+			return
+		}
+	}
+
+	os.Args = append(os.Args, "--dir="+defaultDir)
+}
+
 func newMiniAppSource(cfg config.Config) miniappapi.Source {
 	snapshot := miniappapi.NewSnapshotSource(
 		cfg.MiniApp.HomepageSnapshotFile,
@@ -73,6 +89,9 @@ func newMiniAppSource(cfg config.Config) miniappapi.Source {
 			TemplateID:          cfg.MiniApp.RawTemplateID,
 			Referer:             cfg.MiniApp.RawReferer,
 			Timeout:             cfg.MiniApp.SourceTimeout,
+			Concurrency:         cfg.MiniApp.RawConcurrency,
+			MinInterval:         cfg.MiniApp.RawMinInterval,
+			RetryMax:            cfg.MiniApp.RawRetryMax,
 		}, snapshot)
 	default:
 		base = snapshot

@@ -8,6 +8,7 @@
 - `/_/mrtang-admin/source`
 - `/_/mrtang-admin/source/products`
 - `/_/mrtang-admin/source/assets`
+- `/_/mrtang-admin/source/asset-jobs`
 - `/_/mrtang-admin/source/logs`
 - `/_/source-review-workbench`
 - `/_/source-review-workbench/product?id=...`
@@ -24,7 +25,7 @@
 这条链路负责：
 
 - 把 miniapp source 数据导入 PocketBase
-- 承接 `target-sync` 同步后的变更结果
+- 承接 `target-sync` 抓取入库后的变更结果
 - 在 `source_products` 中审核商品
 - 在 `source_assets` 中处理图片
 - 把已审核商品桥接到 `supplier_products`
@@ -43,12 +44,13 @@
 - `source_products`
   保存目标商品、多单位价格、详情、上下文和审核状态
 - `source_assets`
-  保存商品封面、轮播、详情图和图片处理状态
+  保存商品封面、轮播、详情图、原图下载状态和图片处理状态
 
 上游同步任务集合：
 
 - `target_sync_jobs`
 - `target_sync_runs`
+- `source_asset_jobs`
 
 ## 状态术语
 
@@ -95,13 +97,26 @@
 
 `failed -> processing -> processed`
 
-## 和目标同步的关系
+### 原图下载状态
 
-`target-sync` 是 source 审核流的前置入口。
+`source_assets.original_image_status`
+
+- `pending`
+  待下载原图
+- `downloading`
+  正在下载原图
+- `downloaded`
+  原图已保存到 PocketBase
+- `failed`
+  原图下载失败，可重试
+
+## 和抓取入库的关系
+
+`target-sync` 是 source 审核流的前置抓取入库入口。
 
 推荐顺序：
 
-1. 在 `/_/mrtang-admin/target-sync` 执行分类、商品规格、图片同步
+1. 在 `/_/mrtang-admin/target-sync` 执行分类、商品规格、图片抓取入库
 2. 同步结果落入：
    - `source_categories`
    - `source_products`
@@ -110,7 +125,7 @@
 
 ### 商品与规格变更回写
 
-当目标同步发现这些字段变化时，商品会自动回到 `imported`：
+当抓取入库发现这些字段变化时，商品会自动回到 `imported`：
 
 - 标题
 - 分类
@@ -125,7 +140,7 @@
 
 ### 图片变更回写
 
-当目标同步发现这些字段变化时，图片会自动回到 `pending`：
+当抓取入库发现这些字段变化时，图片会自动回到 `pending`：
 
 - 图片地址
 - 图片角色
@@ -135,13 +150,14 @@
 
 ## 推荐操作流程
 
-1. 在 `/_/mrtang-admin/target-sync` 执行目标同步
+1. 在 `/_/mrtang-admin/target-sync` 执行抓取入库
 2. 在 `/_/mrtang-admin/source/products` 先筛 `imported` 商品
 3. 检查标题、分类、多单位价格、缩略图
 4. 审核通过后执行 `Approve`
 5. 对待处理或失败图片优先在 `/_/mrtang-admin/source/assets` 执行 `Process` 或 `批量重处理失败图片`
-6. 对确认可上线的商品执行 `Promote` 或 `Promote & Sync`
-7. 回到列表确认 bridge / sync 状态
+6. 如果需要先把原图固定保存到本地，再在 `/_/mrtang-admin/source/assets` 执行 `下载原图` 或 `批量下载待下载原图`
+7. 对确认可上线的商品执行 `Promote` 或 `Promote & Sync`
+8. 回到列表确认 bridge / sync 状态
 
 ## 列表页能力
 
@@ -163,13 +179,29 @@
 
 - 图片筛选
   - `assetStatus`
+  - `originalStatus`
   - 文本检索
 - 批量操作
+  - `批量下载待下载原图`
   - `Process Selected`
   - `批量处理待处理图片`
   - `批量重处理失败图片`
 - 分页
 - 图片失败原因聚合
+- 原图批量下载进度与最近日志
+- 图片批量处理进度与最近日志
+
+`/_/mrtang-admin/source/asset-jobs` 当前支持：
+
+- 图片任务筛选
+  - `jobType`
+  - `status`
+  - 文本检索
+- 分页
+- 任务详情
+- `重新执行`
+- 跳转到原图失败 / 处理失败图片
+- 从活动任务直接跳详情
 
 `/_/mrtang-admin/source/logs` 当前支持：
 
@@ -210,14 +242,32 @@
 
 可查看：
 
-- 原图 / 处理图对比
+- 源地址 / 原图文件 / 处理图对比
+- 原图下载状态
 - 当前处理状态
 - 最近失败原因
 - source payload
 
 可执行：
 
+- `下载原图`
 - `Process / Reprocess`
+
+### 图片任务详情
+
+`/_/mrtang-admin/source/asset-jobs/detail?id=...`
+
+可查看：
+
+- 任务类型
+- 当前状态
+- 已处理 / 总数 / 失败数
+- 当前项
+- 最近任务日志
+
+可执行：
+
+- `重新执行`
 
 ## 和正式同步链的关系
 
@@ -235,7 +285,7 @@
 每次改这条链路，至少检查这几件事：
 
 1. `/_/mrtang-admin` 能导入 source 数据
-2. `/_/mrtang-admin/source`、`products`、`assets`、`logs` 能正常打开
+2. `/_/mrtang-admin/source`、`products`、`assets`、`asset-jobs`、`logs` 能正常打开
 3. products 页批量 `Approve / Promote / Retry Sync` 不报错
 4. assets 页批量 `Process / Reprocess` 不报错
 5. 商品详情和图片详情页可打开

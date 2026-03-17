@@ -28,6 +28,7 @@ const (
 	CollectionProcurementOrders     = "procurement_orders"
 	CollectionProcurementActionLogs = "procurement_action_logs"
 	CollectionMiniappActionLogs     = "miniapp_action_logs"
+	CollectionSourceAssetJobs       = "source_asset_jobs"
 
 	StatusPending      = "pending"
 	StatusAIProcessing = "ai_processing"
@@ -41,6 +42,11 @@ const (
 	ImageStatusProcessing = "processing"
 	ImageStatusProcessed  = "processed"
 	ImageStatusFailed     = "failed"
+
+	OriginalImageStatusPending     = "pending"
+	OriginalImageStatusDownloading = "downloading"
+	OriginalImageStatusDownloaded  = "downloaded"
+	OriginalImageStatusFailed      = "failed"
 
 	ProcurementStatusDraft    = "draft"
 	ProcurementStatusReviewed = "reviewed"
@@ -213,12 +219,54 @@ type procurementCatalogItem struct {
 	NeedColdChain      bool
 }
 
+type SourceAssetDownloadProgressLog struct {
+	Time    string `json:"time"`
+	Message string `json:"message"`
+}
+
+type SourceAssetDownloadProgress struct {
+	ID          string                           `json:"id"`
+	Status      string                           `json:"status"`
+	Total       int                              `json:"total"`
+	Processed   int                              `json:"processed"`
+	Failed      int                              `json:"failed"`
+	CurrentItem string                           `json:"currentItem"`
+	StartedAt   string                           `json:"startedAt"`
+	FinishedAt  string                           `json:"finishedAt"`
+	Error       string                           `json:"error"`
+	Logs        []SourceAssetDownloadProgressLog `json:"logs"`
+}
+
+type SourceAssetProcessProgressLog struct {
+	Time    string `json:"time"`
+	Message string `json:"message"`
+}
+
+type SourceAssetProcessProgress struct {
+	ID          string                          `json:"id"`
+	Status      string                          `json:"status"`
+	Mode        string                          `json:"mode"`
+	Total       int                             `json:"total"`
+	Processed   int                             `json:"processed"`
+	Failed      int                             `json:"failed"`
+	CurrentItem string                          `json:"currentItem"`
+	StartedAt   string                          `json:"startedAt"`
+	FinishedAt  string                          `json:"finishedAt"`
+	Error       string                          `json:"error"`
+	Logs        []SourceAssetProcessProgressLog `json:"logs"`
+}
+
 type Service struct {
-	cfg       config.Config
-	connector supplier.Connector
-	processor image.Processor
-	vendure   *vendure.Client
-	lock      sync.Mutex
+	cfg               config.Config
+	connector         supplier.Connector
+	processor         image.Processor
+	vendure           *vendure.Client
+	lock              sync.Mutex
+	targetSyncMu      sync.Mutex
+	activeTargetSyncs map[string]string
+	sourceAssetMu     sync.Mutex
+	activeAssetLoads  map[string]*SourceAssetDownloadProgress
+	activeAssetProcs  map[string]*SourceAssetProcessProgress
 }
 
 func NewService(cfg config.Config) *Service {
@@ -231,10 +279,13 @@ func NewService(cfg config.Config) *Service {
 	}
 
 	return &Service{
-		cfg:       cfg,
-		connector: connector,
-		processor: image.NewProcessor(cfg.Image),
-		vendure:   vendure.NewClient(cfg.Vendure),
+		cfg:               cfg,
+		connector:         connector,
+		processor:         image.NewProcessor(cfg.Image),
+		vendure:           vendure.NewClient(cfg.Vendure),
+		activeTargetSyncs: make(map[string]string),
+		activeAssetLoads:  make(map[string]*SourceAssetDownloadProgress),
+		activeAssetProcs:  make(map[string]*SourceAssetProcessProgress),
 	}
 }
 

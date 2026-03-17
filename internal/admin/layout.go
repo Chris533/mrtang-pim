@@ -202,7 +202,7 @@ func injectAdminShellStyle(raw string) string {
 func renderAdminShellOpen(section string, title string, subtitle string) string {
 	items := []adminNavItem{
 		{Label: "总览", Href: "/_/mrtang-admin", Active: section == "dashboard"},
-		{Label: "目标同步", Href: "/_/mrtang-admin/target-sync", Active: section == "target-sync"},
+		{Label: "抓取入库", Href: "/_/mrtang-admin/target-sync", Active: section == "target-sync"},
 		{Label: "源数据", Href: "/_/mrtang-admin/source", Active: section == "source"},
 		{Label: "采购", Href: "/_/mrtang-admin/procurement", Active: section == "procurement"},
 		{Label: "审计", Href: "/_/mrtang-admin/audit", Active: section == "audit"},
@@ -221,8 +221,8 @@ func renderAdminShellOpen(section string, title string, subtitle string) string 
 			desc = "总览、待办、异常与模块入口"
 		case "源数据":
 			desc = "商品审核、图片处理、同步重试"
-		case "目标同步":
-			desc = "分类树、子分类和后续商品同步"
+		case "抓取入库":
+			desc = "从源站抓取分类、商品和图片并写入 source 集合"
 		case "采购":
 			desc = "采购单、导出和状态流转"
 		case "审计":
@@ -235,9 +235,9 @@ func renderAdminShellOpen(section string, title string, subtitle string) string 
 
 	breadcrumbs := renderAdminBreadcrumbs(section, title)
 
-	return `<div class="admin-shell"><aside class="admin-sidebar"><div class="admin-brand"><div class="kicker">Mrtang Control</div><div class="name">后台</div><div class="sub">统一后台骨架。总览负责入口与异常，源数据与采购负责实际工作台。</div></div><nav class="admin-nav">` +
+	return `<div class="admin-shell"><aside class="admin-sidebar"><div class="admin-brand"><div class="kicker">Mrtang Control</div><div class="name">后台</div><div class="sub">统一后台骨架。总览负责入口与异常，抓取入库负责源站入库，源数据与采购负责后续处理。</div></div><nav class="admin-nav">` +
 		nav.String() +
-		`</nav></aside><div class="admin-main"><header class="admin-topbar"><div>` + breadcrumbs + `<h1>` + template.HTMLEscapeString(title) + `</h1><p>` + template.HTMLEscapeString(subtitle) + `</p></div><div class="top-actions"><a href="/_/mrtang-admin">总览</a><a href="/_/mrtang-admin/target-sync">目标同步</a><a href="/_/mrtang-admin/source">源数据首页</a><a href="/_/mrtang-admin/source/products">商品</a><a href="/_/mrtang-admin/source/assets">图片</a><a href="/_/mrtang-admin/source/logs">日志</a><a href="/_/mrtang-admin/procurement">采购</a><a href="/_/mrtang-admin/audit">审计</a></div></header><div class="admin-toast-stack" aria-live="polite"></div>`
+		`</nav></aside><div class="admin-main"><header class="admin-topbar"><div>` + breadcrumbs + `<h1>` + template.HTMLEscapeString(title) + `</h1><p>` + template.HTMLEscapeString(subtitle) + `</p></div><div class="top-actions"><a href="/_/mrtang-admin">总览</a><a href="/_/mrtang-admin/target-sync">抓取入库</a><a href="/_/mrtang-admin/source">源数据首页</a><a href="/_/mrtang-admin/source/categories">分类</a><a href="/_/mrtang-admin/source/products">商品</a><a href="/_/mrtang-admin/source/assets">图片</a><a href="/_/mrtang-admin/source/logs">日志</a><a href="/_/mrtang-admin/procurement">采购</a><a href="/_/mrtang-admin/audit">审计</a></div></header><div class="admin-toast-stack" aria-live="polite"></div>`
 }
 
 func renderAdminShellClose() string {
@@ -248,9 +248,12 @@ func renderAdminBreadcrumbs(section string, title string) string {
 	items := []adminNavItem{{Label: "后台", Href: "/_/mrtang-admin"}}
 	switch section {
 	case "target-sync":
-		items = append(items, adminNavItem{Label: "目标同步", Href: "/_/mrtang-admin/target-sync"})
+		items = append(items, adminNavItem{Label: "抓取入库", Href: "/_/mrtang-admin/target-sync"})
 	case "source":
 		items = append(items, adminNavItem{Label: "源数据", Href: "/_/mrtang-admin/source"})
+		if title == "源数据分类" {
+			items = append(items, adminNavItem{Label: "分类", Href: "/_/mrtang-admin/source/categories"})
+		}
 		if title == "源数据商品" || title == "源数据商品详情" {
 			items = append(items, adminNavItem{Label: "商品", Href: "/_/mrtang-admin/source/products"})
 		}
@@ -266,7 +269,7 @@ func renderAdminBreadcrumbs(section string, title string) string {
 		items = append(items, adminNavItem{Label: "审计", Href: "/_/mrtang-admin/audit"})
 	}
 	if title != "" && title != "统一后台入口" && title != "源数据首页" && title != "采购工作台" && title != "统一审计" &&
-		title != "源数据商品" && title != "源数据图片" && title != "源数据操作日志" {
+		title != "源数据分类" && title != "源数据商品" && title != "源数据图片" && title != "源数据操作日志" {
 		items = append(items, adminNavItem{Label: title})
 	}
 

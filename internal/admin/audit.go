@@ -82,6 +82,7 @@ func RenderAuditPageHTML(data AuditPageData, flashMessage string, flashError str
           <select name="domain">
             <option value="">全部</option>
             <option value="源数据" {{if eq .Data.Filter.Domain "源数据"}}selected{{end}}>源数据</option>
+            <option value="图片任务" {{if eq .Data.Filter.Domain "图片任务"}}selected{{end}}>图片任务</option>
             <option value="采购" {{if eq .Data.Filter.Domain "采购"}}selected{{end}}>采购</option>
           </select>
         </label>

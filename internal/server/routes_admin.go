@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"slices"
@@ -13,7 +14,9 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 
 	"mrtang-pim/internal/admin"
+	"mrtang-pim/internal/adminapp"
 	"mrtang-pim/internal/config"
+	miniappmodel "mrtang-pim/internal/miniapp/model"
 	miniappservice "mrtang-pim/internal/miniapp/service"
 	"mrtang-pim/internal/pim"
 )
@@ -30,14 +33,815 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	registerAdminSlashRedirect(se, "/_/mrtang-admin/audit/", "/_/mrtang-admin/audit")
 	registerAdminSlashRedirect(se, "/_/mrtang-admin/target-sync/", "/_/mrtang-admin/target-sync")
 	registerAdminSlashRedirect(se, "/_/mrtang-admin/source/", "/_/mrtang-admin/source")
+	registerAdminSlashRedirect(se, "/_/mrtang-admin/source/categories/", "/_/mrtang-admin/source/categories")
 	registerAdminSlashRedirect(se, "/_/mrtang-admin/source/products/", "/_/mrtang-admin/source/products")
 	registerAdminSlashRedirect(se, "/_/mrtang-admin/source/assets/", "/_/mrtang-admin/source/assets")
+	registerAdminSlashRedirect(se, "/_/mrtang-admin/source/asset-jobs/", "/_/mrtang-admin/source/asset-jobs")
 	registerAdminSlashRedirect(se, "/_/mrtang-admin/source/logs/", "/_/mrtang-admin/source/logs")
 	registerAdminSlashRedirect(se, "/_/mrtang-admin/procurement/", "/_/mrtang-admin/procurement")
+
+	se.Router.GET("/_/mrtang-admin/app.css", func(re *core.RequestEvent) error {
+		return serveAdminAsset(re, "static/app.css", "text/css; charset=utf-8")
+	})
+
+	se.Router.GET("/_/mrtang-admin/app.js", func(re *core.RequestEvent) error {
+		return serveAdminAsset(re, "static/app.js", "application/javascript; charset=utf-8")
+	})
+
+	se.Router.GET("/_/mrtang-admin/vendor/htm-preact-standalone.mjs", func(re *core.RequestEvent) error {
+		return serveAdminAsset(re, "static/vendor/htm-preact-standalone.mjs", "application/javascript; charset=utf-8")
+	})
+
+	se.Router.GET("/api/pim/admin/dashboard", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "dashboard") {
+			return re.ForbiddenError("当前账号没有后台总览权限。", nil)
+		}
+		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 4*time.Second)
+		defer cancel()
+		return re.JSON(http.StatusOK, admin.BuildDashboardAPIData(
+			loadCtx,
+			re.App,
+			cfg,
+			service,
+			miniappService,
+			authorizedAdminModule(re, cfg, "source"),
+			authorizedAdminModule(re, cfg, "procurement"),
+			strings.TrimSpace(re.Request.URL.Query().Get("message")),
+			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		))
+	})
+
+	se.Router.GET("/api/pim/admin/target-sync", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有抓取入库权限。", nil)
+		}
+		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 4*time.Second)
+		defer cancel()
+
+		dataset, err := miniappService.Dataset(loadCtx)
+		if err != nil {
+			return re.JSON(http.StatusOK, admin.BuildTargetSyncAPIData(
+				cfg,
+				pim.TargetSyncSummary{SourceMode: strings.TrimSpace(cfg.MiniApp.SourceMode)},
+				strings.TrimSpace(re.Request.URL.Query().Get("message")),
+				"加载 miniapp dataset 失败："+err.Error(),
+			))
+		}
+		summary, err := service.TargetSyncSummary(loadCtx, re.App, *dataset)
+		if err != nil {
+			return re.JSON(http.StatusOK, admin.BuildTargetSyncAPIData(
+				cfg,
+				pim.TargetSyncSummary{SourceMode: strings.TrimSpace(dataset.Meta.Source)},
+				strings.TrimSpace(re.Request.URL.Query().Get("message")),
+				"生成抓取入库摘要失败："+err.Error(),
+			))
+		}
+		return re.JSON(http.StatusOK, admin.BuildTargetSyncAPIData(
+			cfg,
+			summary,
+			strings.TrimSpace(re.Request.URL.Query().Get("message")),
+			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		))
+	})
+
+	se.Router.POST("/api/pim/admin/source/import", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+
+		scope := strings.TrimSpace(re.Request.FormValue("scope"))
+		dataset, err := miniappService.Dataset(re.Request.Context())
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "加载 miniapp dataset 失败：" + err.Error(),
+			})
+		}
+
+		summary, err := service.ImportMiniappSource(re.Request.Context(), re.App, *dataset, scope)
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "导入源数据失败：" + err.Error(),
+			})
+		}
+
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": fmt.Sprintf("已导入源数据：分类 %d 新增/%d 更新，商品 %d 新增/%d 更新，图片 %d 新增/%d 更新", summary.CategoriesCreated, summary.CategoriesUpdated, summary.ProductsCreated, summary.ProductsUpdated, summary.AssetsCreated, summary.AssetsUpdated),
+			"summary": summary,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/target-sync/jobs/ensure", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有抓取入库权限。", nil)
+		}
+
+		job, err := service.EnsureTargetSyncJobSpec(
+			re.App,
+			cfg.MiniApp.SourceMode,
+			strings.TrimSpace(re.Request.FormValue("entityType")),
+			strings.TrimSpace(re.Request.FormValue("scopeKey")),
+			strings.TrimSpace(re.Request.FormValue("scopeLabel")),
+		)
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "保存抓取入库任务失败：" + err.Error(),
+			})
+		}
+
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": "已保存抓取入库任务。",
+			"job":     job,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/target-sync/jobs/run", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有抓取入库权限。", nil)
+		}
+
+		run, err := service.StartTargetSyncAsync(
+			re.App,
+			func(ctx context.Context) (*miniappmodel.Dataset, error) {
+				return miniappService.Dataset(ctx)
+			},
+			strings.TrimSpace(re.Request.FormValue("entityType")),
+			strings.TrimSpace(re.Request.FormValue("scopeKey")),
+			strings.TrimSpace(re.Request.FormValue("scopeLabel")),
+			targetSyncActor(re),
+		)
+		if err != nil {
+			statusCode := http.StatusInternalServerError
+			if strings.Contains(err.Error(), "已在执行中") {
+				statusCode = http.StatusConflict
+			}
+			return re.JSON(statusCode, map[string]any{
+				"ok":      false,
+				"message": "启动抓取入库失败：" + err.Error(),
+				"run":     run,
+			})
+		}
+
+		return re.JSON(http.StatusAccepted, map[string]any{
+			"ok":      true,
+			"message": "抓取入库任务已启动。",
+			"run":     run,
+		})
+	})
+
+	se.Router.GET("/api/pim/admin/target-sync/run", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有抓取入库权限。", nil)
+		}
+		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
+		if id == "" {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "缺少抓取运行记录 ID。",
+			})
+		}
+		run, err := service.GetTargetSyncRun(re.App, id)
+		if err != nil {
+			return re.JSON(http.StatusNotFound, map[string]any{
+				"ok":      false,
+				"message": "抓取运行记录不存在。",
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":  true,
+			"run": run,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/source/products/status", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		id := strings.TrimSpace(re.Request.FormValue("id"))
+		status := strings.TrimSpace(re.Request.FormValue("status"))
+		if id == "" || status == "" {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "缺少商品记录 ID 或审核状态。",
+			})
+		}
+		if err := service.UpdateSourceProductReviewStatusWithAudit(re.Request.Context(), re.App, id, status, sourceActionNote(re), sourceActionActor(re)); err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "更新商品审核状态失败：" + err.Error(),
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": "商品审核状态已更新。",
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/source/products/promote", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		id := strings.TrimSpace(re.Request.FormValue("id"))
+		if id == "" {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "缺少商品记录 ID。",
+			})
+		}
+		if err := service.PromoteSourceProductWithAudit(re.Request.Context(), re.App, id, sourceActionActor(re), sourceActionNote(re)); err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "桥接商品失败：" + err.Error(),
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": "商品已桥接到同步链。",
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/source/products/promote-sync", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		id := strings.TrimSpace(re.Request.FormValue("id"))
+		if id == "" {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "缺少商品记录 ID。",
+			})
+		}
+		if err := service.PromoteAndSyncSourceProductWithAudit(re.Request.Context(), re.App, id, sourceActionActor(re), sourceActionNote(re)); err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "桥接并同步商品失败：" + err.Error(),
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": "商品已桥接并同步到后端。",
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/source/products/retry-sync", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		id := strings.TrimSpace(re.Request.FormValue("id"))
+		if id == "" {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "缺少商品记录 ID。",
+			})
+		}
+		if err := service.RetrySourceProductSyncWithAudit(re.Request.Context(), re.App, id, sourceActionActor(re), sourceActionNote(re)); err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "重试商品同步失败：" + err.Error(),
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": "已触发商品同步重试。",
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/source/assets/process", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		assetID := strings.TrimSpace(re.Request.FormValue("id"))
+		if assetID == "" {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "缺少图片记录 ID。",
+			})
+		}
+		if err := service.ProcessSourceAssetWithAudit(re.Request.Context(), re.App, assetID, sourceActionActor(re), sourceActionNote(re)); err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "处理图片失败：" + err.Error(),
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": "图片已进入处理流程。",
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/source/assets/download", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		assetID := strings.TrimSpace(re.Request.FormValue("id"))
+		if assetID == "" {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "缺少图片记录 ID。",
+			})
+		}
+		if err := service.DownloadSourceAssetOriginalWithAudit(re.Request.Context(), re.App, assetID, sourceActionActor(re), sourceActionNote(re)); err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "下载原图失败：" + err.Error(),
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": "原图已下载到本地资源。",
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/source/assets/download-pending", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		progress, err := service.StartSourceAssetOriginalDownloadAsync(re.App, 50, sourceActionActor(re), sourceActionNote(re))
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "批量下载原图失败：" + err.Error(),
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":       true,
+			"message":  "原图批量下载任务已启动。",
+			"progress": progress,
+		})
+	})
+
+	se.Router.GET("/api/pim/admin/source/assets/download-progress", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
+		if id == "" {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "缺少原图下载任务 ID。",
+			})
+		}
+		progress, ok := service.SourceAssetOriginalDownloadProgress(re.App, id)
+		if !ok {
+			return re.JSON(http.StatusNotFound, map[string]any{
+				"ok":      false,
+				"message": "原图下载任务不存在。",
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":       true,
+			"progress": progress,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/source/assets/process-pending", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		progress, err := service.StartSourceAssetProcessAsync(re.App, 20, false, sourceActionActor(re), sourceActionNote(re))
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "批量处理待处理图片失败：" + err.Error(),
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":       true,
+			"message":  "图片批量处理任务已启动。",
+			"progress": progress,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/source/assets/reprocess-failed", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		progress, err := service.StartSourceAssetProcessAsync(re.App, 50, true, sourceActionActor(re), sourceActionNote(re))
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "批量重处理失败图片失败：" + err.Error(),
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":       true,
+			"message":  "失败图片重处理任务已启动。",
+			"progress": progress,
+		})
+	})
+
+	se.Router.GET("/api/pim/admin/source/assets/process-progress", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
+		if id == "" {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "缺少图片处理任务 ID。",
+			})
+		}
+		progress, ok := service.SourceAssetProcessProgressByID(re.App, id)
+		if !ok {
+			return re.JSON(http.StatusNotFound, map[string]any{
+				"ok":      false,
+				"message": "图片处理任务不存在。",
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":       true,
+			"progress": progress,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/source/asset-jobs/retry", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		id := strings.TrimSpace(re.Request.FormValue("id"))
+		if id == "" {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "缺少图片任务 ID。",
+			})
+		}
+		job, err := service.RetrySourceAssetJob(re.App, id, sourceActionActor(re), sourceActionNote(re))
+		if err != nil {
+			statusCode := http.StatusInternalServerError
+			if strings.Contains(err.Error(), "执行中") {
+				statusCode = http.StatusConflict
+			}
+			return re.JSON(statusCode, map[string]any{
+				"ok":      false,
+				"message": "重新执行图片任务失败：" + err.Error(),
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": "图片任务已重新启动。",
+			"job":     job,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/procurement/order/review", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "procurement") {
+			return re.ForbiddenError("当前账号没有采购模块权限。", nil)
+		}
+		id := strings.TrimSpace(re.Request.FormValue("id"))
+		note := strings.TrimSpace(re.Request.FormValue("note"))
+		if id == "" {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "缺少采购单 ID。",
+			})
+		}
+		order, err := service.ReviewProcurementOrderWithAudit(re.Request.Context(), re.App, id, note, procurementActionActor(re))
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "复核采购单失败：" + err.Error(),
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": "采购单已复核。",
+			"order":   order,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/procurement/order/export", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "procurement") {
+			return re.ForbiddenError("当前账号没有采购模块权限。", nil)
+		}
+		id := strings.TrimSpace(re.Request.FormValue("id"))
+		note := strings.TrimSpace(re.Request.FormValue("note"))
+		if id == "" {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "缺少采购单 ID。",
+			})
+		}
+		order, err := service.ExportProcurementOrderWithAudit(re.Request.Context(), re.App, id, procurementActionActor(re), note)
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "导出采购单失败：" + err.Error(),
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": "采购单已导出。",
+			"order":   order,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/procurement/order/status", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "procurement") {
+			return re.ForbiddenError("当前账号没有采购模块权限。", nil)
+		}
+		id := strings.TrimSpace(re.Request.FormValue("id"))
+		status := strings.TrimSpace(re.Request.FormValue("status"))
+		note := strings.TrimSpace(re.Request.FormValue("note"))
+		if id == "" || status == "" {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "缺少采购单 ID 或状态。",
+			})
+		}
+		order, err := service.UpdateProcurementOrderStatusWithAudit(re.Request.Context(), re.App, id, status, note, procurementActionActor(re))
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "更新采购单状态失败：" + err.Error(),
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": "采购单状态已更新。",
+			"order":   order,
+		})
+	})
+
+	se.Router.GET("/api/pim/admin/source", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 4*time.Second)
+		defer cancel()
+		summary, err := service.SourceReviewWorkbench(loadCtx, re.App, 6, 6, pim.SourceReviewFilter{PageSize: 6})
+		if err != nil {
+			return re.JSON(http.StatusOK, admin.BuildSourceModuleAPIData(
+				pim.SourceReviewWorkbenchSummary{},
+				strings.TrimSpace(re.Request.URL.Query().Get("message")),
+				"加载源数据模块失败："+err.Error(),
+			))
+		}
+		return re.JSON(http.StatusOK, admin.BuildSourceModuleAPIData(
+			summary,
+			strings.TrimSpace(re.Request.URL.Query().Get("message")),
+			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		))
+	})
+
+	se.Router.GET("/api/pim/admin/source/categories", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 4*time.Second)
+		defer cancel()
+		filter := pim.SourceCategoryFilter{
+			Query:    strings.TrimSpace(re.Request.URL.Query().Get("q")),
+			Page:     readQueryInt(re, "page", 1),
+			PageSize: readQueryInt(re, "pageSize", 24),
+		}
+		summary, err := service.SourceCategories(loadCtx, re.App, filter)
+		if err != nil {
+			return re.JSON(http.StatusOK, admin.BuildSourceCategoriesAPIData(
+				pim.SourceCategoriesSummary{},
+				filter,
+				strings.TrimSpace(re.Request.URL.Query().Get("message")),
+				"加载源数据分类失败："+err.Error(),
+			))
+		}
+		return re.JSON(http.StatusOK, admin.BuildSourceCategoriesAPIData(
+			summary,
+			filter,
+			strings.TrimSpace(re.Request.URL.Query().Get("message")),
+			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		))
+	})
+
+	se.Router.GET("/api/pim/admin/source/products", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 4*time.Second)
+		defer cancel()
+		filter := readSourceReviewFilter(re)
+		filter.AssetStatus = ""
+		filter.AssetPage = 1
+		summary, err := service.SourceReviewWorkbench(loadCtx, re.App, 24, 1, filter)
+		if err != nil {
+			return re.JSON(http.StatusOK, admin.BuildSourceProductsAPIData(
+				pim.SourceReviewWorkbenchSummary{},
+				filter,
+				strings.TrimSpace(re.Request.URL.Query().Get("message")),
+				"加载源数据商品失败："+err.Error(),
+			))
+		}
+		return re.JSON(http.StatusOK, admin.BuildSourceProductsAPIData(
+			summary,
+			filter,
+			strings.TrimSpace(re.Request.URL.Query().Get("message")),
+			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		))
+	})
+
+	se.Router.GET("/api/pim/admin/source/products/detail", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 4*time.Second)
+		defer cancel()
+		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
+		if id == "" {
+			return re.BadRequestError("missing source product id", nil)
+		}
+		detail, err := service.SourceProductDetail(loadCtx, re.App, id)
+		if err != nil {
+			return re.JSON(http.StatusOK, admin.BuildSourceProductDetailAPIData(
+				pim.SourceProductDetail{},
+				strings.TrimSpace(re.Request.URL.Query().Get("returnTo")),
+				strings.TrimSpace(re.Request.URL.Query().Get("message")),
+				"加载商品详情失败："+err.Error(),
+			))
+		}
+		return re.JSON(http.StatusOK, admin.BuildSourceProductDetailAPIData(
+			detail,
+			strings.TrimSpace(re.Request.URL.Query().Get("returnTo")),
+			strings.TrimSpace(re.Request.URL.Query().Get("message")),
+			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		))
+	})
+
+	se.Router.GET("/api/pim/admin/source/assets", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 4*time.Second)
+		defer cancel()
+		filter := readSourceReviewFilter(re)
+		filter.ProductStatus = ""
+		filter.SyncState = ""
+		filter.ProductPage = 1
+		summary, err := service.SourceReviewWorkbench(loadCtx, re.App, 1, 24, filter)
+		if err != nil {
+			return re.JSON(http.StatusOK, admin.BuildSourceAssetsAPIData(
+				pim.SourceReviewWorkbenchSummary{},
+				filter,
+				strings.TrimSpace(re.Request.URL.Query().Get("message")),
+				"加载源数据图片失败："+err.Error(),
+			))
+		}
+		return re.JSON(http.StatusOK, admin.BuildSourceAssetsAPIData(
+			summary,
+			filter,
+			strings.TrimSpace(re.Request.URL.Query().Get("message")),
+			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		))
+	})
+
+	se.Router.GET("/api/pim/admin/source/assets/detail", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 4*time.Second)
+		defer cancel()
+		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
+		if id == "" {
+			return re.BadRequestError("missing source asset id", nil)
+		}
+		detail, err := service.SourceAssetDetail(loadCtx, re.App, id)
+		if err != nil {
+			return re.JSON(http.StatusOK, admin.BuildSourceAssetDetailAPIData(
+				pim.SourceAssetDetail{},
+				strings.TrimSpace(re.Request.URL.Query().Get("returnTo")),
+				strings.TrimSpace(re.Request.URL.Query().Get("message")),
+				"加载图片详情失败："+err.Error(),
+			))
+		}
+		return re.JSON(http.StatusOK, admin.BuildSourceAssetDetailAPIData(
+			detail,
+			strings.TrimSpace(re.Request.URL.Query().Get("returnTo")),
+			strings.TrimSpace(re.Request.URL.Query().Get("message")),
+			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		))
+	})
+
+	se.Router.GET("/api/pim/admin/source/asset-jobs", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 4*time.Second)
+		defer cancel()
+		filter := readSourceAssetJobFilter(re)
+		summary, err := service.SourceAssetJobs(loadCtx, re.App, filter)
+		if err != nil {
+			return re.JSON(http.StatusOK, admin.BuildSourceAssetJobsAPIData(
+				pim.SourceAssetJobsSummary{},
+				filter,
+				strings.TrimSpace(re.Request.URL.Query().Get("message")),
+				"加载图片任务失败："+err.Error(),
+			))
+		}
+		return re.JSON(http.StatusOK, admin.BuildSourceAssetJobsAPIData(
+			summary,
+			filter,
+			strings.TrimSpace(re.Request.URL.Query().Get("message")),
+			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		))
+	})
+
+	se.Router.GET("/api/pim/admin/source/asset-jobs/detail", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 4*time.Second)
+		defer cancel()
+		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
+		if id == "" {
+			return re.BadRequestError("missing source asset job id", nil)
+		}
+		detail, err := service.SourceAssetJobDetail(loadCtx, re.App, id)
+		if err != nil {
+			return re.JSON(http.StatusOK, admin.BuildSourceAssetJobDetailAPIData(
+				pim.SourceAssetJobDetail{},
+				strings.TrimSpace(re.Request.URL.Query().Get("returnTo")),
+				strings.TrimSpace(re.Request.URL.Query().Get("message")),
+				"加载图片任务详情失败："+err.Error(),
+			))
+		}
+		return re.JSON(http.StatusOK, admin.BuildSourceAssetJobDetailAPIData(
+			detail,
+			strings.TrimSpace(re.Request.URL.Query().Get("returnTo")),
+			strings.TrimSpace(re.Request.URL.Query().Get("message")),
+			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		))
+	})
+
+	se.Router.GET("/api/pim/admin/procurement", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "procurement") {
+			return re.ForbiddenError("当前账号没有采购模块权限。", nil)
+		}
+		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 4*time.Second)
+		defer cancel()
+		summary, err := service.ProcurementWorkbenchSummaryFiltered(
+			loadCtx,
+			re.App,
+			readQueryInt(re, "pageSize", 20),
+			strings.TrimSpace(re.Request.URL.Query().Get("status")),
+			strings.TrimSpace(re.Request.URL.Query().Get("risk")),
+			strings.TrimSpace(re.Request.URL.Query().Get("q")),
+			readQueryInt(re, "page", 1),
+		)
+		if err != nil {
+			return re.JSON(http.StatusOK, admin.BuildProcurementAPIData(
+				pim.ProcurementWorkbenchSummary{},
+				strings.TrimSpace(re.Request.URL.Query().Get("message")),
+				"加载采购工作台失败："+err.Error(),
+			))
+		}
+		return re.JSON(http.StatusOK, admin.BuildProcurementAPIData(
+			summary,
+			strings.TrimSpace(re.Request.URL.Query().Get("message")),
+			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		))
+	})
+
+	se.Router.GET("/api/pim/admin/procurement/detail", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "procurement") {
+			return re.ForbiddenError("当前账号没有采购模块权限。", nil)
+		}
+		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 4*time.Second)
+		defer cancel()
+		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
+		if id == "" {
+			return re.BadRequestError("missing procurement order id", nil)
+		}
+		order, err := service.GetProcurementOrder(loadCtx, re.App, id)
+		if err != nil {
+			return re.JSON(http.StatusOK, admin.BuildProcurementDetailAPIData(
+				pim.ProcurementOrder{},
+				strings.TrimSpace(re.Request.URL.Query().Get("returnTo")),
+				strings.TrimSpace(re.Request.URL.Query().Get("message")),
+				"加载采购详情失败："+err.Error(),
+			))
+		}
+		return re.JSON(http.StatusOK, admin.BuildProcurementDetailAPIData(
+			order,
+			strings.TrimSpace(re.Request.URL.Query().Get("returnTo")),
+			strings.TrimSpace(re.Request.URL.Query().Get("message")),
+			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		))
+	})
 
 	se.Router.GET("/_/mrtang-admin", func(re *core.RequestEvent) error {
 		if !authorizedAdminModule(re, cfg, "dashboard") {
 			return re.ForbiddenError("当前账号没有后台总览权限。", nil)
+		}
+
+		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
+			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+				"总览",
+				"后台首页先秒开壳子，再异步拉 coverage、source capture 和最近动作。",
+				"/_/mrtang-admin",
+				authorizedAdminModule(re, cfg, "source"),
+				authorizedAdminModule(re, cfg, "procurement"),
+			))
 		}
 
 		return re.HTML(http.StatusOK, admin.RenderMrtangAdminHTML(
@@ -77,8 +881,19 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 
 	se.Router.GET("/_/mrtang-admin/target-sync", func(re *core.RequestEvent) error {
 		if !authorizedAdminModule(re, cfg, "source") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无目标站同步权限", "当前账号没有目标站同步权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
+			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无抓取入库权限", "当前账号没有抓取入库权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
 		}
+
+		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
+			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+				"抓取入库",
+				"先开页面，再异步拉 summary、矩阵和最近写操作；raw 慢时也只影响局部。",
+				"/_/mrtang-admin/target-sync",
+				true,
+				authorizedAdminModule(re, cfg, "procurement"),
+			))
+		}
+
 		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 4*time.Second)
 		defer cancel()
 
@@ -97,7 +912,7 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 				cfg,
 				pim.TargetSyncSummary{SourceMode: strings.TrimSpace(dataset.Meta.Source)},
 				strings.TrimSpace(re.Request.URL.Query().Get("message")),
-				"生成目标同步摘要失败："+err.Error(),
+				"生成抓取入库摘要失败："+err.Error(),
 			))
 		}
 		return re.HTML(http.StatusOK, admin.RenderTargetSyncHTML(
@@ -110,7 +925,7 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 
 	se.Router.GET("/_/mrtang-admin/target-sync/run", func(re *core.RequestEvent) error {
 		if !authorizedAdminModule(re, cfg, "source") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无目标站同步权限", "当前账号没有目标站同步权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
+			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无抓取入库权限", "当前账号没有抓取入库权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
 		}
 		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
 		if id == "" {
@@ -128,6 +943,16 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
 		}
 
+		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
+			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+				"源数据",
+				"先看 source 模块概览，再分流到商品、图片和日志；数据异步加载，不阻塞整页。",
+				"/_/mrtang-admin/source",
+				true,
+				authorizedAdminModule(re, cfg, "procurement"),
+			))
+		}
+
 		summary, err := service.SourceReviewWorkbench(re.Request.Context(), re.App, 6, 6, pim.SourceReviewFilter{PageSize: 6})
 		if err != nil {
 			return re.InternalServerError("load source module failed", err)
@@ -140,9 +965,33 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		))
 	})
 
+	se.Router.GET("/_/mrtang-admin/source/categories", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
+		}
+
+		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+			"源数据分类",
+			"分类树同步结果和已落库分类列表都在这里查看；页面先开壳，再异步加载。",
+			"/_/mrtang-admin/source/categories",
+			true,
+			authorizedAdminModule(re, cfg, "procurement"),
+		))
+	})
+
 	se.Router.GET("/_/mrtang-admin/source/products", func(re *core.RequestEvent) error {
 		if !authorizedAdminModule(re, cfg, "source") {
 			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
+		}
+
+		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
+			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+				"源数据商品",
+				"商品审核、桥接、同步重试改成前端异步列表；现有动作端点继续复用。",
+				"/_/mrtang-admin/source/products",
+				true,
+				authorizedAdminModule(re, cfg, "procurement"),
+			))
 		}
 
 		filter := readSourceReviewFilter(re)
@@ -164,6 +1013,16 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	se.Router.GET("/_/mrtang-admin/source/products/detail", func(re *core.RequestEvent) error {
 		if !authorizedAdminModule(re, cfg, "source") {
 			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
+		}
+
+		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
+			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+				"商品详情",
+				"详情页也切到前端异步渲染，动作端点继续复用现有 POST 路由。",
+				"/_/mrtang-admin/source/products/detail",
+				true,
+				authorizedAdminModule(re, cfg, "procurement"),
+			))
 		}
 		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
 		if id == "" {
@@ -190,6 +1049,16 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
 		}
 
+		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
+			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+				"源数据图片",
+				"图片状态、失败聚合和批量处理改成前端异步列表；现有动作端点继续复用。",
+				"/_/mrtang-admin/source/assets",
+				true,
+				authorizedAdminModule(re, cfg, "procurement"),
+			))
+		}
+
 		filter := readSourceReviewFilter(re)
 		filter.ProductStatus = ""
 		filter.SyncState = ""
@@ -211,6 +1080,16 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		if !authorizedAdminModule(re, cfg, "source") {
 			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
 		}
+
+		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
+			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+				"图片详情",
+				"详情页也切到前端异步渲染，动作端点继续复用现有 POST 路由。",
+				"/_/mrtang-admin/source/assets/detail",
+				true,
+				authorizedAdminModule(re, cfg, "procurement"),
+			))
+		}
 		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
 		if id == "" {
 			return re.BadRequestError("missing source asset id", nil)
@@ -228,6 +1107,34 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 			returnTo,
 			"/_/mrtang-admin/source/assets",
 			returnTo,
+		))
+	})
+
+	se.Router.GET("/_/mrtang-admin/source/asset-jobs", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
+		}
+
+		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+			"图片任务",
+			"原图下载和图片处理的历史任务、重试入口和最近日志都在这里查看。",
+			"/_/mrtang-admin/source/asset-jobs",
+			true,
+			authorizedAdminModule(re, cfg, "procurement"),
+		))
+	})
+
+	se.Router.GET("/_/mrtang-admin/source/asset-jobs/detail", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
+		}
+
+		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+			"图片任务详情",
+			"任务详情页会异步加载任务进度、错误和最近日志。",
+			"/_/mrtang-admin/source/asset-jobs/detail",
+			true,
+			authorizedAdminModule(re, cfg, "procurement"),
 		))
 	})
 
@@ -327,39 +1234,32 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 
 	se.Router.POST("/_/mrtang-admin/target-sync/jobs/ensure", func(re *core.RequestEvent) error {
 		if !authorizedAdminModule(re, cfg, "source") {
-			return re.ForbiddenError("当前账号没有目标站同步权限。", nil)
+			return re.ForbiddenError("当前账号没有抓取入库权限。", nil)
 		}
-		dataset, err := miniappService.Dataset(re.Request.Context())
-		if err != nil {
-			return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin/target-sync?error=load+dataset+failed")
-		}
-		if _, err := service.EnsureTargetSyncJob(re.Request.Context(), re.App, *dataset, strings.TrimSpace(re.Request.FormValue("entityType")), strings.TrimSpace(re.Request.FormValue("scopeKey"))); err != nil {
+		if _, err := service.EnsureTargetSyncJobSpec(re.App, cfg.MiniApp.SourceMode, strings.TrimSpace(re.Request.FormValue("entityType")), strings.TrimSpace(re.Request.FormValue("scopeKey")), strings.TrimSpace(re.Request.FormValue("scopeLabel"))); err != nil {
 			return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin/target-sync?error=ensure+target+sync+job+failed")
 		}
-		return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin/target-sync?message=target+sync+job+saved")
+		return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin/target-sync?message="+url.QueryEscape("已保存抓取入库任务"))
 	})
 
 	se.Router.POST("/_/mrtang-admin/target-sync/jobs/run", func(re *core.RequestEvent) error {
 		if !authorizedAdminModule(re, cfg, "source") {
-			return re.ForbiddenError("当前账号没有目标站同步权限。", nil)
+			return re.ForbiddenError("当前账号没有抓取入库权限。", nil)
 		}
-		dataset, err := miniappService.Dataset(re.Request.Context())
+		run, err := service.StartTargetSyncAsync(
+			re.App,
+			func(ctx context.Context) (*miniappmodel.Dataset, error) {
+				return miniappService.Dataset(ctx)
+			},
+			strings.TrimSpace(re.Request.FormValue("entityType")),
+			strings.TrimSpace(re.Request.FormValue("scopeKey")),
+			strings.TrimSpace(re.Request.FormValue("scopeLabel")),
+			targetSyncActor(re),
+		)
 		if err != nil {
-			return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin/target-sync?error=load+dataset+failed")
+			return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin/target-sync?error="+url.QueryEscape("执行抓取入库失败: "+err.Error()))
 		}
-		entityType := strings.TrimSpace(re.Request.FormValue("entityType"))
-		run, err := service.RunTargetSync(re.Request.Context(), re.App, *dataset, entityType, strings.TrimSpace(re.Request.FormValue("scopeKey")), targetSyncActor(re))
-		if err != nil {
-			return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin/target-sync?error="+url.QueryEscape("run target sync failed: "+err.Error()))
-		}
-		entityLabel := "分类树"
-		switch strings.TrimSpace(run.EntityType) {
-		case pim.TargetSyncEntityProducts:
-			entityLabel = "商品规格"
-		case pim.TargetSyncEntityAssets:
-			entityLabel = "图片资产"
-		}
-		message := fmt.Sprintf("%s同步完成: %s, 新增 %d, 更新 %d, 未变 %d", entityLabel, run.ScopeLabel, run.CreatedCount, run.UpdatedCount, run.UnchangedCount)
+		message := fmt.Sprintf("已启动抓取入库任务：%s / %s", run.JobName, run.ScopeLabel)
 		return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin/target-sync?message="+url.QueryEscape(message))
 	})
 
@@ -797,6 +1697,16 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无采购模块权限", "当前账号没有采购模块权限，请联系管理员配置 `PIM_PROCUREMENT_ADMIN_EMAILS`。", "/_/mrtang-admin"))
 		}
 
+		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
+			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+				"采购",
+				"采购列表、风险筛选和最近动作改成前端异步加载；详情页先继续复用现有服务端版本。",
+				"/_/mrtang-admin/procurement",
+				authorizedAdminModule(re, cfg, "source"),
+				true,
+			))
+		}
+
 		summary, err := service.ProcurementWorkbenchSummaryFiltered(
 			re.Request.Context(),
 			re.App,
@@ -816,6 +1726,16 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	se.Router.GET("/_/mrtang-admin/procurement/detail", func(re *core.RequestEvent) error {
 		if !authorizedAdminModule(re, cfg, "procurement") {
 			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无采购模块权限", "当前账号没有采购模块权限，请联系管理员配置 `PIM_PROCUREMENT_ADMIN_EMAILS`。", "/_/mrtang-admin"))
+		}
+
+		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
+			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+				"采购详情",
+				"详情页也切到前端异步渲染，风险商品和原始摘要不再阻塞整页。",
+				"/_/mrtang-admin/procurement/detail",
+				authorizedAdminModule(re, cfg, "source"),
+				true,
+			))
 		}
 		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
 		if id == "" {
@@ -948,6 +1868,15 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	})
 }
 
+func serveAdminAsset(re *core.RequestEvent, name string, contentType string) error {
+	body, err := fs.ReadFile(adminapp.Static, name)
+	if err != nil {
+		return re.NotFoundError("File not found.", err)
+	}
+	re.Response.Header().Set("Content-Type", contentType)
+	return re.String(http.StatusOK, string(body))
+}
+
 func registerAdminSlashRedirect(se *core.ServeEvent, from string, to string) {
 	se.Router.GET(from, func(re *core.RequestEvent) error {
 		target := to
@@ -960,10 +1889,12 @@ func registerAdminSlashRedirect(se *core.ServeEvent, from string, to string) {
 
 func readSourceReviewFilter(re *core.RequestEvent) pim.SourceReviewFilter {
 	filter := pim.SourceReviewFilter{
-		ProductStatus: strings.TrimSpace(re.Request.URL.Query().Get("productStatus")),
-		AssetStatus:   strings.TrimSpace(re.Request.URL.Query().Get("assetStatus")),
-		SyncState:     strings.TrimSpace(re.Request.URL.Query().Get("syncState")),
-		Query:         strings.TrimSpace(re.Request.URL.Query().Get("q")),
+		CategoryKey:    strings.TrimSpace(re.Request.URL.Query().Get("categoryKey")),
+		ProductStatus:  strings.TrimSpace(re.Request.URL.Query().Get("productStatus")),
+		AssetStatus:    strings.TrimSpace(re.Request.URL.Query().Get("assetStatus")),
+		OriginalStatus: strings.TrimSpace(re.Request.URL.Query().Get("originalStatus")),
+		SyncState:      strings.TrimSpace(re.Request.URL.Query().Get("syncState")),
+		Query:          strings.TrimSpace(re.Request.URL.Query().Get("q")),
 	}
 	if page, err := strconv.Atoi(strings.TrimSpace(re.Request.URL.Query().Get("productPage"))); err == nil {
 		filter.ProductPage = page
@@ -975,6 +1906,16 @@ func readSourceReviewFilter(re *core.RequestEvent) pim.SourceReviewFilter {
 		filter.PageSize = pageSize
 	}
 	return filter
+}
+
+func readSourceAssetJobFilter(re *core.RequestEvent) pim.SourceAssetJobFilter {
+	return pim.SourceAssetJobFilter{
+		JobType:  strings.TrimSpace(re.Request.URL.Query().Get("jobType")),
+		Status:   strings.TrimSpace(re.Request.URL.Query().Get("status")),
+		Query:    strings.TrimSpace(re.Request.URL.Query().Get("q")),
+		Page:     readQueryInt(re, "page", 1),
+		PageSize: readQueryInt(re, "pageSize", 20),
+	}
 }
 
 func sourceActionActor(re *core.RequestEvent) pim.SourceActionActor {

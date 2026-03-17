@@ -105,7 +105,7 @@ func RenderSourceModuleHTML(summary pim.SourceReviewWorkbenchSummary, flashMessa
     <section class="hero">
       <div class="card">
         <div class="eyebrow">源数据模块</div>
-        <h2>目标分类、商品、图片的审核与同步入口</h2>
+        <h2>目标分类、商品、图片的审核、桥接与发布入口</h2>
         <p class="lead">这个模块只承担 source 相关的管理职责。首页看板负责总览，这里负责 source 维度的待办、异常、最近动作和模块分流。</p>
       </div>
       <div class="card">
