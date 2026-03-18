@@ -38,6 +38,13 @@ func (s *Service) TargetSyncDataset(ctx context.Context, entityType string, scop
 	return s.Dataset(ctx)
 }
 
+func (s *Service) TargetSyncProductsFromSections(ctx context.Context, sections []model.CategorySection, scopeKey string) (*model.Dataset, error) {
+	if productSource, ok := s.source.(api.TargetSyncProductSource); ok {
+		return productSource.FetchTargetSyncProductsFromSections(ctx, sections, scopeKey)
+	}
+	return s.Dataset(ctx)
+}
+
 func (s *Service) RawAuthStatus() model.RawAuthStatus {
 	if statusSource, ok := s.source.(api.StatusSource); ok {
 		return statusSource.RawAuthStatus()

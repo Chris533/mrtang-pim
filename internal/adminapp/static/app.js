@@ -175,7 +175,7 @@ function targetSyncRunFailedBranches(run) {
 function retryFailedBranchesLabel(run) {
   const entityType = String((run && (run.EntityType || run.entityType)) || "").toLowerCase();
   const count = targetSyncRunFailedBranches(run).length;
-  if (entityType === "category_tree") return `重跑失败分类分支（${count}）`;
+  if (entityType === "category_sources") return `重跑失败分类来源分支（${count}）`;
   if (entityType === "products") return `重跑失败商品分支（${count}）`;
   return `重跑失败分支（${count}）`;
 }
@@ -183,14 +183,14 @@ function retryFailedBranchesLabel(run) {
 function retryFailedBranchesConfirmMessage(run) {
   const entityType = String((run && (run.EntityType || run.entityType)) || "").toLowerCase();
   const count = targetSyncRunFailedBranches(run).length;
-  if (entityType === "category_tree") return `确认重跑 ${count} 个失败分类分支吗？`;
+  if (entityType === "category_sources") return `确认重跑 ${count} 个失败分类来源分支吗？`;
   if (entityType === "products") return `确认重跑 ${count} 个失败商品分支吗？`;
   return `确认重跑 ${count} 个失败分支吗？`;
 }
 
 function retryFailedBranchesStartedMessage(run, count) {
   const entityType = String((run && (run.EntityType || run.entityType)) || "").toLowerCase();
-  if (entityType === "category_tree") return `已启动 ${count} 个失败分类分支重跑任务。`;
+  if (entityType === "category_sources") return `已启动 ${count} 个失败分类来源分支重跑任务。`;
   if (entityType === "products") return `已启动 ${count} 个失败商品分支重跑任务。`;
   return `已启动 ${count} 个失败分支重跑任务。`;
 }
@@ -200,6 +200,7 @@ function progressStageLabel(stage) {
   if (normalized === "queued") return "排队中";
   if (normalized === "loading_dataset") return "加载数据集";
   if (normalized === "categories") return "写入分类";
+  if (normalized === "category_sources") return "写入分类商品来源";
   if (normalized === "products") return "写入商品规格";
   if (normalized === "assets") return "写入图片资源";
   if (normalized === "completed") return "已完成";
@@ -471,15 +472,17 @@ function Pagination({ basePath, pageParam, currentPage, totalPages, params }) {
 function DashboardPage() {
   const [reloadKey, setReloadKey] = useState(0);
   const [miniappReloadKey, setMiniappReloadKey] = useState(0);
+  const [miniappLiveEnabled, setMiniappLiveEnabled] = useState(false);
   const [actionState, setActionState] = useState({ busy: "", message: "", error: "" });
   const resource = useResource("/api/pim/admin/dashboard", [reloadKey]);
-  const miniappResource = useResource("/api/pim/admin/dashboard/miniapp-live", [reloadKey, miniappReloadKey]);
+  const miniappResource = useResource(miniappLiveEnabled ? "/api/pim/admin/dashboard/miniapp-live" : "", [reloadKey, miniappReloadKey, miniappLiveEnabled]);
   if (resource.loading) return html`<${LoadingSection} label="总览数据" />`;
   if (resource.error) return html`<${ErrorSection} error=${resource.error} />`;
   const data = resource.data || {};
   const miniappPayload = miniappResource.data || {};
-  const miniapp = miniappPayload.Miniapp || {};
-  const miniappErrorInfo = classifyLoadError(miniappPayload.MiniappError || "");
+  const miniapp = miniappPayload.Miniapp || data.Miniapp || {};
+  const miniappError = miniappPayload.MiniappError || "";
+  const miniappErrorInfo = classifyLoadError(miniappError);
   const source = data.SourceCapture || {};
   const procurement = data.Procurement || {};
 
@@ -506,14 +509,18 @@ function DashboardPage() {
           <span class="pill">sourceURL: <code>${miniapp.SourceURL || "-"}</code></span>
           ${miniapp.RawAuthStatus && miniapp.RawAuthStatus.Enabled ? html`<span class="pill">续活状态: <strong>${rawWarmupLabel(miniapp.RawAuthStatus.Status)}</strong></span>` : null}
         </div>
-        ${miniappResource.loading ? html`<div class="small" style="margin-top:14px;">正在加载 raw 实时摘要...</div>` : null}
-        ${miniappPayload.MiniappError ? html`<div class="flash error" style="margin-top:14px;">
+        <div class="action-row" style="margin-top:12px;">
+          <button class="btn secondary" type="button" onClick=${() => { setMiniappLiveEnabled(true); setMiniappReloadKey((value) => value + 1); }}>
+            ${miniappResource.loading ? "刷新中..." : "刷新实时摘要"}
+          </button>
+        </div>
+        ${miniappResource.loading ? html`<div class="small" style="margin-top:14px;">正在加载实时源站摘要...</div>` : null}
+        ${miniappError ? html`<div class="flash error" style="margin-top:14px;">
           <div><strong>${miniappErrorInfo.title}</strong></div>
           <div class="small" style="margin-top:8px;">${miniappErrorInfo.detail}</div>
-          <div class="small" style="margin-top:8px;"><code>${miniappErrorInfo.raw || miniappPayload.MiniappError}</code></div>
-          <div class="action-row" style="margin-top:12px;"><button class="btn secondary" type="button" onClick=${() => setMiniappReloadKey((value) => value + 1)}>重试加载</button></div>
+          <div class="small" style="margin-top:8px;"><code>${miniappErrorInfo.raw || miniappError}</code></div>
         </div>` : null}
-        ${miniapp.UsedStoredData ? html`<div class="flash ok" style="margin-top:14px;">当前覆盖摘要已自动回退到已落库分类/商品/图片结果。你现在看到的是已抓取归属，不依赖本次实时源站读取。</div>` : null}
+        ${miniapp.UsedStoredData ? html`<div class="flash ok" style="margin-top:14px;">当前默认展示已落库分类/商品/图片结果，不会自动刷新源站。只有点“刷新实时摘要”时才会请求实时源站。</div>` : null}
         ${miniapp.RawAuthStatus && miniapp.RawAuthStatus.Enabled ? html`<div class=${`flash ${((miniapp.RawAuthStatus.Status || "").toLowerCase() === "failed" ? "error" : "ok")}`} style="margin-top:14px;">
           <div>${miniapp.RawAuthStatus.Message || "raw 登录续活状态未知。"}</div>
           <div class="small" style="margin-top:8px;">上次尝试：${miniapp.RawAuthStatus.LastAttemptAt || "-"} / 最近成功：${miniapp.RawAuthStatus.LastSuccessAt || "-"} / OpenID：${miniapp.RawAuthStatus.OpenID || "未配置"}</div>
@@ -911,13 +918,15 @@ function TargetSyncPage() {
   const [reloadKey, setReloadKey] = useState(0);
   const [liveReloadKey, setLiveReloadKey] = useState(0);
   const [checkoutReloadKey, setCheckoutReloadKey] = useState(0);
+  const [liveEnabled, setLiveEnabled] = useState(false);
+  const [checkoutEnabled, setCheckoutEnabled] = useState(false);
   const [actionState, setActionState] = useState({ busy: "", message: "", error: "", href: "", hrefLabel: "" });
   const [activeRunId, setActiveRunId] = useState("");
   const [activeRun, setActiveRun] = useState(null);
   const [activeRunError, setActiveRunError] = useState("");
   const resource = useResource("/api/pim/admin/target-sync", [reloadKey]);
-  const liveResource = useResource("/api/pim/admin/target-sync/live", [reloadKey, liveReloadKey]);
-  const checkoutResource = useResource("/api/pim/admin/target-sync/checkout-live", [reloadKey, checkoutReloadKey]);
+  const liveResource = useResource(liveEnabled ? "/api/pim/admin/target-sync/live" : "", [reloadKey, liveReloadKey, liveEnabled]);
+  const checkoutResource = useResource(checkoutEnabled ? "/api/pim/admin/target-sync/checkout-live" : "", [reloadKey, checkoutReloadKey, checkoutEnabled]);
 
   useEffect(() => {
     if (!resource.data || activeRunId) return;
@@ -985,6 +994,8 @@ function TargetSyncPage() {
 
   function runResultLink(entityType) {
     if (entityType === "category_tree") return { href: "/_/mrtang-admin/source/categories", hrefLabel: "查看已入库分类" };
+    if (entityType === "category_sources") return { href: "/_/mrtang-admin/source/categories", hrefLabel: "查看分类与商品归属" };
+    if (entityType === "category_rebuild") return { href: "/_/mrtang-admin/source/products", hrefLabel: "查看商品分类归属" };
     if (entityType === "products") return { href: "/_/mrtang-admin/source/products", hrefLabel: "查看已入库商品" };
     if (entityType === "assets") return { href: "/_/mrtang-admin/source/assets", hrefLabel: "查看已入库图片" };
     return { href: "", hrefLabel: "" };
@@ -996,10 +1007,16 @@ function TargetSyncPage() {
     const updated = run.updatedCount || 0;
     const unchanged = run.unchangedCount || 0;
     if (entityType === "category_tree") {
-      return `按当前源站结果抓分类完成：新增 ${created}，更新 ${updated}，未变化 ${unchanged}。`;
+      return `抓分类树完成：新增 ${created}，更新 ${updated}，未变化 ${unchanged}。`;
+    }
+    if (entityType === "category_sources") {
+      return `刷新分类商品来源完成：新增 ${created}，更新 ${updated}，未变化 ${unchanged}。`;
+    }
+    if (entityType === "category_rebuild") {
+      return `重建分类商品归属完成：新增 ${created}，更新 ${updated}，未变化 ${unchanged}。`;
     }
     if (entityType === "products") {
-      return `按当前源站结果抓商品规格完成：新增 ${created}，更新 ${updated}，未变化 ${unchanged}。`;
+      return `按已保存分类来源抓商品规格完成：新增 ${created}，更新 ${updated}，未变化 ${unchanged}。`;
     }
     if (entityType === "assets") {
       return `按当前源站结果抓图片完成：新增 ${created}，更新 ${updated}，未变化 ${unchanged}。`;
@@ -1085,22 +1102,37 @@ function TargetSyncPage() {
   const checkoutError = checkoutPayload.flashError || "";
   const liveErrorInfo = classifyLoadError(liveError);
   const checkoutErrorInfo = classifyLoadError(checkoutError);
+  const displayedTopLevelCount = liveEnabled ? (liveSummary.TopLevelCount || 0) : (summary.TopLevelCount || 0);
+  const displayedNodeCount = liveEnabled ? (liveSummary.ExpectedNodeCount || 0) : (summary.CategoryCount || 0);
+  const displayedProductCount = liveEnabled ? (liveSummary.ExpectedProductCount || 0) : (summary.SourceProductCount || 0);
+  const displayedAssetCount = liveEnabled ? (liveSummary.ExpectedAssetCount || 0) : (summary.SourceAssetCount || 0);
+  const displayedScopeOptions = (liveEnabled ? liveSummary.ScopeOptions : summary.ScopeOptions) || [];
 
   return html`
     <section class="section split-grid">
       <section class="card"><div class="card-body">
         <div class="card-kicker">抓取入库</div>
-        <h2 class="card-title">先抓分类快照，再按快照抓商品规格与图片</h2>
+        <h2 class="card-title">先抓分类树，再刷新分类商品来源，再按来源抓商品规格</h2>
         ${payload.flashError ? html`<div class="flash error" style="margin-top:14px;">${payload.flashError}</div>` : null}
         ${payload.flashMessage ? html`<div class="flash ok" style="margin-top:14px;">${payload.flashMessage}</div>` : null}
         <${ActionNotice} state=${actionState} />
         <div class="action-row">
-          <button class="btn secondary" type="button" disabled=${actionState.busy === "ensure:category_tree:"} onClick=${() => ensureJob("category_tree", "", "分类快照")}>${actionState.busy === "ensure:category_tree:" ? "保存中..." : "保存分类快照任务"}</button>
-          <button class="btn" type="button" disabled=${actionState.busy === "run:category_tree:"} onClick=${() => runJob("category_tree", "", "分类快照", "确认立即抓取分类树及分类商品快照吗？")}>${actionState.busy === "run:category_tree:" ? "启动中..." : "抓分类快照"}</button>
-          <button class="btn secondary" type="button" disabled=${actionState.busy === "run:products:"} onClick=${() => runJob("products", "", "分类快照商品", "确认立即基于已保存分类快照抓取商品规格吗？若没有快照，将回退到实时源站。")}>${actionState.busy === "run:products:" ? "启动中..." : "按分类快照抓商品规格"}</button>
-          <button class="btn secondary" type="button" disabled=${actionState.busy === "run:assets:"} onClick=${() => runJob("assets", "", "商品图片", "确认立即抓取图片入库吗？图片仍基于当前商品结果生成。")}>${actionState.busy === "run:assets:" ? "启动中..." : "抓图片"}</button>
+          <button class="btn secondary" type="button" disabled=${actionState.busy === "ensure:category_tree:"} onClick=${() => ensureJob("category_tree", "", "分类树")}>${actionState.busy === "ensure:category_tree:" ? "保存中..." : "保存分类树任务"}</button>
+          <button class="btn" type="button" disabled=${actionState.busy === "run:category_tree:"} onClick=${() => runJob("category_tree", "", "分类树", "确认立即抓取分类树吗？")}>${actionState.busy === "run:category_tree:" ? "启动中..." : "抓分类树"}</button>
+          <button class="btn secondary" type="button" disabled=${actionState.busy === "run:category_sources:"} onClick=${() => runJob("category_sources", "", "分类商品来源", "确认立即刷新分类商品来源吗？这一步会请求各分类路径下的商品列表，但不会抓商品详情。")}>${actionState.busy === "run:category_sources:" ? "启动中..." : "刷新分类商品来源"}</button>
+          <button class="btn secondary" type="button" disabled=${actionState.busy === "run:category_rebuild:"} onClick=${() => runJob("category_rebuild", "", "分类商品归属", "确认基于已保存来源重建商品分类归属吗？这一步不会请求源站。")}>${actionState.busy === "run:category_rebuild:" ? "启动中..." : "重建分类商品归属"}</button>
+          <button class="btn secondary" type="button" disabled=${actionState.busy === "run:products:"} onClick=${() => runJob("products", "", "商品规格", "确认基于已保存分类商品来源抓取商品规格吗？若没有来源，将先即时刷新来源。")}>${actionState.busy === "run:products:" ? "启动中..." : "按已保存来源抓商品规格"}</button>
+          <button class="btn secondary" type="button" disabled=${actionState.busy === "run:assets:"} onClick=${() => runJob("assets", "", "商品图片", "确认立即抓取图片入库吗？图片仍基于当前商品结果生成。")}>${actionState.busy === "run:assets:" ? "启动中..." : "按已保存商品抓图片"}</button>
         </div>
-        <div class="small" style="margin-top:10px;">默认流程现在是：先抓分类树和分类商品快照，再按已保存快照抓商品规格。只有没有快照时，商品抓取才会回退到实时源站。</div>
+        <div class="small" style="margin-top:10px;">默认流程现在是：先抓分类树，再刷新分类商品来源，再按已保存来源抓商品规格。商品规格抓取不再重新请求分类接口；只有没有已保存来源时，才会即时补刷新。</div>
+        <div class="action-row" style="margin-top:12px;">
+          <button class="btn secondary" type="button" onClick=${() => { setLiveEnabled(true); setLiveReloadKey((value) => value + 1); }}>
+            ${liveResource.loading ? "刷新中..." : "刷新实时范围摘要"}
+          </button>
+          <button class="btn secondary" type="button" onClick=${() => { setCheckoutEnabled(true); setCheckoutReloadKey((value) => value + 1); }}>
+            ${checkoutResource.loading ? "刷新中..." : "刷新实时 checkout 摘要"}
+          </button>
+        </div>
         <div class="inline-pills section">
           <${StatusBadge} label=${sourceModeLabel(effectiveSourceMode)} currentTone=${tone(effectiveSourceMode)} />
           <span class="pill">sourceURL: <code>${payload.sourceURL || "-"}</code></span>
@@ -1114,19 +1146,19 @@ function TargetSyncPage() {
         <div class="metric-grid section">
           <${MetricCard} eyebrow="抓取任务" value=${summary.JobCount || 0} />
           <${MetricCard} eyebrow="运行记录" value=${summary.RunCount || 0} />
-          <${MetricCard} eyebrow="分类商品快照" value=${summary.SourceCategorySectionCount || 0} detail="已保存的分类 -> 商品归属快照" />
-          <${MetricCard} eyebrow="顶级分类" value=${liveResource.loading ? "..." : (liveSummary.TopLevelCount || 0)} />
-          <${MetricCard} eyebrow="分类节点" value=${liveResource.loading ? "..." : (liveSummary.ExpectedNodeCount || 0)} />
-          <${MetricCard} eyebrow="目标商品" value=${liveResource.loading ? "..." : (liveSummary.ExpectedProductCount || 0)} detail=${liveResource.loading ? "正在加载 raw 实时摘要" : `${liveSummary.ExpectedMultiUnitCount || 0} 个多单位`} />
-          <${MetricCard} eyebrow="目标图片" value=${liveResource.loading ? "..." : (liveSummary.ExpectedAssetCount || 0)} />
+          <${MetricCard} eyebrow="分类商品来源" value=${summary.SourceCategorySectionCount || 0} detail="已保存的分类路径 -> 商品列表来源快照" />
+          <${MetricCard} eyebrow="顶级分类" value=${liveResource.loading ? "..." : displayedTopLevelCount} />
+          <${MetricCard} eyebrow="分类节点" value=${liveResource.loading ? "..." : displayedNodeCount} />
+          <${MetricCard} eyebrow="目标商品" value=${liveResource.loading ? "..." : displayedProductCount} detail=${liveEnabled ? (liveResource.loading ? "正在加载实时源站摘要" : `${liveSummary.ExpectedMultiUnitCount || 0} 个多单位`) : "默认显示已落库商品数"} />
+          <${MetricCard} eyebrow="目标图片" value=${liveResource.loading ? "..." : displayedAssetCount} />
         </div>
+        ${!liveEnabled ? html`<div class="flash ok" style="margin-top:14px;">当前默认展示已保存结果，不会自动刷新源站分类与商品来源。只有点“刷新实时范围摘要”时才会请求实时源站。</div>` : null}
         ${liveError ? html`<div class="flash error" style="margin-top:14px;">
           <div><strong>${liveErrorInfo.title}</strong></div>
           <div class="small" style="margin-top:8px;">${liveErrorInfo.detail}</div>
           <div class="small" style="margin-top:8px;"><code>${liveErrorInfo.raw || liveError}</code></div>
-          <div class="action-row" style="margin-top:12px;"><button class="btn secondary" type="button" onClick=${() => setLiveReloadKey((value) => value + 1)}>重试范围摘要</button></div>
         </div>` : null}
-        ${liveSummary.UsedStoredData ? html`<div class="flash ok" style="margin-top:14px;">当前范围摘要已自动回退到已落库分类/商品/图片结果。若分类商品快照已存在，商品归属会优先复用已保存快照，不必每次重新实时读取全部分类商品列表。</div>` : null}
+        ${liveSummary.UsedStoredData ? html`<div class="flash ok" style="margin-top:14px;">当前范围摘要已自动回退到已落库分类/商品/图片结果。若分类商品来源已存在，商品归属会优先复用已保存来源，不必每次重新实时读取全部分类商品列表。</div>` : null}
       </div></section>
 
       <section class="card"><div class="card-body">
@@ -1163,7 +1195,7 @@ function TargetSyncPage() {
         <div class="card-kicker">抓取结果入口</div>
         <h2 class="card-title">先查看已入库结果，再进入 source 审核流</h2>
         <div class="ops-grid section">
-          <a class="action-card" href="/_/mrtang-admin/source/categories"><div class="card-kicker">已入库分类</div><div class="metric-value">${summary.CategoryCount || 0}</div><div class="card-desc">查看抓取保存下来的分类树、层级和分类商品数。</div></a>
+          <a class="action-card" href="/_/mrtang-admin/source/categories"><div class="card-kicker">已入库分类</div><div class="metric-value">${summary.CategoryCount || 0}</div><div class="card-desc">查看分类树、层级和分类商品归属统计。</div></a>
           <a class="action-card" href="/_/mrtang-admin/source/products"><div class="card-kicker">已入库商品</div><div class="metric-value">${summary.SourceProductCount || 0}</div><div class="card-desc">查看抓取保存下来的商品、规格和审核状态。</div></a>
           <a class="action-card" href="/_/mrtang-admin/source/assets"><div class="card-kicker">已入库图片</div><div class="metric-value">${summary.SourceAssetCount || 0}</div><div class="card-desc">查看抓取保存下来的封面、轮播和详情图。</div></a>
           <a class="action-card" href="/_/mrtang-admin/source/products?productStatus=imported"><div class="card-kicker">待审核商品</div><div class="metric-value">${summary.SourceImportedCount || 0}</div><div class="card-desc">商品和规格变化后自动回到 imported。</div></a>
@@ -1176,26 +1208,28 @@ function TargetSyncPage() {
       <section class="table-card"><div class="table-card"><div class="card-body">
         <div class="card-kicker">按范围抓取入库</div>
         <h2 class="card-title">顶级分类批次</h2>
-        ${liveResource.loading ? html`<div class="small section">正在加载 raw 分类范围摘要...</div>` : null}
+        ${liveEnabled && liveResource.loading ? html`<div class="small section">正在加载实时源站分类范围摘要...</div>` : null}
         ${liveError ? html`<div class="flash error" style="margin-top:14px;">
           <div><strong>${liveErrorInfo.title}</strong></div>
           <div class="small" style="margin-top:8px;">${liveErrorInfo.detail}</div>
           <div class="small" style="margin-top:8px;"><code>${liveErrorInfo.raw || liveError}</code></div>
-          <div class="action-row" style="margin-top:12px;"><button class="btn secondary" type="button" onClick=${() => setLiveReloadKey((value) => value + 1)}>重试范围摘要</button></div>
         </div>` : null}
+        ${!liveEnabled ? html`<div class="flash ok" style="margin-top:14px;">当前表格默认基于已保存分类树、分类商品来源和商品结果生成，不会自动刷新源站。</div>` : null}
         ${liveSummary.UsedStoredData ? html`<div class="flash ok" style="margin-top:14px;">当前表格已回退到已落库结果统计；可以继续查看分类归属和数量，等源站恢复后再做实时抓取。</div>` : null}
         <div class="table-wrap section"><table><thead><tr><th>分类</th><th>节点</th><th>商品</th><th>图片</th><th>动作</th></tr></thead><tbody>
-          ${scopeOptions.length ? scopeOptions.filter((item) => item.Key).map((item) => html`<tr>
+          ${displayedScopeOptions.length ? displayedScopeOptions.filter((item) => item.Key).map((item) => html`<tr>
             <td><strong>${item.Label || "-"}</strong><div class="small">${item.Key || "-"}</div></td>
             <td>${item.NodeCount || 0}</td>
             <td>${item.ProductCount || 0}</td>
             <td>${item.AssetCount || 0}</td>
             <td>
               <div class="action-row">
-                <button class="btn secondary" type="button" disabled=${actionState.busy === `ensure:category_tree:${item.Key}`} onClick=${() => ensureJob("category_tree", item.Key, item.Label || item.Key)}>保存分类快照任务</button>
-                <button class="btn secondary" type="button" disabled=${actionState.busy === `run:category_tree:${item.Key}`} onClick=${() => runJob("category_tree", item.Key, item.Label || item.Key, `确认执行 ${item.Label || item.Key} 的分类树与分类商品快照抓取吗？`)}>抓分类快照</button>
-                <button class="btn secondary" type="button" disabled=${actionState.busy === `run:products:${item.Key}`} onClick=${() => runJob("products", item.Key, item.Label || item.Key, `确认基于 ${item.Label || item.Key} 已保存分类快照抓取商品规格吗？若没有快照，将回退到实时源站。`)}>按快照抓商品</button>
-                <button class="btn secondary" type="button" disabled=${actionState.busy === `run:assets:${item.Key}`} onClick=${() => runJob("assets", item.Key, item.Label || item.Key, `确认执行 ${item.Label || item.Key} 的图片抓取入库吗？`)}>抓图片</button>
+                <button class="btn secondary" type="button" disabled=${actionState.busy === `ensure:category_tree:${item.Key}`} onClick=${() => ensureJob("category_tree", item.Key, item.Label || item.Key)}>保存分类树任务</button>
+                <button class="btn secondary" type="button" disabled=${actionState.busy === `run:category_tree:${item.Key}`} onClick=${() => runJob("category_tree", item.Key, item.Label || item.Key, `确认执行 ${item.Label || item.Key} 的分类树抓取吗？`)}>抓分类树</button>
+                <button class="btn secondary" type="button" disabled=${actionState.busy === `run:category_sources:${item.Key}`} onClick=${() => runJob("category_sources", item.Key, item.Label || item.Key, `确认刷新 ${item.Label || item.Key} 的分类商品来源吗？这一步不会抓商品详情。`)}>刷新分类商品来源</button>
+                <button class="btn secondary" type="button" disabled=${actionState.busy === `run:category_rebuild:${item.Key}`} onClick=${() => runJob("category_rebuild", item.Key, item.Label || item.Key, `确认基于 ${item.Label || item.Key} 已保存来源重建商品分类归属吗？这一步不会请求源站。`)}>重建分类归属</button>
+                <button class="btn secondary" type="button" disabled=${actionState.busy === `run:products:${item.Key}`} onClick=${() => runJob("products", item.Key, item.Label || item.Key, `确认基于 ${item.Label || item.Key} 已保存分类商品来源抓取商品规格吗？若没有来源，将先即时刷新来源。`)}>按已保存来源抓商品</button>
+                <button class="btn secondary" type="button" disabled=${actionState.busy === `run:assets:${item.Key}`} onClick=${() => runJob("assets", item.Key, item.Label || item.Key, `确认执行 ${item.Label || item.Key} 的图片抓取入库吗？`)}>按已保存商品抓图片</button>
               </div>
             </td>
           </tr>`) : html`<tr><td colspan="5" class="small">当前没有可用的顶级分类范围。</td></tr>`}
@@ -1207,12 +1241,12 @@ function TargetSyncPage() {
       <section class="table-card"><div class="table-card"><div class="card-body">
         <div class="card-kicker">Checkout 来源矩阵</div>
         <h2 class="card-title">当前实际 contractId</h2>
-        ${checkoutResource.loading ? html`<div class="small section">正在加载 checkout 来源矩阵...</div>` : null}
+        ${!checkoutEnabled ? html`<div class="flash ok" style="margin-top:14px;">checkout 来源矩阵默认不自动刷新；只有点“刷新实时 checkout 摘要”时才会读取实时源站。</div>` : null}
+        ${checkoutEnabled && checkoutResource.loading ? html`<div class="small section">正在加载 checkout 来源矩阵...</div>` : null}
         ${checkoutError ? html`<div class="flash error" style="margin-top:14px;">
           <div><strong>${checkoutErrorInfo.title}</strong></div>
           <div class="small" style="margin-top:8px;">${checkoutErrorInfo.detail}</div>
           <div class="small" style="margin-top:8px;"><code>${checkoutErrorInfo.raw || checkoutError}</code></div>
-          <div class="action-row" style="margin-top:12px;"><button class="btn secondary" type="button" onClick=${() => setCheckoutReloadKey((value) => value + 1)}>重试 checkout 摘要</button></div>
         </div>` : null}
         <div class="table-wrap section"><table><thead><tr><th>链路</th><th>状态</th><th>contractId</th><th>说明</th></tr></thead><tbody>
           ${(checkoutSummary.CheckoutSources || []).length ? (checkoutSummary.CheckoutSources || []).map((item) => html`<tr><td><strong>${item.Label || "-"}</strong></td><td><${StatusBadge} label=${checkoutStatusLabel(item.Status)} currentTone=${tone(item.Status)} /></td><td class="small"><code>${item.ContractID || "-"}</code></td><td class="small">${item.Note || "-"}</td></tr>`) : html`<tr><td colspan="4" class="small">当前还没有 checkout 来源数据。</td></tr>`}

@@ -986,7 +986,7 @@ func (s *Service) processRecord(ctx context.Context, app core.App, record *core.
 }
 
 func (s *Service) syncRecord(ctx context.Context, app core.App, record *core.Record) error {
-	payload := s.buildVendurePayload(record)
+	payload := s.buildVendurePayload(app, record)
 
 	result, err := s.vendure.SyncProduct(ctx, payload)
 	if err != nil {
@@ -1013,9 +1013,13 @@ func (s *Service) syncRecord(ctx context.Context, app core.App, record *core.Rec
 	return app.Save(record)
 }
 
-func (s *Service) buildVendurePayload(record *core.Record) vendure.ProductPayload {
+func (s *Service) buildVendurePayload(app core.App, record *core.Record) vendure.ProductPayload {
 	assetURL := s.recordPrimaryAssetURL(record)
 	cEndAssetURL := s.recordConsumerAssetURL(record)
+	assetURLs, assetNames := s.recordGalleryAssetURLs(app, record)
+	if assetURL == "" && len(assetURLs) > 0 {
+		assetURL = assetURLs[0]
+	}
 	return vendure.ProductPayload{
 		Name:              displayTitle(record),
 		Slug:              slugify(record.GetString("supplier_code") + "-" + record.GetString("original_sku") + "-" + displayTitle(record)),
@@ -1025,6 +1029,8 @@ func (s *Service) buildVendurePayload(record *core.Record) vendure.ProductPayloa
 		ConsumerPrice:     toMinorUnits(record.GetFloat("c_price")),
 		AssetURL:          assetURL,
 		AssetName:         assetFileName(assetURL),
+		AssetURLs:         assetURLs,
+		AssetNames:        assetNames,
 		CEndAssetURL:      cEndAssetURL,
 		CEndAssetName:     assetFileName(cEndAssetURL),
 		BusinessPrice:     toMinorUnits(record.GetFloat("b_price")),
@@ -1040,6 +1046,85 @@ func (s *Service) buildVendurePayload(record *core.Record) vendure.ProductPayloa
 		VendureVariant:    record.GetString("vendure_variant_id"),
 		NeedColdChain:     strings.EqualFold(readJSONAttribute(record, "need_cold_chain"), "true"),
 	}
+}
+
+func (s *Service) recordGalleryAssetURLs(app core.App, record *core.Record) ([]string, []string) {
+	productID := strings.TrimSpace(record.GetString("source_product_id"))
+	if productID == "" {
+		productID = strings.TrimSpace(record.GetString("product_id"))
+	}
+	if productID == "" {
+		primary := strings.TrimSpace(s.recordPrimaryAssetURL(record))
+		if primary == "" {
+			return nil, nil
+		}
+		return []string{primary}, []string{assetFileName(primary)}
+	}
+
+	assets, err := app.FindRecordsByFilter(
+		CollectionSourceAssets,
+		"product_id = {:product_id}",
+		"sort",
+		100,
+		0,
+		dbx.Params{"product_id": productID},
+	)
+	if err != nil || len(assets) == 0 {
+		primary := strings.TrimSpace(s.recordPrimaryAssetURL(record))
+		if primary == "" {
+			return nil, nil
+		}
+		return []string{primary}, []string{assetFileName(primary)}
+	}
+
+	urls := make([]string, 0, len(assets))
+	names := make([]string, 0, len(assets))
+	seen := make(map[string]struct{}, len(assets))
+
+	appendAsset := func(rawURL string, name string) {
+		value := strings.TrimSpace(rawURL)
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		urls = append(urls, value)
+		if strings.TrimSpace(name) == "" {
+			name = assetFileName(value)
+		}
+		names = append(names, name)
+	}
+
+	for _, asset := range assets {
+		role := strings.TrimSpace(asset.GetString("asset_role"))
+		if role != "" && !strings.EqualFold(role, "cover") && !strings.EqualFold(role, "carousel") {
+			continue
+		}
+		urlValue := strings.TrimSpace(asset.GetString("source_url"))
+		if urlValue == "" {
+			urlValue = strings.TrimSpace(s.recordFileURL(asset, "original_image"))
+		}
+		if urlValue == "" {
+			continue
+		}
+		name := strings.TrimSpace(asset.GetString("asset_key"))
+		if name == "" {
+			name = assetFileName(urlValue)
+		}
+		appendAsset(urlValue, name)
+	}
+
+	if len(urls) == 0 {
+		primary := strings.TrimSpace(s.recordPrimaryAssetURL(record))
+		if primary == "" {
+			return nil, nil
+		}
+		return []string{primary}, []string{assetFileName(primary)}
+	}
+
+	return urls, names
 }
 
 func (s *Service) syncVendureCollections(ctx context.Context, app core.App, record *core.Record, productID string) error {
@@ -1766,7 +1851,7 @@ func (s *Service) PreviewBackendReleasePayload(_ context.Context, app core.App, 
 	if err != nil {
 		return BackendReleasePayloadPreview{}, err
 	}
-	payload := s.buildVendurePayload(record)
+	payload := s.buildVendurePayload(app, record)
 	preview := map[string]any{
 		"name":              payload.Name,
 		"slug":              payload.Slug,
@@ -1784,6 +1869,7 @@ func (s *Service) PreviewBackendReleasePayload(_ context.Context, app core.App, 
 		"defaultStock":      payload.DefaultStock,
 		"salesUnit":         payload.SalesUnit,
 		"assetURL":          payload.AssetURL,
+		"assetURLs":         payload.AssetURLs,
 		"cEndAssetURL":      payload.CEndAssetURL,
 		"vendureProductId":  payload.VendureProduct,
 		"vendureVariantId":  payload.VendureVariant,

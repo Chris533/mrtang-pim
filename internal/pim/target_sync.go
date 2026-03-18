@@ -18,9 +18,11 @@ const (
 	CollectionTargetSyncJobs = "target_sync_jobs"
 	CollectionTargetSyncRuns = "target_sync_runs"
 
-	TargetSyncEntityCategoryTree = "category_tree"
-	TargetSyncEntityProducts     = "products"
-	TargetSyncEntityAssets       = "assets"
+	TargetSyncEntityCategoryTree    = "category_tree"
+	TargetSyncEntityCategorySources = "category_sources"
+	TargetSyncEntityCategoryRebuild = "category_rebuild"
+	TargetSyncEntityProducts        = "products"
+	TargetSyncEntityAssets          = "assets"
 
 	TargetSyncScopeAll      = "all"
 	TargetSyncScopeTopLevel = "top_level"
@@ -31,6 +33,9 @@ const (
 	TargetSyncStatusPartial = "partial"
 	TargetSyncStatusFailed  = "failed"
 )
+
+type targetSyncDatasetLoader func(context.Context, string, string) (*miniappmodel.Dataset, error)
+type targetSyncSectionProductLoader func(context.Context, []miniappmodel.CategorySection, string) (*miniappmodel.Dataset, error)
 
 type TargetSyncActor struct {
 	Email string `json:"email"`
@@ -143,6 +148,8 @@ type TargetSyncBaseSummary struct {
 	SourceApprovedCount        int                        `json:"sourceApprovedCount"`
 	SourceAssetPendingCount    int                        `json:"sourceAssetPendingCount"`
 	SourceAssetFailedCount     int                        `json:"sourceAssetFailedCount"`
+	TopLevelCount              int                        `json:"topLevelCount"`
+	ScopeOptions               []TargetSyncScopeOption    `json:"scopeOptions"`
 	Jobs                       []TargetSyncJob            `json:"jobs"`
 	Runs                       []TargetSyncRun            `json:"runs"`
 	RecentMiniappWrites        []TargetMiniappWrite       `json:"recentMiniappWrites"`
@@ -300,6 +307,10 @@ func (s *Service) TargetSyncBaseSummary(app core.App, sourceMode string, rawAuth
 	if err != nil {
 		return TargetSyncBaseSummary{}, err
 	}
+	storedLive, err := s.TargetSyncStoredLiveSummary(app, strings.TrimSpace(sourceMode))
+	if err != nil {
+		return TargetSyncBaseSummary{}, err
+	}
 
 	importedCount := 0
 	approvedCount := 0
@@ -335,6 +346,8 @@ func (s *Service) TargetSyncBaseSummary(app core.App, sourceMode string, rawAuth
 		SourceApprovedCount:        approvedCount,
 		SourceAssetPendingCount:    assetPendingCount,
 		SourceAssetFailedCount:     assetFailedCount,
+		TopLevelCount:              storedLive.TopLevelCount,
+		ScopeOptions:               storedLive.ScopeOptions,
 		Jobs:                       jobs,
 		Runs:                       runs,
 		RecentMiniappWrites:        targetMiniappWrites(app, 8),
@@ -643,7 +656,7 @@ func (s *Service) EnsureTargetSyncJobSpec(app core.App, sourceMode string, entit
 	if scopeType == TargetSyncScopeTopLevel {
 		jobKey = entityType + ":" + scopeKey
 	}
-	name := targetSyncEntityLabel(entityType) + "抓取入库"
+	name := targetSyncEntityActionLabel(entityType)
 	if scopeType == TargetSyncScopeTopLevel {
 		name = name + " / " + scopeLabel
 	}
@@ -673,9 +686,12 @@ func (s *Service) EnsureTargetSyncJobSpec(app core.App, sourceMode string, entit
 	return targetSyncJobFromRecord(record), nil
 }
 
-func (s *Service) StartTargetSyncAsync(app core.App, sourceLoader func(context.Context, string, string) (*miniappmodel.Dataset, error), entityType string, scopeKey string, scopeLabel string, actor TargetSyncActor) (TargetSyncRun, error) {
+func (s *Service) StartTargetSyncAsync(app core.App, sourceLoader targetSyncDatasetLoader, productLoader targetSyncSectionProductLoader, entityType string, scopeKey string, scopeLabel string, actor TargetSyncActor) (TargetSyncRun, error) {
 	if sourceLoader == nil {
 		return TargetSyncRun{}, fmt.Errorf("target sync source loader is nil")
+	}
+	if productLoader == nil {
+		return TargetSyncRun{}, fmt.Errorf("target sync product loader is nil")
 	}
 	if err := s.reconcileStaleTargetSyncRuns(app); err != nil {
 		return TargetSyncRun{}, err
@@ -703,8 +719,13 @@ func (s *Service) StartTargetSyncAsync(app core.App, sourceLoader func(context.C
 		defer cancel()
 
 		tracker := newTargetSyncProgressTracker(app, record)
-		_ = tracker.setStage("loading_dataset", "加载源站数据集", 0)
-		_ = tracker.addLog("loading_dataset", "info", "开始读取当前源站数据集。")
+		if normalizeTargetSyncEntity(job.EntityType) == TargetSyncEntityCategoryRebuild {
+			_ = tracker.setStage("categories", "重建分类商品归属", 0)
+			_ = tracker.addLog("categories", "info", "开始基于已保存分类商品来源重建商品分类归属。")
+		} else {
+			_ = tracker.setStage("loading_dataset", "加载源站数据集", 0)
+			_ = tracker.addLog("loading_dataset", "info", "开始读取当前源站数据集。")
+		}
 
 		if normalizeTargetSyncEntity(job.EntityType) == TargetSyncEntityAssets && strings.TrimSpace(job.ScopeKey) == "" {
 			if result, ok, fastErr := s.trySyncTargetAssetsFromSourceProducts(runCtx, app, job, tracker); fastErr != nil {
@@ -716,7 +737,7 @@ func (s *Service) StartTargetSyncAsync(app core.App, sourceLoader func(context.C
 			}
 		}
 
-		result, runErr := s.runTargetSyncJob(runCtx, app, sourceLoader, job, record, tracker)
+		result, runErr := s.runTargetSyncJob(runCtx, app, sourceLoader, productLoader, job, record, tracker)
 		if runErr != nil {
 			result.status = TargetSyncStatusFailed
 			result.errorMessage = runErr.Error()
@@ -732,31 +753,28 @@ func (s *Service) StartTargetSyncAsync(app core.App, sourceLoader func(context.C
 func (s *Service) runTargetSyncJob(
 	ctx context.Context,
 	app core.App,
-	sourceLoader func(context.Context, string, string) (*miniappmodel.Dataset, error),
+	sourceLoader targetSyncDatasetLoader,
+	productLoader targetSyncSectionProductLoader,
 	job TargetSyncJob,
 	record *core.Record,
 	tracker *targetSyncProgressTracker,
 ) (targetCategorySyncResult, error) {
 	if normalizeTargetSyncEntity(job.EntityType) == TargetSyncEntityCategoryTree {
-		return s.runCategoryTreeSnapshotSync(ctx, app, sourceLoader, job, record, tracker)
+		return s.runCategoryTreeSync(ctx, app, sourceLoader, job, record, tracker)
+	}
+	if normalizeTargetSyncEntity(job.EntityType) == TargetSyncEntityCategorySources {
+		return s.runCategorySourceSync(ctx, app, sourceLoader, job, record, tracker)
+	}
+	if normalizeTargetSyncEntity(job.EntityType) == TargetSyncEntityCategoryRebuild {
+		return s.runCategoryRebuildSync(ctx, app, job, record, tracker)
 	}
 
 	if normalizeTargetSyncEntity(job.EntityType) == TargetSyncEntityProducts && strings.TrimSpace(job.ScopeKey) == "" {
-		return s.runTopLevelTargetProductSync(ctx, app, sourceLoader, job, record, tracker)
+		return s.runTopLevelTargetProductSync(ctx, app, sourceLoader, productLoader, job, record, tracker)
 	}
 
 	if normalizeTargetSyncEntity(job.EntityType) == TargetSyncEntityProducts {
-		if storedDataset, ok, storedErr := s.storedTargetProductsDataset(app, job.ScopeKey); storedErr != nil {
-			_ = tracker.addLog("loading_dataset", "warning", "读取已保存分类商品快照失败，回退到实时源站抓取："+storedErr.Error())
-		} else if ok {
-			_ = tracker.addLog("loading_dataset", "info", "检测到已保存分类商品快照，商品规格抓取优先复用快照。")
-			job.SourceMode = strings.TrimSpace(storedDataset.Meta.Source)
-			job.ScopeLabel = resolveTargetSyncScopeLabel(storedDataset, job.ScopeKey, job.ScopeLabel)
-			record.Set("source_mode", job.SourceMode)
-			record.Set("scope_label", job.ScopeLabel)
-			_ = app.Save(record)
-			return s.executeTargetSync(ctx, app, *storedDataset, job, tracker)
-		}
+		return s.runScopedTargetProductSync(ctx, app, sourceLoader, productLoader, job, record, tracker)
 	}
 
 	datasetCtx, datasetCancel := context.WithTimeout(ctx, s.targetSyncDatasetLoadTimeout(job.EntityType))
@@ -803,10 +821,10 @@ func (s *Service) runTargetSyncJob(
 	return result, nil
 }
 
-func (s *Service) runCategoryTreeSnapshotSync(
+func (s *Service) runCategoryTreeSync(
 	ctx context.Context,
 	app core.App,
-	sourceLoader func(context.Context, string, string) (*miniappmodel.Dataset, error),
+	sourceLoader targetSyncDatasetLoader,
 	job TargetSyncJob,
 	record *core.Record,
 	tracker *targetSyncProgressTracker,
@@ -839,110 +857,22 @@ func (s *Service) runCategoryTreeSnapshotSync(
 	if syncErr != nil {
 		return result, syncErr
 	}
-
-	nodes := treeDataset.CategoryPage.Tree
-	if key := strings.TrimSpace(job.ScopeKey); key != "" {
-		node := findCategoryNode(nodes, key)
-		if node == nil {
-			return result, fmt.Errorf("category scope not found: %s", key)
-		}
-		nodes = []miniappmodel.CategoryNode{*node}
-	}
-
-	requestNodes := append([]miniappmodel.CategoryNode(nil), nodes...)
 	if tracker != nil {
-		_ = tracker.addLog("categories", "info", fmt.Sprintf("开始抓取并保存 %d 个分类分支下的商品快照。", len(requestNodes)))
-	}
-
-	snapshotCreated := 0
-	snapshotUpdated := 0
-	failedBranches := make([]string, 0)
-	for _, node := range requestNodes {
-		if tracker != nil {
-			_ = tracker.addLog("categories", "info", fmt.Sprintf("开始抓取分类快照分支 %s。", strings.TrimSpace(node.Label)))
-		}
-		branchCtx, branchCancel := context.WithTimeout(ctx, s.targetSyncDatasetLoadTimeout(TargetSyncEntityProducts))
-		branchDataset, branchErr := sourceLoader(branchCtx, TargetSyncEntityProducts, node.Key)
-		branchCancel()
-		if branchErr != nil {
-			result.status = TargetSyncStatusPartial
-			result.missingCount++
-			failedBranches = append(failedBranches, strings.TrimSpace(node.Label))
-			result.details = appendTargetSyncDetail(result.details, TargetSyncChangeItem{
-				ChangeType: "failed",
-				TargetType: TargetSyncEntityCategoryTree,
-				TargetKey:  node.Key,
-				Label:      node.Label,
-				Path:       node.Label,
-				Note:       "分类商品快照抓取失败：" + branchErr.Error(),
-			})
-			if tracker != nil {
-				_ = tracker.addLog("categories", "warning", fmt.Sprintf("分支 %s 分类商品快照抓取失败：%v", strings.TrimSpace(node.Label), branchErr))
-			}
-			continue
-		}
-		created, updated, count, saveErr := s.syncTargetCategorySectionSnapshots(app, *branchDataset)
-		if saveErr != nil {
-			result.status = TargetSyncStatusPartial
-			result.missingCount++
-			failedBranches = append(failedBranches, strings.TrimSpace(node.Label))
-			result.details = appendTargetSyncDetail(result.details, TargetSyncChangeItem{
-				ChangeType: "failed",
-				TargetType: TargetSyncEntityCategoryTree,
-				TargetKey:  node.Key,
-				Label:      node.Label,
-				Path:       node.Label,
-				Note:       "分类商品快照保存失败：" + saveErr.Error(),
-			})
-			if tracker != nil {
-				_ = tracker.addLog("categories", "warning", fmt.Sprintf("分支 %s 分类商品快照保存失败：%v", strings.TrimSpace(node.Label), saveErr))
-			}
-			continue
-		}
-		snapshotCreated += created
-		snapshotUpdated += updated
-		if tracker != nil {
-			_ = tracker.addLog("categories", "info", fmt.Sprintf("分支 %s 分类商品快照完成：保存 %d 个分类路径，新增 %d，更新 %d。", strings.TrimSpace(node.Label), count, created, updated))
-		}
-	}
-
-	if tracker != nil {
-		_ = tracker.addLog("categories", "info", fmt.Sprintf("抓分类完成：分类节点新增 %d，更新 %d，未变化 %d；分类商品快照新增 %d，更新 %d。", result.createdCount, result.updatedCount, result.unchangedCount, snapshotCreated, snapshotUpdated))
-	}
-	if len(failedBranches) > 0 && snapshotCreated == 0 && snapshotUpdated == 0 {
-		result.status = TargetSyncStatusFailed
-		result.errorMessage = "分类商品快照全部抓取失败：" + strings.Join(failedBranches, "、")
+		_ = tracker.addLog("categories", "info", fmt.Sprintf("抓分类树完成：新增 %d，更新 %d，未变化 %d。", result.createdCount, result.updatedCount, result.unchangedCount))
 	}
 	return result, nil
 }
 
-func (s *Service) syncTargetCategorySectionSnapshots(app core.App, dataset miniappmodel.Dataset) (int, int, int, error) {
-	createdCount := 0
-	updatedCount := 0
-	for _, section := range dataset.CategoryPage.Sections {
-		created, changed, err := upsertSourceCategorySectionSnapshot(app, section, dataset.Meta.Source)
-		if err != nil {
-			return createdCount, updatedCount, 0, err
-		}
-		if created {
-			createdCount++
-		} else if changed {
-			updatedCount++
-		}
-	}
-	return createdCount, updatedCount, len(dataset.CategoryPage.Sections), nil
-}
-
-func (s *Service) runTopLevelTargetProductSync(
+func (s *Service) runCategorySourceSync(
 	ctx context.Context,
 	app core.App,
-	sourceLoader func(context.Context, string, string) (*miniappmodel.Dataset, error),
+	sourceLoader targetSyncDatasetLoader,
 	job TargetSyncJob,
 	record *core.Record,
 	tracker *targetSyncProgressTracker,
 ) (targetCategorySyncResult, error) {
 	treeCtx, treeCancel := context.WithTimeout(ctx, s.targetSyncDatasetLoadTimeout(TargetSyncEntityCategoryTree))
-	treeDataset, err := sourceLoader(treeCtx, TargetSyncEntityCategoryTree, "")
+	treeDataset, err := sourceLoader(treeCtx, TargetSyncEntityCategoryTree, job.ScopeKey)
 	treeCancel()
 	if err != nil {
 		_ = tracker.addLog("loading_dataset", "error", "加载源站分类树失败："+err.Error())
@@ -965,7 +895,167 @@ func (s *Service) runTopLevelTargetProductSync(
 	record.Set("scope_label", job.ScopeLabel)
 	_ = app.Save(record)
 
-	topLevelNodes := append([]miniappmodel.CategoryNode(nil), treeDataset.CategoryPage.Tree...)
+	nodes := treeDataset.CategoryPage.Tree
+	if key := strings.TrimSpace(job.ScopeKey); key != "" {
+		node := findCategoryNode(nodes, key)
+		if node == nil {
+			return targetCategorySyncResult{}, fmt.Errorf("category scope not found: %s", key)
+		}
+		nodes = []miniappmodel.CategoryNode{*node}
+	}
+
+	requestNodes := append([]miniappmodel.CategoryNode(nil), nodes...)
+	result := targetCategorySyncResult{
+		entityType: TargetSyncEntityCategorySources,
+		jobKey:     job.JobKey,
+		jobName:    job.Name,
+		scopeType:  targetScopeType(job.ScopeKey),
+		scopeKey:   strings.TrimSpace(job.ScopeKey),
+		scopeLabel: job.ScopeLabel,
+		status:     TargetSyncStatusSuccess,
+		sourceMode: job.SourceMode,
+	}
+	if tracker != nil {
+		_ = tracker.setStage("categories", "写入分类商品来源", len(requestNodes))
+		_ = tracker.addLog("categories", "info", fmt.Sprintf("开始刷新 %d 个分类分支的商品来源。", len(requestNodes)))
+	}
+
+	failedBranches := make([]string, 0)
+	for _, node := range requestNodes {
+		if tracker != nil {
+			_ = tracker.addLog("categories", "info", fmt.Sprintf("开始抓取分类商品来源分支 %s。", strings.TrimSpace(node.Label)))
+		}
+		branchCtx, branchCancel := context.WithTimeout(ctx, s.targetSyncDatasetLoadTimeout(TargetSyncEntityCategorySources))
+		branchDataset, branchErr := sourceLoader(branchCtx, TargetSyncEntityCategorySources, node.Key)
+		branchCancel()
+		if branchErr != nil {
+			result.status = TargetSyncStatusPartial
+			result.missingCount++
+			failedBranches = append(failedBranches, strings.TrimSpace(node.Label))
+			result.details = appendTargetSyncDetail(result.details, TargetSyncChangeItem{
+				ChangeType: "failed",
+				TargetType: TargetSyncEntityCategorySources,
+				TargetKey:  node.Key,
+				Label:      node.Label,
+				Path:       node.Label,
+				Note:       "分类商品来源抓取失败：" + branchErr.Error(),
+			})
+			if tracker != nil {
+				_ = tracker.addLog("categories", "warning", fmt.Sprintf("分支 %s 分类商品来源抓取失败：%v", strings.TrimSpace(node.Label), branchErr))
+				_ = tracker.step(node.Label)
+			}
+			continue
+		}
+		created, updated, count, saveErr := s.syncTargetCategorySectionSnapshots(app, *branchDataset)
+		if saveErr != nil {
+			result.status = TargetSyncStatusPartial
+			result.missingCount++
+			failedBranches = append(failedBranches, strings.TrimSpace(node.Label))
+			result.details = appendTargetSyncDetail(result.details, TargetSyncChangeItem{
+				ChangeType: "failed",
+				TargetType: TargetSyncEntityCategorySources,
+				TargetKey:  node.Key,
+				Label:      node.Label,
+				Path:       node.Label,
+				Note:       "分类商品来源保存失败：" + saveErr.Error(),
+			})
+			if tracker != nil {
+				_ = tracker.addLog("categories", "warning", fmt.Sprintf("分支 %s 分类商品来源保存失败：%v", strings.TrimSpace(node.Label), saveErr))
+				_ = tracker.step(node.Label)
+			}
+			continue
+		}
+		result.createdCount += created
+		result.updatedCount += updated
+		result.unchangedCount += max(count-created-updated, 0)
+		result.scopedNodeCount += count
+		if tracker != nil {
+			_ = tracker.addLog("categories", "info", fmt.Sprintf("分支 %s 分类商品来源完成：保存 %d 个分类路径，新增 %d，更新 %d。", strings.TrimSpace(node.Label), count, created, updated))
+			_ = tracker.step(node.Label)
+		}
+	}
+	if len(failedBranches) > 0 && result.createdCount == 0 && result.updatedCount == 0 && result.unchangedCount == 0 {
+		result.status = TargetSyncStatusFailed
+		result.errorMessage = "分类商品来源全部抓取失败：" + strings.Join(failedBranches, "、")
+	}
+	if tracker != nil {
+		_ = tracker.addLog("categories", "info", fmt.Sprintf("刷新分类商品来源完成：新增 %d，更新 %d，未变化 %d。", result.createdCount, result.updatedCount, result.unchangedCount))
+	}
+	return result, nil
+}
+
+func (s *Service) syncTargetCategorySectionSnapshots(app core.App, dataset miniappmodel.Dataset) (int, int, int, error) {
+	createdCount := 0
+	updatedCount := 0
+	for _, section := range dataset.CategoryPage.Sections {
+		created, changed, err := upsertSourceCategorySectionSnapshot(app, section, dataset.Meta.Source)
+		if err != nil {
+			return createdCount, updatedCount, 0, err
+		}
+		if created {
+			createdCount++
+		} else if changed {
+			updatedCount++
+		}
+	}
+	return createdCount, updatedCount, len(dataset.CategoryPage.Sections), nil
+}
+
+func (s *Service) syncTargetCategorySectionSnapshotDataset(app core.App, dataset miniappmodel.Dataset, scopeKey string, tracker *targetSyncProgressTracker) (targetCategorySyncResult, error) {
+	result := targetCategorySyncResult{
+		entityType: TargetSyncEntityCategorySources,
+		status:     TargetSyncStatusSuccess,
+		sourceMode: dataset.Meta.Source,
+		scopeType:  targetScopeType(scopeKey),
+		scopeKey:   strings.TrimSpace(scopeKey),
+		scopeLabel: targetScopeLabel(dataset, scopeKey),
+	}
+	if tracker != nil {
+		_ = tracker.setStage("categories", "写入分类商品来源", len(dataset.CategoryPage.Sections))
+	}
+	created, updated, count, err := s.syncTargetCategorySectionSnapshots(app, dataset)
+	if err != nil {
+		return result, err
+	}
+	result.createdCount = created
+	result.updatedCount = updated
+	result.unchangedCount = max(count-created-updated, 0)
+	result.scopedNodeCount = count
+	if tracker != nil {
+		_ = tracker.addLog("categories", "info", fmt.Sprintf("刷新分类商品来源完成：新增 %d，更新 %d，未变化 %d。", result.createdCount, result.updatedCount, result.unchangedCount))
+	}
+	return result, nil
+}
+
+func (s *Service) runTopLevelTargetProductSync(
+	ctx context.Context,
+	app core.App,
+	sourceLoader targetSyncDatasetLoader,
+	productLoader targetSyncSectionProductLoader,
+	job TargetSyncJob,
+	record *core.Record,
+	tracker *targetSyncProgressTracker,
+) (targetCategorySyncResult, error) {
+	topLevelNodes, sourceMode, err := s.targetSyncTopLevelNodes(ctx, app, sourceLoader)
+	if err != nil {
+		_ = tracker.addLog("loading_dataset", "error", "加载分类分支失败："+err.Error())
+		return targetCategorySyncResult{
+			entityType:   job.EntityType,
+			jobKey:       job.JobKey,
+			jobName:      job.Name,
+			scopeType:    job.ScopeType,
+			scopeKey:     job.ScopeKey,
+			scopeLabel:   "当前源站结果",
+			status:       TargetSyncStatusFailed,
+			sourceMode:   strings.TrimSpace(s.cfg.MiniApp.SourceMode),
+			errorMessage: "加载分类分支失败：" + err.Error(),
+		}, err
+	}
+	job.SourceMode = sourceMode
+	job.ScopeLabel = "当前源站结果"
+	record.Set("source_mode", job.SourceMode)
+	record.Set("scope_label", job.ScopeLabel)
+	_ = app.Save(record)
 	if len(topLevelNodes) == 0 {
 		err := fmt.Errorf("源站分类树为空，无法按分类分支抓取商品")
 		_ = tracker.addLog("loading_dataset", "error", err.Error())
@@ -1004,53 +1094,52 @@ func (s *Service) runTopLevelTargetProductSync(
 		if tracker != nil {
 			_ = tracker.addLog("products", "info", fmt.Sprintf("开始抓取分支 %s。", strings.TrimSpace(node.Label)))
 		}
-		var branchDataset *miniappmodel.Dataset
-		var branchErr error
-		if storedDataset, ok, storedErr := s.storedTargetProductsDataset(app, node.Key); storedErr != nil {
+		sections, usedStoredSections, sectionErr := s.targetSyncCategorySectionsForScope(ctx, app, sourceLoader, node.Key)
+		if sectionErr != nil {
+			failedBranches = append(failedBranches, strings.TrimSpace(node.Label))
+			result.status = TargetSyncStatusPartial
+			result.missingCount++
+			result.details = appendTargetSyncDetail(result.details, TargetSyncChangeItem{
+				ChangeType: "failed",
+				TargetType: TargetSyncEntityProducts,
+				TargetKey:  node.Key,
+				Label:      node.Label,
+				Path:       node.Label,
+				Note:       "分类商品来源读取失败：" + sectionErr.Error(),
+			})
 			if tracker != nil {
-				_ = tracker.addLog("products", "warning", fmt.Sprintf("分支 %s 读取已保存分类商品快照失败，回退到实时源站抓取：%v", strings.TrimSpace(node.Label), storedErr))
+				_ = tracker.addLog("products", "warning", fmt.Sprintf("分支 %s 分类商品来源读取失败：%v", strings.TrimSpace(node.Label), sectionErr))
+				_ = tracker.step(node.Label)
 			}
-		} else if ok {
-			branchDataset = storedDataset
-			if tracker != nil {
-				_ = tracker.addLog("products", "info", fmt.Sprintf("分支 %s 优先使用已保存分类商品快照。", strings.TrimSpace(node.Label)))
+			continue
+		}
+		if tracker != nil {
+			if usedStoredSections {
+				_ = tracker.addLog("products", "info", fmt.Sprintf("分支 %s 优先使用已保存分类商品来源。", strings.TrimSpace(node.Label)))
+			} else {
+				_ = tracker.addLog("products", "info", fmt.Sprintf("分支 %s 未命中本地来源，已即时刷新分类商品来源。", strings.TrimSpace(node.Label)))
 			}
 		}
-		if branchDataset == nil {
-			branchCtx, branchCancel := context.WithTimeout(ctx, s.targetSyncDatasetLoadTimeout(TargetSyncEntityProducts))
-			branchDataset, branchErr = sourceLoader(branchCtx, TargetSyncEntityProducts, node.Key)
-			branchCancel()
-		}
+		branchCtx, branchCancel := context.WithTimeout(ctx, s.targetSyncDatasetLoadTimeout(TargetSyncEntityProducts))
+		branchDataset, branchErr := productLoader(branchCtx, sections, node.Key)
+		branchCancel()
 		if branchErr != nil {
-			if storedDataset, ok, storedErr := s.storedTargetProductsDataset(app, node.Key); storedErr != nil {
-				if tracker != nil {
-					_ = tracker.addLog("products", "warning", fmt.Sprintf("分支 %s 实时抓取失败，且读取已保存分类商品快照失败：%v", strings.TrimSpace(node.Label), storedErr))
-				}
-			} else if ok {
-				branchDataset = storedDataset
-				if tracker != nil {
-					_ = tracker.addLog("products", "warning", fmt.Sprintf("分支 %s 实时抓取失败，已回退到已保存分类商品快照：%v", strings.TrimSpace(node.Label), branchErr))
-				}
-				branchErr = nil
+			failedBranches = append(failedBranches, strings.TrimSpace(node.Label))
+			result.status = TargetSyncStatusPartial
+			result.missingCount++
+			result.details = appendTargetSyncDetail(result.details, TargetSyncChangeItem{
+				ChangeType: "failed",
+				TargetType: TargetSyncEntityProducts,
+				TargetKey:  node.Key,
+				Label:      node.Label,
+				Path:       node.Label,
+				Note:       "商品规格抓取失败：" + branchErr.Error(),
+			})
+			if tracker != nil {
+				_ = tracker.addLog("products", "warning", fmt.Sprintf("分支 %s 商品规格抓取失败：%v", strings.TrimSpace(node.Label), branchErr))
+				_ = tracker.step(node.Label)
 			}
-			if branchErr != nil {
-				failedBranches = append(failedBranches, strings.TrimSpace(node.Label))
-				result.status = TargetSyncStatusPartial
-				result.missingCount++
-				result.details = appendTargetSyncDetail(result.details, TargetSyncChangeItem{
-					ChangeType: "failed",
-					TargetType: TargetSyncEntityProducts,
-					TargetKey:  node.Key,
-					Label:      node.Label,
-					Path:       node.Label,
-					Note:       "分支抓取失败：" + branchErr.Error(),
-				})
-				if tracker != nil {
-					_ = tracker.addLog("products", "warning", fmt.Sprintf("分支 %s 抓取失败：%v", strings.TrimSpace(node.Label), branchErr))
-					_ = tracker.step(node.Label)
-				}
-				continue
-			}
+			continue
 		}
 		branchFailures := collectRawCategoryProductFailures(branchDataset.Meta.Notes)
 		if len(branchFailures) > 0 {
@@ -1122,6 +1211,172 @@ func (s *Service) runTopLevelTargetProductSync(
 		_ = tracker.addLog("products", "info", fmt.Sprintf("按当前源站结果抓商品规格完成：新增 %d，更新 %d，未变化 %d。", result.createdCount, result.updatedCount, result.unchangedCount))
 	}
 	return result, nil
+}
+
+func (s *Service) runScopedTargetProductSync(
+	ctx context.Context,
+	app core.App,
+	sourceLoader targetSyncDatasetLoader,
+	productLoader targetSyncSectionProductLoader,
+	job TargetSyncJob,
+	record *core.Record,
+	tracker *targetSyncProgressTracker,
+) (targetCategorySyncResult, error) {
+	sections, usedStoredSections, err := s.targetSyncCategorySectionsForScope(ctx, app, sourceLoader, job.ScopeKey)
+	if err != nil {
+		_ = tracker.addLog("loading_dataset", "error", "加载分类商品来源失败："+err.Error())
+		return targetCategorySyncResult{
+			entityType:   job.EntityType,
+			jobKey:       job.JobKey,
+			jobName:      job.Name,
+			scopeType:    job.ScopeType,
+			scopeKey:     job.ScopeKey,
+			scopeLabel:   job.ScopeLabel,
+			status:       TargetSyncStatusFailed,
+			sourceMode:   strings.TrimSpace(s.cfg.MiniApp.SourceMode),
+			errorMessage: "加载分类商品来源失败：" + err.Error(),
+		}, err
+	}
+	if tracker != nil {
+		if usedStoredSections {
+			_ = tracker.addLog("loading_dataset", "info", "检测到已保存分类商品来源，商品规格抓取优先复用来源。")
+		} else {
+			_ = tracker.addLog("loading_dataset", "info", "未命中已保存分类商品来源，已即时刷新来源后继续抓取商品规格。")
+		}
+	}
+	datasetCtx, datasetCancel := context.WithTimeout(ctx, s.targetSyncDatasetLoadTimeout(TargetSyncEntityProducts))
+	dataset, loadErr := productLoader(datasetCtx, sections, job.ScopeKey)
+	datasetCancel()
+	if loadErr != nil {
+		_ = tracker.addLog("loading_dataset", "error", "加载商品规格失败："+loadErr.Error())
+		return targetCategorySyncResult{
+			entityType:   job.EntityType,
+			jobKey:       job.JobKey,
+			jobName:      job.Name,
+			scopeType:    job.ScopeType,
+			scopeKey:     job.ScopeKey,
+			scopeLabel:   job.ScopeLabel,
+			status:       TargetSyncStatusFailed,
+			sourceMode:   strings.TrimSpace(s.cfg.MiniApp.SourceMode),
+			errorMessage: "加载商品规格失败：" + loadErr.Error(),
+		}, loadErr
+	}
+	job.SourceMode = strings.TrimSpace(dataset.Meta.Source)
+	job.ScopeLabel = resolveTargetSyncScopeLabel(dataset, job.ScopeKey, job.ScopeLabel)
+	record.Set("source_mode", job.SourceMode)
+	record.Set("scope_label", job.ScopeLabel)
+	_ = app.Save(record)
+	return s.executeTargetSync(ctx, app, *dataset, job, tracker)
+}
+
+func (s *Service) runCategoryRebuildSync(
+	_ context.Context,
+	app core.App,
+	job TargetSyncJob,
+	record *core.Record,
+	tracker *targetSyncProgressTracker,
+) (targetCategorySyncResult, error) {
+	result, err := s.rebuildSourceProductCategoryAssignments(app, job.ScopeKey, tracker)
+	if err != nil {
+		return targetCategorySyncResult{
+			entityType:   job.EntityType,
+			jobKey:       job.JobKey,
+			jobName:      job.Name,
+			scopeType:    targetScopeType(job.ScopeKey),
+			scopeKey:     strings.TrimSpace(job.ScopeKey),
+			scopeLabel:   targetSyncFirstNonEmpty(job.ScopeLabel, "当前已保存分类来源"),
+			status:       TargetSyncStatusFailed,
+			sourceMode:   "source_category_sections",
+			errorMessage: "重建分类商品归属失败：" + err.Error(),
+		}, err
+	}
+	record.Set("source_mode", "source_category_sections")
+	record.Set("scope_label", result.scopeLabel)
+	_ = app.Save(record)
+	return result, nil
+}
+
+func (s *Service) targetSyncTopLevelNodes(
+	ctx context.Context,
+	app core.App,
+	sourceLoader targetSyncDatasetLoader,
+) ([]miniappmodel.CategoryNode, string, error) {
+	if nodes, ok, err := s.storedTargetSyncTopLevelNodes(app); err != nil {
+		return nil, "", err
+	} else if ok {
+		return nodes, "source_categories", nil
+	}
+	treeCtx, treeCancel := context.WithTimeout(ctx, s.targetSyncDatasetLoadTimeout(TargetSyncEntityCategoryTree))
+	treeDataset, err := sourceLoader(treeCtx, TargetSyncEntityCategoryTree, "")
+	treeCancel()
+	if err != nil {
+		return nil, "", err
+	}
+	return append([]miniappmodel.CategoryNode(nil), treeDataset.CategoryPage.Tree...), strings.TrimSpace(treeDataset.Meta.Source), nil
+}
+
+func (s *Service) storedTargetSyncTopLevelNodes(app core.App) ([]miniappmodel.CategoryNode, bool, error) {
+	records, err := app.FindAllRecords(CollectionSourceCategories)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(records) == 0 {
+		return nil, false, nil
+	}
+	nodes := sourceCategoryTreeFromRecords(records)
+	if len(nodes) == 0 {
+		return nil, false, nil
+	}
+	return nodes, true, nil
+}
+
+func (s *Service) targetSyncCategorySectionsForScope(
+	ctx context.Context,
+	app core.App,
+	sourceLoader targetSyncDatasetLoader,
+	scopeKey string,
+) ([]miniappmodel.CategorySection, bool, error) {
+	if sections, ok, err := s.storedCategorySectionsForScope(app, scopeKey); err != nil {
+		return nil, false, err
+	} else if ok {
+		return sections, true, nil
+	}
+	loadCtx, cancel := context.WithTimeout(ctx, s.targetSyncDatasetLoadTimeout(TargetSyncEntityCategorySources))
+	dataset, err := sourceLoader(loadCtx, TargetSyncEntityCategorySources, scopeKey)
+	cancel()
+	if err != nil {
+		return nil, false, err
+	}
+	if _, _, _, err := s.syncTargetCategorySectionSnapshots(app, *dataset); err != nil {
+		return nil, false, err
+	}
+	sections := append([]miniappmodel.CategorySection(nil), dataset.CategoryPage.Sections...)
+	if len(sections) == 0 {
+		return nil, false, fmt.Errorf("分类商品来源为空")
+	}
+	return sections, false, nil
+}
+
+func (s *Service) storedCategorySectionsForScope(app core.App, scopeKey string) ([]miniappmodel.CategorySection, bool, error) {
+	records, err := app.FindAllRecords(CollectionSourceCategorySections)
+	if err != nil {
+		return nil, false, err
+	}
+	sections := make([]miniappmodel.CategorySection, 0, len(records))
+	for _, record := range records {
+		if !sourceCategorySectionApplies(record, scopeKey) {
+			continue
+		}
+		section, ok := sourceCategorySectionFromRecord(record)
+		if !ok {
+			continue
+		}
+		sections = append(sections, section)
+	}
+	if len(sections) == 0 {
+		return nil, false, nil
+	}
+	return sections, true, nil
 }
 
 type rawCategoryProductFailure struct {
@@ -1228,6 +1483,8 @@ func (s *Service) executeTargetSync(ctx context.Context, app core.App, dataset m
 		result, err = s.syncTargetProducts(ctx, app, dataset, job.ScopeKey, tracker)
 	case TargetSyncEntityAssets:
 		result, err = s.syncTargetAssets(ctx, app, dataset, job.ScopeKey, tracker)
+	case TargetSyncEntityCategorySources:
+		result, err = s.syncTargetCategorySectionSnapshotDataset(app, dataset, job.ScopeKey, tracker)
 	default:
 		result, err = s.syncTargetCategories(ctx, app, dataset, job.ScopeKey, tracker)
 	}
@@ -1500,6 +1757,140 @@ func (s *Service) sourceProductsForAssetSync(app core.App) ([]miniappmodel.Produ
 	return products, nil
 }
 
+func (s *Service) rebuildSourceProductCategoryAssignments(app core.App, scopeKey string, tracker *targetSyncProgressTracker) (targetCategorySyncResult, error) {
+	result := targetCategorySyncResult{
+		entityType: TargetSyncEntityCategoryRebuild,
+		status:     TargetSyncStatusSuccess,
+		sourceMode: "source_category_sections",
+		scopeType:  targetScopeType(scopeKey),
+		scopeKey:   strings.TrimSpace(scopeKey),
+		scopeLabel: targetSyncFirstNonEmpty(strings.TrimSpace(scopeKey), "当前已保存分类来源"),
+	}
+	categoryRecords, err := app.FindAllRecords(CollectionSourceCategories)
+	if err != nil {
+		return result, err
+	}
+	sections, ok, err := s.storedCategorySectionsForScope(app, scopeKey)
+	if err != nil {
+		return result, err
+	}
+	if !ok || len(sections) == 0 {
+		return result, fmt.Errorf("当前范围没有已保存分类商品来源")
+	}
+	sectionLookupByProductID := buildCategorySectionsByProductID(sections)
+	if len(sectionLookupByProductID) == 0 {
+		return result, fmt.Errorf("当前范围没有可用于重建归属的商品来源")
+	}
+	tree := sourceCategoryTreeFromRecords(categoryRecords)
+	_, parentByKey := buildCategoryTreeMeta(tree)
+
+	productRecords, err := app.FindAllRecords(CollectionSourceProducts)
+	if err != nil {
+		return result, err
+	}
+	targetRecords := make([]*core.Record, 0, len(productRecords))
+	for _, record := range productRecords {
+		productID := strings.TrimSpace(record.GetString("product_id"))
+		if _, exists := sectionLookupByProductID[productID]; !exists {
+			continue
+		}
+		targetRecords = append(targetRecords, record)
+	}
+	result.scopedNodeCount = len(targetRecords)
+	if tracker != nil {
+		_ = tracker.setStage("categories", "重建分类商品归属", len(targetRecords))
+		_ = tracker.addLog("categories", "info", fmt.Sprintf("开始基于已保存分类商品来源重建 %d 个商品的分类归属。", len(targetRecords)))
+	}
+	for _, record := range targetRecords {
+		product, ok := sourceProductPageFromRecord(record)
+		if !ok {
+			continue
+		}
+		before := sourceProductSignature(record)
+		matchedSections := sectionLookupByProductID[product.ID]
+		product.SourceSections = nil
+		product.CategoryKey = ""
+		product.CategoryPath = ""
+		product.CategoryKeys = nil
+		product.ObservedCategoryKeys = nil
+		product.ObservedCategoryPaths = nil
+		sectionsLookup := make(map[string]miniappmodel.CategorySection, len(matchedSections))
+		for _, section := range matchedSections {
+			product = appendObservedCategorySection(product, section)
+			sectionsLookup[section.CategoryKey] = section
+		}
+		categoryKey, categoryPath, categoryKeys, observedCategoryKeys, observedCategoryPaths := productCategoryInfo(product, sectionsLookup, parentByKey)
+		if err := setSourceProductCategoryAssignment(record, product, categoryKey, categoryPath, categoryKeys, observedCategoryKeys, observedCategoryPaths); err != nil {
+			return result, err
+		}
+		if err := app.Save(record); err != nil {
+			return result, err
+		}
+		after := sourceProductSignature(record)
+		if before != after {
+			result.updatedCount++
+		} else {
+			result.unchangedCount++
+		}
+		if tracker != nil {
+			_ = tracker.step(product.Summary.Name)
+		}
+	}
+	if tracker != nil {
+		_ = tracker.addLog("categories", "info", fmt.Sprintf("重建分类商品归属完成：新增 %d，更新 %d，未变化 %d。", result.createdCount, result.updatedCount, result.unchangedCount))
+	}
+	return result, nil
+}
+
+func buildCategorySectionsByProductID(sections []miniappmodel.CategorySection) map[string][]miniappmodel.CategorySection {
+	lookup := make(map[string][]miniappmodel.CategorySection)
+	for _, section := range sections {
+		for _, item := range section.Products {
+			productID := strings.TrimSpace(item.ProductID)
+			if productID == "" && strings.TrimSpace(item.SpuID) != "" && strings.TrimSpace(item.SkuID) != "" {
+				productID = strings.TrimSpace(item.SpuID) + "_" + strings.TrimSpace(item.SkuID)
+			}
+			if productID == "" {
+				continue
+			}
+			lookup[productID] = append(lookup[productID], section)
+		}
+	}
+	return lookup
+}
+
+func appendObservedCategorySection(product miniappmodel.ProductPage, section miniappmodel.CategorySection) miniappmodel.ProductPage {
+	product.SourceSections = appendUniqueSourceStrings(product.SourceSections, section.CategoryKey)
+	product.ObservedCategoryKeys = normalizeSourceCategoryKeys(append(product.ObservedCategoryKeys, section.CategoryKey), product.CategoryKey)
+	product.ObservedCategoryPaths = normalizeSourceCategoryPaths(append(product.ObservedCategoryPaths, section.CategoryPath), product.CategoryPath)
+	if strings.TrimSpace(product.CategoryKey) == "" || len(section.CategoryKeys) > len(product.CategoryKeys) {
+		product.CategoryKey = section.CategoryKey
+		product.CategoryPath = section.CategoryPath
+		product.CategoryKeys = normalizeSourceCategoryKeys(section.CategoryKeys, section.CategoryKey)
+	}
+	return product
+}
+
+func setSourceProductCategoryAssignment(record *core.Record, product miniappmodel.ProductPage, categoryKey string, categoryPath string, categoryKeys []string, observedCategoryKeys []string, observedCategoryPaths []string) error {
+	record.Set("category_key", categoryKey)
+	record.Set("category_path", categoryPath)
+	record.Set("leaf_category_key", categoryKey)
+	record.Set("leaf_category_path", categoryPath)
+	if err := setJSON(record, "source_sections", product.SourceSections); err != nil {
+		return err
+	}
+	if err := setJSON(record, "category_keys_json", normalizeSourceCategoryKeys(categoryKeys, categoryKey)); err != nil {
+		return err
+	}
+	if err := setJSON(record, "observed_category_keys_json", normalizeSourceCategoryKeys(observedCategoryKeys, categoryKey)); err != nil {
+		return err
+	}
+	if err := setJSON(record, "observed_category_paths_json", normalizeSourceCategoryPaths(observedCategoryPaths, categoryPath)); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *Service) storedTargetProductsDataset(app core.App, scopeKey string) (*miniappmodel.Dataset, bool, error) {
 	categoryRecords, err := app.FindAllRecords(CollectionSourceCategories)
 	if err != nil {
@@ -1762,9 +2153,9 @@ func (s *Service) finalizeTargetSyncRun(app core.App, record *core.Record, resul
 	}
 	tracker := newTargetSyncProgressTracker(app, record)
 	if result.status == TargetSyncStatusFailed {
-		_ = tracker.addLog("completed", "error", targetSyncFirstNonEmpty(result.errorMessage, "抓取入库执行失败。"))
+		_ = tracker.addLog("completed", "error", targetSyncCompletionErrorMessage(result))
 	} else {
-		_ = tracker.addLog("completed", "info", fmt.Sprintf("抓取入库完成：新增 %d，更新 %d，未变化 %d。", result.createdCount, result.updatedCount, result.unchangedCount))
+		_ = tracker.addLog("completed", "info", targetSyncCompletionSuccessMessage(result))
 	}
 	if err := app.Save(record); err != nil {
 		return TargetSyncRun{}, err
@@ -1958,7 +2349,8 @@ func (s *Service) GetTargetSyncRun(app core.App, id string) (TargetSyncRun, erro
 
 func (s *Service) RetryFailedTargetSyncBranches(
 	app core.App,
-	sourceLoader func(context.Context, string, string) (*miniappmodel.Dataset, error),
+	sourceLoader targetSyncDatasetLoader,
+	productLoader targetSyncSectionProductLoader,
 	runID string,
 	actor TargetSyncActor,
 ) ([]TargetSyncRun, []string, error) {
@@ -1967,8 +2359,8 @@ func (s *Service) RetryFailedTargetSyncBranches(
 		return nil, nil, err
 	}
 	entityType := normalizeTargetSyncEntity(run.EntityType)
-	if entityType != TargetSyncEntityProducts && entityType != TargetSyncEntityCategoryTree {
-		return nil, nil, fmt.Errorf("当前仅支持重跑分类快照或商品抓取失败分支")
+	if entityType != TargetSyncEntityProducts && entityType != TargetSyncEntityCategorySources {
+		return nil, nil, fmt.Errorf("当前仅支持重跑分类商品来源或商品抓取失败分支")
 	}
 	branches := failedTargetSyncBranchItems(run, entityType)
 	if len(branches) == 0 {
@@ -1978,7 +2370,7 @@ func (s *Service) RetryFailedTargetSyncBranches(
 	started := make([]TargetSyncRun, 0, len(branches))
 	warnings := make([]string, 0)
 	for _, branch := range branches {
-		runItem, startErr := s.StartTargetSyncAsync(app, sourceLoader, entityType, branch.TargetKey, targetSyncFirstNonEmpty(branch.Label, branch.TargetKey), actor)
+		runItem, startErr := s.StartTargetSyncAsync(app, sourceLoader, productLoader, entityType, branch.TargetKey, targetSyncFirstNonEmpty(branch.Label, branch.TargetKey), actor)
 		if startErr != nil {
 			warnings = append(warnings, fmt.Sprintf("%s：%v", targetSyncFirstNonEmpty(branch.Label, branch.TargetKey), startErr))
 			continue
@@ -2114,7 +2506,7 @@ func (s *Service) targetSyncStaleAfter() time.Duration {
 func (s *Service) targetSyncDatasetLoadTimeout(entityType string) time.Duration {
 	timeout := s.cfg.MiniApp.SourceTimeout + 10*time.Second
 	switch normalizeTargetSyncEntity(entityType) {
-	case TargetSyncEntityProducts, TargetSyncEntityAssets, TargetSyncEntityCategoryTree:
+	case TargetSyncEntityProducts, TargetSyncEntityAssets, TargetSyncEntityCategoryTree, TargetSyncEntityCategorySources, TargetSyncEntityCategoryRebuild:
 		if timeout < 90*time.Second {
 			timeout = 90 * time.Second
 		}
@@ -2151,9 +2543,11 @@ func targetSyncCompletedFromLogs(logs []TargetSyncProgressLog, record *core.Reco
 func parseTargetSyncCompletionCounts(message string) (int, int, int, bool) {
 	patterns := []string{
 		"抓取入库完成：新增 %d，更新 %d，未变化 %d。",
-		"按当前源站结果抓分类完成：新增 %d，更新 %d，未变化 %d。",
-		"按当前源站结果抓商品规格完成：新增 %d，更新 %d，未变化 %d。",
+		"抓分类树完成：新增 %d，更新 %d，未变化 %d。",
+		"刷新分类商品来源完成：新增 %d，更新 %d，未变化 %d。",
+		"按已保存分类来源抓商品规格完成：新增 %d，更新 %d，未变化 %d。",
 		"按当前源站结果抓图片完成：新增 %d，更新 %d，未变化 %d。",
+		"重建分类商品归属完成：新增 %d，更新 %d，未变化 %d。",
 	}
 	for _, pattern := range patterns {
 		var created, updated, unchanged int
@@ -2265,6 +2659,10 @@ func safeCollectionSortExpr(collection *core.Collection, preferred string) strin
 
 func normalizeTargetSyncEntity(entityType string) string {
 	switch strings.ToLower(strings.TrimSpace(entityType)) {
+	case TargetSyncEntityCategorySources:
+		return TargetSyncEntityCategorySources
+	case TargetSyncEntityCategoryRebuild:
+		return TargetSyncEntityCategoryRebuild
 	case TargetSyncEntityProducts:
 		return TargetSyncEntityProducts
 	case TargetSyncEntityAssets:
@@ -2276,12 +2674,64 @@ func normalizeTargetSyncEntity(entityType string) string {
 
 func targetSyncEntityLabel(entityType string) string {
 	switch normalizeTargetSyncEntity(entityType) {
+	case TargetSyncEntityCategorySources:
+		return "分类商品来源"
+	case TargetSyncEntityCategoryRebuild:
+		return "分类商品归属重建"
 	case TargetSyncEntityProducts:
 		return "商品与规格"
 	case TargetSyncEntityAssets:
 		return "图片资产"
 	default:
 		return "分类树"
+	}
+}
+
+func targetSyncEntityActionLabel(entityType string) string {
+	switch normalizeTargetSyncEntity(entityType) {
+	case TargetSyncEntityCategorySources:
+		return "刷新分类商品来源"
+	case TargetSyncEntityCategoryRebuild:
+		return "重建分类商品归属"
+	case TargetSyncEntityProducts:
+		return "按已保存来源抓商品规格"
+	case TargetSyncEntityAssets:
+		return "按已保存商品抓图片"
+	default:
+		return "抓分类树"
+	}
+}
+
+func targetSyncCompletionSuccessMessage(result targetCategorySyncResult) string {
+	switch normalizeTargetSyncEntity(result.entityType) {
+	case TargetSyncEntityCategorySources:
+		return fmt.Sprintf("刷新分类商品来源完成：新增 %d，更新 %d，未变化 %d。", result.createdCount, result.updatedCount, result.unchangedCount)
+	case TargetSyncEntityCategoryRebuild:
+		return fmt.Sprintf("重建分类商品归属完成：新增 %d，更新 %d，未变化 %d。", result.createdCount, result.updatedCount, result.unchangedCount)
+	case TargetSyncEntityProducts:
+		return fmt.Sprintf("按已保存来源抓商品规格完成：新增 %d，更新 %d，未变化 %d。", result.createdCount, result.updatedCount, result.unchangedCount)
+	case TargetSyncEntityAssets:
+		return fmt.Sprintf("按已保存商品抓图片完成：新增 %d，更新 %d，未变化 %d。", result.createdCount, result.updatedCount, result.unchangedCount)
+	default:
+		return fmt.Sprintf("抓分类树完成：新增 %d，更新 %d，未变化 %d。", result.createdCount, result.updatedCount, result.unchangedCount)
+	}
+}
+
+func targetSyncCompletionErrorMessage(result targetCategorySyncResult) string {
+	if msg := strings.TrimSpace(result.errorMessage); msg != "" {
+		return msg
+	}
+	switch normalizeTargetSyncEntity(result.entityType) {
+	case TargetSyncEntityCategorySources:
+		return "刷新分类商品来源失败。"
+	case TargetSyncEntityCategoryRebuild:
+		return "重建分类商品归属失败。"
+	case TargetSyncEntityProducts:
+		return "按已保存来源抓商品规格失败。"
+	case TargetSyncEntityAssets:
+		return "按已保存商品抓图片失败。"
+	default:
+		return "抓分类树失败。"
 	}
 }
 

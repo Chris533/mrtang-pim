@@ -29,6 +29,8 @@ type ProductPayload struct {
 	ConsumerPrice     int
 	AssetURL          string
 	AssetName         string
+	AssetURLs         []string
+	AssetNames        []string
 	CEndAssetURL      string
 	CEndAssetName     string
 	BusinessPrice     int
@@ -101,14 +103,11 @@ func (c *Client) SyncProduct(ctx context.Context, payload ProductPayload) (SyncR
 	}
 
 	var result SyncResult
-
-	if strings.TrimSpace(payload.AssetURL) != "" {
-		assetID, err := c.uploadAsset(ctx, payload.AssetURL, payload.AssetName)
-		if err != nil {
-			return SyncResult{}, err
-		}
-		result.AssetID = assetID
+	productAssetIDs, primaryAssetID, err := c.uploadProductAssets(ctx, payload)
+	if err != nil {
+		return SyncResult{}, err
 	}
+	result.AssetID = primaryAssetID
 
 	cEndAssetID := ""
 	if strings.TrimSpace(payload.CEndAssetURL) != "" {
@@ -124,13 +123,13 @@ func (c *Client) SyncProduct(ctx context.Context, payload ProductPayload) (SyncR
 	}
 
 	if strings.TrimSpace(payload.VendureProduct) == "" {
-		productID, err := c.createProduct(ctx, payload, result.AssetID, cEndAssetID)
+		productID, err := c.createProduct(ctx, payload, primaryAssetID, productAssetIDs, cEndAssetID)
 		if err != nil {
 			return SyncResult{}, err
 		}
 		result.ProductID = productID
 
-		variantID, err := c.createVariant(ctx, payload, productID, result.AssetID)
+		variantID, err := c.createVariant(ctx, payload, productID, primaryAssetID)
 		if err != nil {
 			return SyncResult{}, err
 		}
@@ -141,7 +140,7 @@ func (c *Client) SyncProduct(ctx context.Context, payload ProductPayload) (SyncR
 	result.ProductID = payload.VendureProduct
 	result.VariantID = payload.VendureVariant
 
-	if err := c.updateProduct(ctx, payload, result.AssetID, cEndAssetID); err != nil {
+	if err := c.updateProduct(ctx, payload, primaryAssetID, productAssetIDs, cEndAssetID); err != nil {
 		return SyncResult{}, err
 	}
 
@@ -152,6 +151,61 @@ func (c *Client) SyncProduct(ctx context.Context, payload ProductPayload) (SyncR
 	}
 
 	return result, nil
+}
+
+func (c *Client) uploadProductAssets(ctx context.Context, payload ProductPayload) ([]string, string, error) {
+	urls := make([]string, 0, 1+len(payload.AssetURLs))
+	names := make([]string, 0, 1+len(payload.AssetNames))
+
+	if value := strings.TrimSpace(payload.AssetURL); value != "" {
+		urls = append(urls, value)
+		names = append(names, payload.AssetName)
+	}
+	for index, rawURL := range payload.AssetURLs {
+		urls = append(urls, rawURL)
+		name := ""
+		if index < len(payload.AssetNames) {
+			name = payload.AssetNames[index]
+		}
+		names = append(names, name)
+	}
+
+	assetIDs := make([]string, 0, len(urls))
+	uploadedByURL := make(map[string]string, len(urls))
+	primaryAssetID := ""
+
+	for index, rawURL := range urls {
+		value := strings.TrimSpace(rawURL)
+		if value == "" {
+			continue
+		}
+		if existing := strings.TrimSpace(uploadedByURL[value]); existing != "" {
+			if index == 0 && primaryAssetID == "" {
+				primaryAssetID = existing
+			}
+			assetIDs = append(assetIDs, existing)
+			continue
+		}
+		name := ""
+		if index < len(names) {
+			name = names[index]
+		}
+		assetID, err := c.uploadAsset(ctx, value, name)
+		if err != nil {
+			return nil, "", err
+		}
+		uploadedByURL[value] = assetID
+		assetIDs = append(assetIDs, assetID)
+		if index == 0 && primaryAssetID == "" {
+			primaryAssetID = assetID
+		}
+	}
+
+	assetIDs = uniqueNonEmptyStrings(assetIDs)
+	if primaryAssetID == "" && len(assetIDs) > 0 {
+		primaryAssetID = assetIDs[0]
+	}
+	return assetIDs, primaryAssetID, nil
 }
 
 func (c *Client) DisableProduct(ctx context.Context, productID string) error {
@@ -266,7 +320,7 @@ mutation Login($username: String!, $password: String!) {
 	return nil
 }
 
-func (c *Client) createProduct(ctx context.Context, payload ProductPayload, assetID string, cEndAssetID string) (string, error) {
+func (c *Client) createProduct(ctx context.Context, payload ProductPayload, assetID string, assetIDs []string, cEndAssetID string) (string, error) {
 	mutation := `
 mutation CreateProduct($input: CreateProductInput!) {
   createProduct(input: $input) {
@@ -288,7 +342,9 @@ mutation CreateProduct($input: CreateProductInput!) {
 
 	if assetID != "" {
 		input["featuredAssetId"] = assetID
-		input["assetIds"] = []string{assetID}
+	}
+	if len(assetIDs) > 0 {
+		input["assetIds"] = assetIDs
 	}
 
 	if customFields := c.buildProductCustomFields(payload, cEndAssetID); len(customFields) > 0 {
@@ -355,7 +411,7 @@ mutation CreateProductVariants($input: [CreateProductVariantInput!]!) {
 	return response.CreateProductVariants[0].ID, nil
 }
 
-func (c *Client) updateProduct(ctx context.Context, payload ProductPayload, assetID string, cEndAssetID string) error {
+func (c *Client) updateProduct(ctx context.Context, payload ProductPayload, assetID string, assetIDs []string, cEndAssetID string) error {
 	mutation := `
 mutation UpdateProduct($input: UpdateProductInput!) {
   updateProduct(input: $input) {
@@ -378,7 +434,9 @@ mutation UpdateProduct($input: UpdateProductInput!) {
 
 	if assetID != "" {
 		input["featuredAssetId"] = assetID
-		input["assetIds"] = []string{assetID}
+	}
+	if len(assetIDs) > 0 {
+		input["assetIds"] = assetIDs
 	}
 
 	if customFields := c.buildProductCustomFields(payload, cEndAssetID); len(customFields) > 0 {

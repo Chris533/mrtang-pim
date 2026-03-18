@@ -211,6 +211,9 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 			func(ctx context.Context, entityType string, scopeKey string) (*miniappmodel.Dataset, error) {
 				return miniappService.TargetSyncDataset(ctx, entityType, scopeKey)
 			},
+			func(ctx context.Context, sections []miniappmodel.CategorySection, scopeKey string) (*miniappmodel.Dataset, error) {
+				return miniappService.TargetSyncProductsFromSections(ctx, sections, scopeKey)
+			},
 			strings.TrimSpace(re.Request.FormValue("entityType")),
 			strings.TrimSpace(re.Request.FormValue("scopeKey")),
 			strings.TrimSpace(re.Request.FormValue("scopeLabel")),
@@ -274,6 +277,9 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 			re.App,
 			func(ctx context.Context, entityType string, scopeKey string) (*miniappmodel.Dataset, error) {
 				return miniappService.TargetSyncDataset(ctx, entityType, scopeKey)
+			},
+			func(ctx context.Context, sections []miniappmodel.CategorySection, scopeKey string) (*miniappmodel.Dataset, error) {
+				return miniappService.TargetSyncProductsFromSections(ctx, sections, scopeKey)
 			},
 			runID,
 			targetSyncActor(re),
@@ -1866,6 +1872,9 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 			re.App,
 			func(ctx context.Context, entityType string, scopeKey string) (*miniappmodel.Dataset, error) {
 				return miniappService.TargetSyncDataset(ctx, entityType, scopeKey)
+			},
+			func(ctx context.Context, sections []miniappmodel.CategorySection, scopeKey string) (*miniappmodel.Dataset, error) {
+				return miniappService.TargetSyncProductsFromSections(ctx, sections, scopeKey)
 			},
 			strings.TrimSpace(re.Request.FormValue("entityType")),
 			strings.TrimSpace(re.Request.FormValue("scopeKey")),

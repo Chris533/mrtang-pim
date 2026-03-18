@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 
 	"mrtang-pim/internal/miniapp/model"
@@ -78,6 +79,82 @@ func (s *SnapshotSource) FetchDataset(ctx context.Context) (*model.Dataset, erro
 
 func (s *SnapshotSource) FetchTargetSyncDataset(ctx context.Context, entityType string, scopeKey string) (*model.Dataset, error) {
 	return s.FetchDataset(ctx)
+}
+
+func (s *SnapshotSource) FetchTargetSyncProductsFromSections(ctx context.Context, sections []model.CategorySection, scopeKey string) (*model.Dataset, error) {
+	dataset, err := s.FetchDataset(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	filteredSections := filterCategorySectionsByScope(sections, scopeKey)
+	productIDs := make(map[string]struct{})
+	for _, section := range filteredSections {
+		for _, item := range section.Products {
+			id := strings.TrimSpace(item.ProductID)
+			if id == "" && strings.TrimSpace(item.SpuID) != "" && strings.TrimSpace(item.SkuID) != "" {
+				id = strings.TrimSpace(item.SpuID) + "_" + strings.TrimSpace(item.SkuID)
+			}
+			if id == "" {
+				continue
+			}
+			productIDs[id] = struct{}{}
+		}
+	}
+
+	productMap := make(map[string]model.ProductPage, len(dataset.ProductPage.Products))
+	for _, product := range dataset.ProductPage.Products {
+		if strings.TrimSpace(product.ID) == "" {
+			continue
+		}
+		productMap[strings.TrimSpace(product.ID)] = product
+	}
+
+	products := make([]model.ProductPage, 0, len(productIDs))
+	seen := make(map[string]struct{}, len(productIDs))
+	for _, section := range filteredSections {
+		for _, item := range section.Products {
+			id := strings.TrimSpace(item.ProductID)
+			if id == "" && strings.TrimSpace(item.SpuID) != "" && strings.TrimSpace(item.SkuID) != "" {
+				id = strings.TrimSpace(item.SpuID) + "_" + strings.TrimSpace(item.SkuID)
+			}
+			if id == "" {
+				continue
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			if product, ok := productMap[id]; ok {
+				products = append(products, product)
+				continue
+			}
+			products = append(products, buildSnapshotProductSkeleton(item, section))
+		}
+	}
+
+	copied := *dataset
+	copied.Meta.Source = "snapshot_category_sources"
+	copied.Meta.Description = "基于已保存分类商品来源过滤商品快照"
+	copied.CategoryPage.Sections = filteredSections
+	copied.ProductPage.Products = products
+	return &copied, nil
+}
+
+func buildSnapshotProductSkeleton(product model.HomepageProduct, section model.CategorySection) model.ProductPage {
+	return model.ProductPage{
+		ID:                    strings.TrimSpace(product.ProductID),
+		SpuID:                 strings.TrimSpace(product.SpuID),
+		SkuID:                 strings.TrimSpace(product.SkuID),
+		SourceType:            "snapshot_category_source",
+		SourceSections:        []string{section.CategoryKey},
+		CategoryKey:           section.CategoryKey,
+		CategoryPath:          section.CategoryPath,
+		CategoryKeys:          append([]string(nil), section.CategoryKeys...),
+		ObservedCategoryKeys:  []string{section.CategoryKey},
+		ObservedCategoryPaths: []string{section.CategoryPath},
+		Summary:               product,
+	}
 }
 
 func (s *SnapshotSource) loadHomepageSnapshot() (model.Dataset, error) {

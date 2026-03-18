@@ -14,6 +14,10 @@ type TargetSyncSource interface {
 	FetchTargetSyncDataset(ctx context.Context, entityType string, scopeKey string) (*model.Dataset, error)
 }
 
+type TargetSyncProductSource interface {
+	FetchTargetSyncProductsFromSections(ctx context.Context, sections []model.CategorySection, scopeKey string) (*model.Dataset, error)
+}
+
 type StatusSource interface {
 	RawAuthStatus() model.RawAuthStatus
 }

@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -138,7 +139,7 @@ func (s *RawSource) FetchDataset(ctx context.Context) (*model.Dataset, error) {
 		return nil, err
 	}
 
-	sections, products, categoryNotes, err := s.fetchCategoryProducts(ctx, nodes, s.sectionTimeout())
+	sections, products, categoryNotes, err := s.fetchCategoryProducts(ctx, nodes, s.sectionTimeout(), true)
 	if err != nil {
 		return nil, err
 	}
@@ -214,13 +215,44 @@ func (s *RawSource) FetchTargetSyncDataset(ctx context.Context, entityType strin
 		scopedNodes = []model.CategoryNode{*node}
 	}
 
-	sections, products, notes, err := s.fetchCategoryProducts(ctx, scopedNodes, s.targetSyncSectionTimeout())
+	includePriceStock := entityType != "category_sources"
+	sections, products, notes, err := s.fetchCategoryProducts(ctx, scopedNodes, s.targetSyncSectionTimeout(), includePriceStock)
 	if err != nil {
 		return nil, err
 	}
 	dataset.CategoryPage.Sections = sections
-	dataset.ProductPage.Products = products
+	if includePriceStock {
+		dataset.ProductPage.Products = products
+	}
 	dataset.Meta.Notes = append(dataset.Meta.Notes, notes...)
+	return &dataset, nil
+}
+
+func (s *RawSource) FetchTargetSyncProductsFromSections(ctx context.Context, sections []model.CategorySection, scopeKey string) (*model.Dataset, error) {
+	if err := s.ensureWarmup(ctx, false); err != nil {
+		return nil, err
+	}
+	if s.fallback == nil {
+		return nil, fmt.Errorf("miniapp raw source fallback is nil")
+	}
+
+	base, err := s.fallback.FetchDataset(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load raw source fallback dataset: %w", err)
+	}
+
+	filteredSections := filterCategorySectionsByScope(sections, scopeKey)
+	products := buildRawProductsFromSections(filteredSections)
+	products = s.enrichRawProducts(ctx, products)
+
+	dataset := *base
+	dataset.Meta.Source = "raw_category_sources"
+	dataset.Meta.Description = "基于已保存分类商品来源补商品详情"
+	dataset.Meta.Notes = appendUniqueStrings(dataset.Meta.Notes,
+		"商品规格抓取当前基于已保存分类商品来源补商品详情，不再重新请求分类商品列表。",
+	)
+	dataset.CategoryPage.Sections = filteredSections
+	dataset.ProductPage.Products = products
 	return &dataset, nil
 }
 
@@ -700,7 +732,7 @@ func (s *RawSource) categoryTreeTimeout() time.Duration {
 	return timeout
 }
 
-func (s *RawSource) fetchCategoryProducts(ctx context.Context, topLevelNodes []model.CategoryNode, perSectionTimeout time.Duration) ([]model.CategorySection, []model.ProductPage, []string, error) {
+func (s *RawSource) fetchCategoryProducts(ctx context.Context, topLevelNodes []model.CategoryNode, perSectionTimeout time.Duration, includePriceStock bool) ([]model.CategorySection, []model.ProductPage, []string, error) {
 	requestNodes := flattenCategoryRequestNodes(topLevelNodes)
 	pathByKey, _ := buildCategoryTreeMeta(topLevelNodes)
 	lineageByKey := buildCategoryLineageKeys(topLevelNodes)
@@ -715,7 +747,7 @@ func (s *RawSource) fetchCategoryProducts(ctx context.Context, topLevelNodes []m
 			timeout = s.sectionTimeout()
 		}
 		sectionCtx, cancel := context.WithTimeout(ctx, timeout)
-		section, err := s.fetchCategorySection(sectionCtx, node, pathByKey[node.Key], lineageByKey[node.Key])
+		section, err := s.fetchCategorySection(sectionCtx, node, pathByKey[node.Key], lineageByKey[node.Key], includePriceStock)
 		cancel()
 		if err != nil {
 			if cached, ok := s.cachedCategorySection(node.Key); ok {
@@ -754,13 +786,15 @@ func (s *RawSource) fetchCategoryProducts(ctx context.Context, topLevelNodes []m
 	}
 
 	products := make([]model.ProductPage, 0, len(productMap))
-	for _, item := range productMap {
-		products = append(products, item)
+	if includePriceStock {
+		for _, item := range productMap {
+			products = append(products, item)
+		}
+		products = s.enrichRawProducts(ctx, products)
+		sort.Slice(products, func(i int, j int) bool {
+			return products[i].ID < products[j].ID
+		})
 	}
-	products = s.enrichRawProducts(ctx, products)
-	sort.Slice(products, func(i int, j int) bool {
-		return products[i].ID < products[j].ID
-	})
 
 	return sections, products, notes, nil
 }
@@ -865,7 +899,7 @@ func (s *RawSource) enrichRawProducts(ctx context.Context, products []model.Prod
 	return enriched
 }
 
-func (s *RawSource) fetchCategorySection(ctx context.Context, node model.CategoryNode, categoryPath string, categoryKeys []string) (model.CategorySection, error) {
+func (s *RawSource) fetchCategorySection(ctx context.Context, node model.CategoryNode, categoryPath string, categoryKeys []string, includePriceStock bool) (model.CategorySection, error) {
 	subjectPath := firstNonEmptyRaw(strings.TrimSpace(node.PathCode), strings.TrimSpace(node.Key))
 	requestBody := map[string]any{
 		"checkList":       []any{},
@@ -894,14 +928,16 @@ func (s *RawSource) fetchCategorySection(ctx context.Context, node model.Categor
 
 		pageCount = maxInt(1, envelope.Data.Pages)
 		pageProducts := convertRawGoodsList(envelope.Data.List)
-		priceInfo, err := s.fetchPriceStock(ctx, envelope.Data)
-		if err != nil {
-			return model.CategorySection{}, fmt.Errorf("fetch raw price stock for %s page %d: %w", node.Key, pageNum, err)
-		}
-		for idx := range pageProducts {
-			product := pageProducts[idx]
-			if enriched, ok := priceInfo[product.SkuID]; ok {
-				pageProducts[idx] = mergeRawProductPrice(product, enriched)
+		if includePriceStock {
+			priceInfo, err := s.fetchPriceStock(ctx, envelope.Data)
+			if err != nil {
+				return model.CategorySection{}, fmt.Errorf("fetch raw price stock for %s page %d: %w", node.Key, pageNum, err)
+			}
+			for idx := range pageProducts {
+				product := pageProducts[idx]
+				if enriched, ok := priceInfo[product.SkuID]; ok {
+					pageProducts[idx] = mergeRawProductPrice(product, enriched)
+				}
 			}
 		}
 		products = append(products, pageProducts...)
@@ -1616,6 +1652,57 @@ func buildRawProductSkeleton(product model.HomepageProduct, section model.Catego
 			UnitOptions:           orderUnits,
 		},
 	}
+}
+
+func buildRawProductsFromSections(sections []model.CategorySection) []model.ProductPage {
+	productMap := make(map[string]model.ProductPage)
+	productOrder := make([]string, 0)
+	for _, section := range sections {
+		for _, item := range section.Products {
+			productID := normalizedRawProductID(item.SpuID, item.SkuID)
+			if productID == "" {
+				productID = strings.TrimSpace(item.ProductID)
+			}
+			if productID == "" {
+				continue
+			}
+			product, ok := productMap[productID]
+			if !ok {
+				product = buildRawProductSkeleton(item, section)
+				productOrder = append(productOrder, productID)
+			} else {
+				product = mergeObservedCategorySection(product, section)
+			}
+			productMap[productID] = product
+		}
+	}
+	products := make([]model.ProductPage, 0, len(productOrder))
+	for _, productID := range productOrder {
+		product, ok := productMap[productID]
+		if !ok {
+			continue
+		}
+		products = append(products, product)
+	}
+	return products
+}
+
+func filterCategorySectionsByScope(sections []model.CategorySection, scopeKey string) []model.CategorySection {
+	scopeKey = strings.TrimSpace(scopeKey)
+	if scopeKey == "" {
+		return append([]model.CategorySection(nil), sections...)
+	}
+	filtered := make([]model.CategorySection, 0, len(sections))
+	for _, section := range sections {
+		if strings.TrimSpace(section.CategoryKey) == scopeKey {
+			filtered = append(filtered, section)
+			continue
+		}
+		if slices.Contains(appendUniqueStrings(nil, section.CategoryKeys...), scopeKey) {
+			filtered = append(filtered, section)
+		}
+	}
+	return filtered
 }
 
 func mergeObservedCategorySection(product model.ProductPage, section model.CategorySection) model.ProductPage {

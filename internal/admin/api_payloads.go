@@ -124,6 +124,11 @@ func BuildDashboardAPIData(
 	flashError string,
 ) DashboardAPIData {
 	data := buildMrtangAdminBaseData(ctx, app, cfg, pimService)
+	if app != nil && pimService != nil {
+		if storedData, err := buildStoredDashboardMiniappData(app, cfg, miniappService, pimService); err == nil {
+			data.Miniapp = storedData
+		}
+	}
 	data.CanAccessSource = canAccessSource
 	data.CanAccessProcurement = canAccessProcurement
 	data.FlashMessage = strings.TrimSpace(flashMessage)
