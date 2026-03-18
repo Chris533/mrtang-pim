@@ -110,6 +110,7 @@ go run ./cmd/pim serve
 如果你需要直接看 source 商品审核、图片处理、加入发布队列与同步工作台，见 [docs/source-review-workbench.md](./docs/source-review-workbench.md)。
 如果你需要直接看后台模块结构和页面入口，见 [docs/mrtang-admin.md](./docs/mrtang-admin.md)。
 如果你需要先规划 backend 与小程序发布前还缺哪些能力，再决定何时正式同步到 backend，见 [docs/backend-miniapp-plan.md](./docs/backend-miniapp-plan.md)。
+如果你要开始推进“小程序 UI 目标模型”，并按批次梳理分类页、商品页、多单位、B/C 图和结算规则，见 [docs/miniapp-ui-plan.md](./docs/miniapp-ui-plan.md)。
 如果你需要直接看 source、supplier 与 Vendure 的字段映射和分类发布模型，见 [docs/backend-release-contract.md](./docs/backend-release-contract.md)。
 如果你需要直接配置 Vendure custom fields，见 [docs/vendure-field-setup.md](./docs/vendure-field-setup.md)。
 

@@ -113,6 +113,7 @@ Miniapp 模块已经拆成明确分层：
 如果要直接操作 source 商品审核、图片处理和加入发布队列、同步，见 [source-review-workbench.md](./source-review-workbench.md)。
 如果要理解后台模块结构和页面入口，见 [mrtang-admin.md](./mrtang-admin.md)。
 如果要先规划 backend 与小程序发布前的能力缺口，再决定何时正式同步，见 [backend-miniapp-plan.md](./backend-miniapp-plan.md)。
+如果要开始推进“小程序 UI 目标模型”，并按批次梳理分类页、商品页、多单位、B/C 图和结算规则，见 [miniapp-ui-plan.md](./miniapp-ui-plan.md)。
 如果要直接看 source、supplier 与 Vendure 的字段映射和分类发布模型，见 [backend-release-contract.md](./backend-release-contract.md)。
 如果要直接配置 Vendure custom fields，见 [vendure-field-setup.md](./vendure-field-setup.md)。
 
