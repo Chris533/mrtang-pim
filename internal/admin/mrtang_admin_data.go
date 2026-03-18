@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -36,6 +37,7 @@ type mrtangAdminMiniappData struct {
 	ConfigSourceMode            string
 	SourceURL                   string
 	DatasetSource               string
+	RawAuthStatus               miniappmodel.RawAuthStatus
 	ContractCount               int
 	HomepageSectionCount        int
 	HomepageProductCount        int
@@ -95,6 +97,11 @@ type mrtangAdminRecentAction struct {
 	Actor   string
 	Note    string
 	Created string
+}
+
+type DashboardMiniappAPIData struct {
+	Miniapp      mrtangAdminMiniappData `json:"miniapp"`
+	MiniappError string                 `json:"miniappError"`
 }
 
 func RenderMrtangAdminHTML(
@@ -202,6 +209,24 @@ func buildMrtangAdminPageData(
 	pimService *pim.Service,
 	miniappService *miniappservice.Service,
 ) mrtangAdminPageData {
+	page := buildMrtangAdminBaseData(ctx, app, cfg, pimService)
+	if miniappService != nil {
+		miniappData, err := buildMrtangAdminMiniappData(ctx, cfg, miniappService)
+		if err != nil {
+			page.MiniappError = err.Error()
+		} else {
+			page.Miniapp = miniappData
+		}
+	}
+	return page
+}
+
+func buildMrtangAdminBaseData(
+	ctx context.Context,
+	app core.App,
+	cfg config.Config,
+	pimService *pim.Service,
+) mrtangAdminPageData {
 	page := mrtangAdminPageData{
 		GeneratedAt: time.Now().Format("2006-01-02 15:04:05"),
 		QuickActions: []mrtangAdminLink{
@@ -220,15 +245,6 @@ func buildMrtangAdminPageData(
 			page.ProcurementError = err.Error()
 		} else {
 			page.Procurement = summary
-		}
-	}
-
-	if miniappService != nil {
-		miniappData, err := buildMrtangAdminMiniappData(ctx, cfg, miniappService)
-		if err != nil {
-			page.MiniappError = err.Error()
-		} else {
-			page.Miniapp = miniappData
 		}
 	}
 
@@ -312,6 +328,7 @@ func buildMrtangAdminMiniappData(ctx context.Context, cfg config.Config, service
 		ConfigSourceMode:      strings.TrimSpace(cfg.MiniApp.SourceMode),
 		SourceURL:             strings.TrimSpace(cfg.MiniApp.SourceURL),
 		DatasetSource:         strings.TrimSpace(dataset.Meta.Source),
+		RawAuthStatus:         service.RawAuthStatus(),
 		ContractCount:         len(dataset.Contracts),
 		HomepageSectionCount:  len(dataset.Homepage.Sections),
 		HomepageProductCount:  countHomepageProducts(dataset.Homepage.Sections),
@@ -344,6 +361,24 @@ func buildMrtangAdminMiniappData(ctx context.Context, cfg config.Config, service
 
 	data.Backlog = buildMrtangAdminBacklog(data)
 	return data, nil
+}
+
+func buildDashboardMiniappAPIData(ctx context.Context, cfg config.Config, service *miniappservice.Service) DashboardMiniappAPIData {
+	data := DashboardMiniappAPIData{}
+	data.Miniapp.ConfigSourceMode = strings.TrimSpace(cfg.MiniApp.SourceMode)
+	data.Miniapp.SourceMode = strings.TrimSpace(cfg.MiniApp.SourceMode)
+	data.Miniapp.SourceURL = strings.TrimSpace(cfg.MiniApp.SourceURL)
+	if service == nil {
+		return data
+	}
+	data.Miniapp.RawAuthStatus = service.RawAuthStatus()
+	miniappData, err := buildMrtangAdminMiniappData(ctx, cfg, service)
+	if err != nil {
+		data.MiniappError = err.Error()
+		return data
+	}
+	data.Miniapp = miniappData
+	return data
 }
 
 func buildMrtangAdminRecentActions(app core.App, source []pim.SourceActionLog, procurement []pim.ProcurementActionLog) []mrtangAdminRecentAction {
@@ -390,25 +425,19 @@ func buildMrtangAdminRecentActions(app core.App, source []pim.SourceActionLog, p
 		for _, record := range assetJobs {
 			jobType := strings.TrimSpace(record.GetString("job_type"))
 			mode := strings.TrimSpace(record.GetString("mode"))
-			label := "图片任务"
-			switch strings.ToLower(jobType) {
-			case "download_original":
-				label = "原图下载任务"
-			case "process_asset":
-				if strings.EqualFold(mode, "failed") {
-					label = "失败图片重处理任务"
-				} else {
-					label = "图片处理任务"
-				}
-			}
+			label := assetJobActionLabel(jobType, mode)
 			message := strings.TrimSpace(record.GetString("error"))
 			if message == "" {
-				message = fmt.Sprintf("已处理 %d / %d，失败 %d", record.GetInt("processed"), record.GetInt("total"), record.GetInt("failed_count"))
+				message = fmt.Sprintf("%s：成功 %d / 总数 %d，失败 %d", assetJobModeLabel(mode), record.GetInt("processed"), record.GetInt("total"), record.GetInt("failed_count"))
+			}
+			target := strings.TrimSpace(record.GetString("current_item"))
+			if target == "" {
+				target = assetJobTargetLabel(record)
 			}
 			items = append(items, mrtangAdminRecentAction{
 				Domain:  "图片任务",
 				Label:   label,
-				Target:  strings.TrimSpace(record.GetString("current_item")),
+				Target:  target,
 				Status:  strings.TrimSpace(record.GetString("status")),
 				Message: message,
 				Actor:   "系统",
@@ -441,6 +470,62 @@ func procurementActionLabel(action string) string {
 	default:
 		return action
 	}
+}
+
+func assetJobActionLabel(jobType string, mode string) string {
+	switch strings.ToLower(strings.TrimSpace(jobType)) {
+	case "download_original":
+		if strings.Contains(strings.ToLower(strings.TrimSpace(mode)), "selected") {
+			return "选中图片原图下载任务"
+		}
+		return "原图下载任务"
+	case "process_asset":
+		mode = strings.ToLower(strings.TrimSpace(mode))
+		if strings.Contains(mode, "selected") && strings.Contains(mode, "failed") {
+			return "选中失败图片重处理任务"
+		}
+		if strings.Contains(mode, "selected") {
+			return "选中图片处理任务"
+		}
+		if strings.Contains(mode, "failed") {
+			return "失败图片重处理任务"
+		}
+		return "图片处理任务"
+	default:
+		return "图片任务"
+	}
+}
+
+func assetJobModeLabel(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	switch mode {
+	case "selected":
+		return "选中项"
+	case "selected_failed", "failed_only":
+		return "选中失败项"
+	case "failed":
+		return "失败项"
+	case "pending":
+		return "待处理"
+	default:
+		return "全量"
+	}
+}
+
+func assetJobTargetLabel(record *core.Record) string {
+	var ids []string
+	if err := json.Unmarshal([]byte(strings.TrimSpace(record.GetString("asset_ids_json"))), &ids); err == nil {
+		count := 0
+		for _, item := range ids {
+			if strings.TrimSpace(item) != "" {
+				count++
+			}
+		}
+		if count > 0 {
+			return fmt.Sprintf("%d 张图片", count)
+		}
+	}
+	return "图片批次"
 }
 
 func buildMrtangAdminBacklog(data mrtangAdminMiniappData) []mrtangAdminBacklogItem {

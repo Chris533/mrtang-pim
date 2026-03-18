@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"sort"
@@ -28,10 +29,16 @@ type RawSourceConfig struct {
 	UserAgent           string
 	TemplateID          string
 	Referer             string
+	OpenID              string
+	ContactsID          string
+	CustomerID          string
+	IsDistributor       bool
 	Timeout             time.Duration
 	Concurrency         int
 	MinInterval         time.Duration
 	RetryMax            int
+	WarmupMinInterval   time.Duration
+	WarmupMaxInterval   time.Duration
 }
 
 type RawSource struct {
@@ -42,6 +49,12 @@ type RawSource struct {
 	retryMax      int
 	requestMu     sync.Mutex
 	lastRequestAt time.Time
+	warmupMu      sync.Mutex
+	warmupStatus  model.RawAuthStatus
+	warmupMinTTL  time.Duration
+	warmupMaxTTL  time.Duration
+	nextWarmupAt  time.Time
+	rng           *rand.Rand
 }
 
 func NewRawSource(cfg RawSourceConfig, fallback Source) *RawSource {
@@ -57,16 +70,44 @@ func NewRawSource(cfg RawSourceConfig, fallback Source) *RawSource {
 	if retryMax < 0 {
 		retryMax = 0
 	}
+	warmupMinTTL := cfg.WarmupMinInterval
+	warmupMaxTTL := cfg.WarmupMaxInterval
+	if warmupMinTTL <= 0 {
+		warmupMinTTL = 30 * time.Minute
+	}
+	if warmupMaxTTL <= 0 {
+		warmupMaxTTL = 60 * time.Minute
+	}
+	if warmupMaxTTL < warmupMinTTL {
+		warmupMaxTTL = warmupMinTTL
+	}
 
 	return &RawSource{
 		cfg: cfg,
 		client: &http.Client{
 			Timeout: timeout,
 		},
-		fallback:    fallback,
-		workerLimit: workerLimit,
-		retryMax:    retryMax,
+		fallback:     fallback,
+		workerLimit:  workerLimit,
+		retryMax:     retryMax,
+		warmupMinTTL: warmupMinTTL,
+		warmupMaxTTL: warmupMaxTTL,
+		rng:          rand.New(rand.NewSource(time.Now().UnixNano())),
+		warmupStatus: model.RawAuthStatus{
+			Enabled: strings.TrimSpace(cfg.AuthorizedAccountID) != "",
+			Status:  "idle",
+			OpenID:  strings.TrimSpace(cfg.OpenID),
+		},
 	}
+}
+
+func (s *RawSource) RawAuthStatus() model.RawAuthStatus {
+	s.warmupMu.Lock()
+	defer s.warmupMu.Unlock()
+	status := s.warmupStatus
+	status.Enabled = strings.TrimSpace(s.cfg.AuthorizedAccountID) != ""
+	status.OpenID = strings.TrimSpace(s.cfg.OpenID)
+	return status
 }
 
 func (s *RawSource) FetchDataset(ctx context.Context) (*model.Dataset, error) {
@@ -75,6 +116,9 @@ func (s *RawSource) FetchDataset(ctx context.Context) (*model.Dataset, error) {
 	}
 	if s.fallback == nil {
 		return nil, fmt.Errorf("miniapp raw source fallback is nil")
+	}
+	if err := s.ensureWarmup(ctx, false); err != nil {
+		return nil, err
 	}
 
 	base, err := s.fallback.FetchDataset(ctx)
@@ -99,6 +143,12 @@ func (s *RawSource) FetchDataset(ctx context.Context) (*model.Dataset, error) {
 		"raw source 直接请求真实源站分类树、分类商品列表与商品详情链路",
 		"当前已覆盖分类树、顶级分类商品列表、价格库存、商品详情、套餐和购物车上下文，checkout 真实链路仍由后续批次接入",
 	)
+	if strings.TrimSpace(s.cfg.ContactsID) == "" || strings.TrimSpace(s.cfg.CustomerID) == "" {
+		dataset.Meta.Notes = appendUniqueStrings(dataset.Meta.Notes, "raw 登录续活当前未显式配置 contactsId/customerId，将使用 fallback 样本并自动尝试 distributor true/false。")
+	}
+	if strings.TrimSpace(s.cfg.OpenID) == "" {
+		dataset.Meta.Notes = appendUniqueStrings(dataset.Meta.Notes, "raw 登录续活当前未配置 openId，预授权状态校验步骤将跳过。")
+	}
 	dataset.Meta.Notes = appendUniqueStrings(dataset.Meta.Notes, categoryNotes...)
 	dataset.CategoryPage.Tree = nodes
 	if len(sections) > 0 {
@@ -238,6 +288,9 @@ func (s *RawSource) ExecuteCartOperation(ctx context.Context, id string, request
 	if err != nil {
 		return nil, fmt.Errorf("load fallback cart dataset: %w", err)
 	}
+	if err := s.ensureWarmup(ctx, false); err != nil {
+		return nil, err
+	}
 
 	switch id {
 	case "add":
@@ -290,6 +343,9 @@ func (s *RawSource) ExecuteOrderOperation(ctx context.Context, id string, reques
 	fallback, err := s.fallback.FetchDataset(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load fallback order dataset: %w", err)
+	}
+	if err := s.ensureWarmup(ctx, false); err != nil {
+		return nil, err
 	}
 
 	switch id {
@@ -344,6 +400,9 @@ func (s *RawSource) ExecuteFreightScenario(ctx context.Context, scenario string,
 	if err != nil {
 		return nil, fmt.Errorf("load fallback freight dataset: %w", err)
 	}
+	if err := s.ensureWarmup(ctx, false); err != nil {
+		return nil, err
+	}
 
 	body := requestBody
 	if body == nil {
@@ -380,12 +439,132 @@ func (s *RawSource) ExecuteFreightScenario(ctx context.Context, scenario string,
 
 func (s *RawSource) fetchLoginStatus(ctx context.Context, fallback model.CartOrderAggregate) (map[string]any, error) {
 	fallbackContactsID, fallbackCustomerID := rawLoginFallbackIDs(fallback)
-	requestBody := map[string]any{
-		"contactsId":    fallbackContactsID,
-		"customerId":    fallbackCustomerID,
-		"isDistributor": false,
+	contactsID := firstNonEmptyRaw(strings.TrimSpace(s.cfg.ContactsID), fallbackContactsID)
+	customerID := firstNonEmptyRaw(strings.TrimSpace(s.cfg.CustomerID), fallbackCustomerID)
+	distributorCandidates := []bool{s.cfg.IsDistributor}
+	if len(distributorCandidates) == 0 || distributorCandidates[0] {
+		distributorCandidates = appendUniqueBools(distributorCandidates, false)
+	} else {
+		distributorCandidates = appendUniqueBools(distributorCandidates, true)
 	}
-	return s.fetchRawResponse(ctx, http.MethodPost, "/gateway/customer-service/api/v1/order/app/get_login_status", nil, requestBody)
+
+	var lastResponse map[string]any
+	for _, isDistributor := range distributorCandidates {
+		requestBody := map[string]any{
+			"contactsId":    contactsID,
+			"customerId":    customerID,
+			"isDistributor": isDistributor,
+		}
+		response, err := s.fetchRawResponse(ctx, http.MethodPost, "/gateway/customer-service/api/v1/order/app/get_login_status", nil, requestBody)
+		if err != nil {
+			return nil, err
+		}
+		lastResponse = response
+		if len(loginStatusData(response, nil)) > 0 {
+			return response, nil
+		}
+	}
+	return lastResponse, nil
+}
+
+func (s *RawSource) ensureWarmup(ctx context.Context, force bool) error {
+	if strings.TrimSpace(s.cfg.AuthorizedAccountID) == "" {
+		s.setWarmupStatus(func(status *model.RawAuthStatus) {
+			status.Enabled = false
+			status.Status = "skipped"
+			status.Message = "未配置 MINIAPP_AUTH_ACCOUNT_ID，跳过 raw 登录续活。"
+			status.OpenID = strings.TrimSpace(s.cfg.OpenID)
+		})
+		return nil
+	}
+
+	s.warmupMu.Lock()
+	status := s.warmupStatus
+	if !force && (status.Status == "success" || status.Status == "partial") && !s.nextWarmupAt.IsZero() && time.Now().Before(s.nextWarmupAt) {
+		s.warmupMu.Unlock()
+		return nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	s.warmupStatus.Enabled = true
+	s.warmupStatus.Status = "running"
+	s.warmupStatus.Message = "正在续活 raw 登录上下文。"
+	s.warmupStatus.LastAttemptAt = now
+	s.warmupStatus.OpenID = strings.TrimSpace(s.cfg.OpenID)
+	s.warmupMu.Unlock()
+
+	err := s.runWarmup(ctx)
+	finishedAt := time.Now().UTC().Format(time.RFC3339)
+
+	s.warmupMu.Lock()
+	defer s.warmupMu.Unlock()
+	s.warmupStatus.Enabled = true
+	s.warmupStatus.LastAttemptAt = finishedAt
+	s.warmupStatus.OpenID = strings.TrimSpace(s.cfg.OpenID)
+	if err != nil {
+		s.warmupStatus.Status = "failed"
+		s.warmupStatus.Message = err.Error()
+		s.warmupStatus.LastErrorAt = finishedAt
+		return err
+	}
+	if strings.TrimSpace(s.warmupStatus.Status) == "" || s.warmupStatus.Status == "running" {
+		s.warmupStatus.Status = "success"
+		s.warmupStatus.Message = "raw 登录上下文已续活。"
+	}
+	s.warmupStatus.LastSuccessAt = finishedAt
+	s.nextWarmupAt = time.Now().Add(s.nextWarmupTTL())
+	return nil
+}
+
+func (s *RawSource) nextWarmupTTL() time.Duration {
+	if s.warmupMaxTTL <= s.warmupMinTTL {
+		return s.warmupMinTTL
+	}
+	delta := s.warmupMaxTTL - s.warmupMinTTL
+	return s.warmupMinTTL + time.Duration(s.rng.Int63n(int64(delta)))
+}
+
+func (s *RawSource) runWarmup(ctx context.Context) error {
+	fallback, err := s.fallback.FetchDataset(ctx)
+	if err != nil {
+		return fmt.Errorf("加载续活 fallback 数据失败：%w", err)
+	}
+
+	loginStatus, err := s.fetchLoginStatus(ctx, fallback.CartOrder)
+	if err != nil {
+		return fmt.Errorf("续活登录状态失败：%w", err)
+	}
+	if len(loginStatusData(loginStatus, nil)) == 0 {
+		return fmt.Errorf("续活登录状态失败：返回空登录数据，请检查 MINIAPP_RAW_CONTACTS_ID / MINIAPP_RAW_CUSTOMER_ID / MINIAPP_RAW_IS_DISTRIBUTOR 是否与当前小程序会话一致")
+	}
+
+	if _, err := s.fetchRawResponse(ctx, http.MethodPost, "/gateway/customer-service/api/v1/order/app/update/login_time", nil, map[string]any{}); err != nil {
+		return fmt.Errorf("刷新登录时间失败：%w", err)
+	}
+
+	openID := strings.TrimSpace(s.cfg.OpenID)
+	if openID != "" {
+		if _, err := s.fetchRawResponse(ctx, http.MethodGet, "/gateway/customer-service/api/v1/order/app/get_bb_auth_status", map[string]any{
+			"isPreAuth": false,
+			"openId":    openID,
+		}, nil); err != nil {
+			return fmt.Errorf("校验预授权状态失败：%w", err)
+		}
+	}
+
+	if _, err := s.fetchRawResponse(ctx, http.MethodGet, "/gateway/marketing-service/api/v1/integral/wx_login_send", nil, nil); err != nil {
+		s.warmupMu.Lock()
+		s.warmupStatus.Status = "partial"
+		s.warmupStatus.Message = "登录上下文已续活，但积分登录通知失败：" + err.Error()
+		s.warmupMu.Unlock()
+	}
+
+	return nil
+}
+
+func (s *RawSource) setWarmupStatus(update func(status *model.RawAuthStatus)) {
+	s.warmupMu.Lock()
+	defer s.warmupMu.Unlock()
+	update(&s.warmupStatus)
 }
 
 func (s *RawSource) fetchCategoryTree(ctx context.Context, setting model.GoodsCategorySetting) ([]model.CategoryNode, error) {
@@ -732,6 +911,15 @@ func loginStatusData(response map[string]any, err error) map[string]any {
 	}
 	data, _ := response["data"].(map[string]any)
 	return data
+}
+
+func appendUniqueBools(items []bool, value bool) []bool {
+	for _, item := range items {
+		if item == value {
+			return items
+		}
+	}
+	return append(items, value)
 }
 
 type rawEnvelope[T any] struct {

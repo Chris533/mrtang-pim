@@ -120,6 +120,9 @@ go run ./cmd/pim serve
 - `MINIAPP_SOURCE_TIMEOUT=20s`
 - `MINIAPP_RAW_TEMPLATE_ID=962`
 - `MINIAPP_RAW_REFERER=https://servicewechat.com/wx57f975d225fcd0bf/9/page-frame.html`
+- `MINIAPP_RAW_OPEN_ID=...`
+- `MINIAPP_RAW_WARMUP_MIN_INTERVAL=30m`
+- `MINIAPP_RAW_WARMUP_MAX_INTERVAL=60m`
 - `MINIAPP_HOMEPAGE_SNAPSHOT=./datasets/miniapp/homepage`
 - `MINIAPP_CATEGORY_SNAPSHOT=./datasets/miniapp/category-page`
 - `MINIAPP_PRODUCT_SNAPSHOT=./datasets/miniapp/product-page`

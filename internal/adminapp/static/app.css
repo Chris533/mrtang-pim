@@ -124,6 +124,30 @@ button, input, select { font: inherit; }
 .metric-value { margin-top: 10px; font-size: 30px; font-weight: 800; letter-spacing: -.05em; }
 .card-title { margin: 8px 0 0; font-size: 18px; }
 .inline-pills, .action-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.pagination { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.page-link, .page-ellipsis {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 38px;
+  min-height: 38px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,.04);
+  color: var(--muted);
+  text-decoration: none;
+}
+.page-link:hover { color: var(--text); border-color: rgba(98, 232, 255, 0.24); }
+.page-link.active {
+  color: #04111c;
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--accent-strong) 0%, var(--accent) 100%);
+}
+.page-link.disabled {
+  pointer-events: none;
+  opacity: .45;
+}
 .pill, .status-badge {
   display: inline-flex;
   align-items: center;

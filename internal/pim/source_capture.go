@@ -78,6 +78,7 @@ type SourceReviewAsset struct {
 	Name                  string `json:"name"`
 	AssetRole             string `json:"assetRole"`
 	SourceURL             string `json:"sourceUrl"`
+	CanDownloadOriginal   bool   `json:"canDownloadOriginal"`
 	PreviewURL            string `json:"previewUrl"`
 	OriginalImageURL      string `json:"originalImageUrl"`
 	OriginalImageStatus   string `json:"originalImageStatus"`
@@ -120,6 +121,7 @@ type SourceReviewWorkbenchSummary struct {
 	AssetPage               int                        `json:"assetPage"`
 	AssetPages              int                        `json:"assetPages"`
 	AssetLimit              int                        `json:"assetLimit"`
+	FilteredAssetCount      int                        `json:"filteredAssetCount"`
 	AssetFailureReasons     []SourceAssetFailureReason `json:"assetFailureReasons"`
 	Products                []SourceReviewProduct      `json:"products"`
 	Assets                  []SourceReviewAsset        `json:"assets"`
@@ -131,6 +133,7 @@ type SourceReviewFilter struct {
 	ProductStatus  string `json:"productStatus"`
 	AssetStatus    string `json:"assetStatus"`
 	OriginalStatus string `json:"originalStatus"`
+	AssetIDs       string `json:"assetIds"`
 	SyncState      string `json:"syncState"`
 	Query          string `json:"query"`
 	ProductPage    int    `json:"productPage"`
@@ -183,20 +186,22 @@ type SourceAssetJobLog struct {
 }
 
 type SourceAssetJobItem struct {
-	ID          string              `json:"id"`
-	JobType     string              `json:"jobType"`
-	Mode        string              `json:"mode"`
-	Status      string              `json:"status"`
-	Total       int                 `json:"total"`
-	Processed   int                 `json:"processed"`
-	Failed      int                 `json:"failed"`
-	CurrentItem string              `json:"currentItem"`
-	StartedAt   string              `json:"startedAt"`
-	FinishedAt  string              `json:"finishedAt"`
-	Error       string              `json:"error"`
-	Created     string              `json:"created"`
-	Logs        []SourceAssetJobLog `json:"logs"`
-	CanRetry    bool                `json:"canRetry"`
+	ID          string                  `json:"id"`
+	JobType     string                  `json:"jobType"`
+	Mode        string                  `json:"mode"`
+	Status      string                  `json:"status"`
+	Total       int                     `json:"total"`
+	Processed   int                     `json:"processed"`
+	Failed      int                     `json:"failed"`
+	CurrentItem string                  `json:"currentItem"`
+	StartedAt   string                  `json:"startedAt"`
+	FinishedAt  string                  `json:"finishedAt"`
+	Error       string                  `json:"error"`
+	Created     string                  `json:"created"`
+	Logs        []SourceAssetJobLog     `json:"logs"`
+	FailedItems []SourceAssetFailedItem `json:"failedItems"`
+	AssetIDs    []string                `json:"assetIds"`
+	CanRetry    bool                    `json:"canRetry"`
 }
 
 type SourceAssetJobsSummary struct {
@@ -212,6 +217,7 @@ type SourceAssetJobsSummary struct {
 
 type SourceAssetJobDetail struct {
 	SourceAssetJobItem
+	FailedItems []SourceAssetFailedItem `json:"failedItems"`
 }
 
 type SourceBridgeStatus struct {
@@ -261,6 +267,7 @@ type SourceAssetDetail struct {
 	AssetRole             string            `json:"assetRole"`
 	PreviewURL            string            `json:"previewUrl"`
 	SourceURL             string            `json:"sourceUrl"`
+	CanDownloadOriginal   bool              `json:"canDownloadOriginal"`
 	OriginalImageURL      string            `json:"originalImageUrl"`
 	OriginalImageStatus   string            `json:"originalImageStatus"`
 	OriginalImageError    string            `json:"originalImageError"`
@@ -341,7 +348,7 @@ func (s *Service) importCategoryNodes(_ context.Context, app core.App, nodes []m
 			record.Set("path_name", node.PathName)
 			record.Set("category_path", path)
 			record.Set("parent_key", parentKey)
-			record.Set("image_url", sanitizeAbsoluteURL(node.ImageURL))
+			record.Set("image_url", sanitizeURLWithBase(node.ImageURL, s.cfg.MiniApp.RawAssetBaseURL))
 			record.Set("depth", node.Depth)
 			record.Set("sort", node.Sort)
 			record.Set("has_children", node.HasChildren)
@@ -442,7 +449,7 @@ func (s *Service) upsertSourceAssets(_ context.Context, app core.App, product mi
 			record.Set("spu_id", product.SpuID)
 			record.Set("sku_id", product.SkuID)
 			record.Set("name", product.Summary.Name)
-			record.Set("source_url", sanitizeAbsoluteURL(asset.URL))
+			record.Set("source_url", sanitizeURLWithBase(asset.URL, s.cfg.MiniApp.RawAssetBaseURL))
 			record.Set("asset_role", asset.Role)
 			record.Set("sort", asset.Sort)
 			if created && strings.TrimSpace(record.GetString("original_image_status")) == "" && strings.TrimSpace(record.GetString("source_url")) != "" {
@@ -691,6 +698,40 @@ func (s *Service) DownloadPendingSourceAssetOriginals(ctx context.Context, app c
 }
 
 func (s *Service) StartSourceAssetOriginalDownloadAsync(app core.App, limit int, actor SourceActionActor, note string) (SourceAssetDownloadProgress, error) {
+	records, err := app.FindRecordsByFilter(
+		CollectionSourceAssets,
+		"(original_image_status = {:pending} || original_image_status = {:failed}) && source_url != ''",
+		"sort",
+		limit,
+		0,
+		dbx.Params{
+			"pending": OriginalImageStatusPending,
+			"failed":  OriginalImageStatusFailed,
+		},
+	)
+	if err != nil {
+		return SourceAssetDownloadProgress{}, err
+	}
+	return s.startSourceAssetOriginalDownloadJob(app, records, "", "原图批量下载任务已启动。", actor, note)
+}
+
+func (s *Service) StartSourceAssetOriginalDownloadAsyncForIDs(app core.App, ids []string, actor SourceActionActor, note string) (SourceAssetDownloadProgress, error) {
+	return s.startSourceAssetOriginalDownloadAsyncForIDs(app, ids, "failed_only", "失败图片原图重试任务已启动。", actor, note)
+}
+
+func (s *Service) StartSourceAssetOriginalDownloadSelectionAsync(app core.App, ids []string, actor SourceActionActor, note string) (SourceAssetDownloadProgress, error) {
+	return s.startSourceAssetOriginalDownloadAsyncForIDs(app, ids, "selected", "选中图片原图下载任务已启动。", actor, note)
+}
+
+func (s *Service) startSourceAssetOriginalDownloadAsyncForIDs(app core.App, ids []string, mode string, label string, actor SourceActionActor, note string) (SourceAssetDownloadProgress, error) {
+	records, err := s.sourceAssetRecordsByIDs(app, ids)
+	if err != nil {
+		return SourceAssetDownloadProgress{}, err
+	}
+	return s.startSourceAssetOriginalDownloadJob(app, records, mode, label, actor, note)
+}
+
+func (s *Service) startSourceAssetOriginalDownloadJob(app core.App, records []*core.Record, mode string, label string, actor SourceActionActor, note string) (SourceAssetDownloadProgress, error) {
 	s.sourceAssetMu.Lock()
 	for _, item := range s.activeAssetLoads {
 		if item != nil && item.Status == "running" {
@@ -703,10 +744,12 @@ func (s *Service) StartSourceAssetOriginalDownloadAsync(app core.App, limit int,
 
 	progress := &SourceAssetDownloadProgress{
 		Status:    "running",
+		Mode:      mode,
 		StartedAt: time.Now().Format(time.RFC3339),
-		Logs:      []SourceAssetDownloadProgressLog{{Time: time.Now().Format(time.RFC3339), Message: "原图批量下载任务已启动。"}},
+		Logs:      []SourceAssetDownloadProgressLog{{Time: time.Now().Format(time.RFC3339), Message: label}},
+		AssetIDs:  sourceAssetRecordIDs(records),
 	}
-	jobRecord, err := s.createSourceAssetJobRecord(app, "download_original", "", progress.Status, progress.StartedAt)
+	jobRecord, err := s.createSourceAssetJobRecord(app, "download_original", mode, progress.Status, progress.StartedAt, progress.AssetIDs)
 	if err != nil {
 		return SourceAssetDownloadProgress{}, err
 	}
@@ -717,7 +760,7 @@ func (s *Service) StartSourceAssetOriginalDownloadAsync(app core.App, limit int,
 	s.activeAssetLoads[progress.ID] = progress
 	s.sourceAssetMu.Unlock()
 
-	go s.runSourceAssetOriginalDownload(app, progress.ID, limit, actor, note)
+	go s.runSourceAssetOriginalDownload(app, progress.ID, records, actor, note)
 	return *progress, nil
 }
 
@@ -737,26 +780,9 @@ func (s *Service) SourceAssetOriginalDownloadProgress(app core.App, id string) (
 	return snapshot, true
 }
 
-func (s *Service) runSourceAssetOriginalDownload(app core.App, progressID string, limit int, actor SourceActionActor, note string) {
+func (s *Service) runSourceAssetOriginalDownload(app core.App, progressID string, records []*core.Record, actor SourceActionActor, note string) {
 	ctx := context.Background()
-	progress, ok := s.getActiveSourceAssetProgress(progressID)
-	if !ok {
-		return
-	}
-
-	records, err := app.FindRecordsByFilter(
-		CollectionSourceAssets,
-		"(original_image_status = {:pending} || original_image_status = {:failed}) && source_url != ''",
-		"sort",
-		limit,
-		0,
-		dbx.Params{
-			"pending": OriginalImageStatusPending,
-			"failed":  OriginalImageStatusFailed,
-		},
-	)
-	if err != nil {
-		s.finishSourceAssetProgress(app, progressID, "failed", "", err)
+	if _, ok := s.getActiveSourceAssetProgress(progressID); !ok {
 		return
 	}
 
@@ -786,6 +812,7 @@ func (s *Service) runSourceAssetOriginalDownload(app core.App, progressID string
 		if err != nil {
 			s.updateSourceAssetProgress(app, progressID, func(item *SourceAssetDownloadProgress) {
 				item.Failed++
+				item.FailedItems = append(item.FailedItems, sourceAssetFailedItem(record, err))
 				item.Logs = append(item.Logs, SourceAssetDownloadProgressLog{Time: time.Now().Format(time.RFC3339), Message: fmt.Sprintf("下载失败：%s（%v）", current, err)})
 			})
 			continue
@@ -797,7 +824,6 @@ func (s *Service) runSourceAssetOriginalDownload(app core.App, progressID string
 	}
 
 	s.finishSourceAssetProgress(app, progressID, "completed", "", nil)
-	_ = progress
 }
 
 func (s *Service) getActiveSourceAssetProgress(id string) (*SourceAssetDownloadProgress, bool) {
@@ -951,6 +977,54 @@ func (s *Service) StartSourceAssetProcessAsync(app core.App, limit int, failedOn
 		mode = "failed"
 		label = "失败图片重处理任务已启动。"
 	}
+	filter := "(image_processing_status = {:pending} || image_processing_status = {:failed}) && source_url != ''"
+	params := dbx.Params{
+		"pending": ImageStatusPending,
+		"failed":  ImageStatusFailed,
+	}
+	if failedOnly {
+		filter = "image_processing_status = {:failed} && source_url != ''"
+		params = dbx.Params{"failed": ImageStatusFailed}
+	}
+	records, err := app.FindRecordsByFilter(CollectionSourceAssets, filter, "sort", limit, 0, params)
+	if err != nil {
+		return SourceAssetProcessProgress{}, err
+	}
+	return s.startSourceAssetProcessJob(app, records, mode, label, actor, note)
+}
+
+func (s *Service) StartSourceAssetProcessAsyncForIDs(app core.App, ids []string, actor SourceActionActor, note string) (SourceAssetProcessProgress, error) {
+	return s.startSourceAssetProcessAsyncForIDs(app, ids, "failed_only", "失败图片定向重处理任务已启动。", false, actor, note)
+}
+
+func (s *Service) StartSourceAssetProcessSelectionAsync(app core.App, ids []string, failedOnly bool, actor SourceActionActor, note string) (SourceAssetProcessProgress, error) {
+	mode := "selected"
+	label := "选中图片处理任务已启动。"
+	if failedOnly {
+		mode = "selected_failed"
+		label = "选中失败图片重处理任务已启动。"
+	}
+	return s.startSourceAssetProcessAsyncForIDs(app, ids, mode, label, failedOnly, actor, note)
+}
+
+func (s *Service) startSourceAssetProcessAsyncForIDs(app core.App, ids []string, mode string, label string, failedOnly bool, actor SourceActionActor, note string) (SourceAssetProcessProgress, error) {
+	records, err := s.sourceAssetRecordsByIDs(app, ids)
+	if err != nil {
+		return SourceAssetProcessProgress{}, err
+	}
+	if failedOnly {
+		filtered := make([]*core.Record, 0, len(records))
+		for _, record := range records {
+			if strings.EqualFold(strings.TrimSpace(record.GetString("image_processing_status")), ImageStatusFailed) {
+				filtered = append(filtered, record)
+			}
+		}
+		records = filtered
+	}
+	return s.startSourceAssetProcessJob(app, records, mode, label, actor, note)
+}
+
+func (s *Service) startSourceAssetProcessJob(app core.App, records []*core.Record, mode string, label string, actor SourceActionActor, note string) (SourceAssetProcessProgress, error) {
 	s.sourceAssetMu.Lock()
 	for _, item := range s.activeAssetProcs {
 		if item != nil && item.Status == "running" {
@@ -965,8 +1039,9 @@ func (s *Service) StartSourceAssetProcessAsync(app core.App, limit int, failedOn
 		Mode:      mode,
 		StartedAt: time.Now().Format(time.RFC3339),
 		Logs:      []SourceAssetProcessProgressLog{{Time: time.Now().Format(time.RFC3339), Message: label}},
+		AssetIDs:  sourceAssetRecordIDs(records),
 	}
-	jobRecord, err := s.createSourceAssetJobRecord(app, "process_asset", mode, progress.Status, progress.StartedAt)
+	jobRecord, err := s.createSourceAssetJobRecord(app, "process_asset", mode, progress.Status, progress.StartedAt, progress.AssetIDs)
 	if err != nil {
 		return SourceAssetProcessProgress{}, err
 	}
@@ -977,7 +1052,7 @@ func (s *Service) StartSourceAssetProcessAsync(app core.App, limit int, failedOn
 	s.activeAssetProcs[progress.ID] = progress
 	s.sourceAssetMu.Unlock()
 
-	go s.runSourceAssetProcess(app, progress.ID, limit, failedOnly, actor, note)
+	go s.runSourceAssetProcess(app, progress.ID, records, label, actor, note)
 	return *progress, nil
 }
 
@@ -997,24 +1072,11 @@ func (s *Service) SourceAssetProcessProgressByID(app core.App, id string) (Sourc
 	return snapshot, true
 }
 
-func (s *Service) runSourceAssetProcess(app core.App, progressID string, limit int, failedOnly bool, actor SourceActionActor, note string) {
+func (s *Service) runSourceAssetProcess(app core.App, progressID string, records []*core.Record, label string, actor SourceActionActor, note string) {
 	ctx := context.Background()
-	filter := "(image_processing_status = {:pending} || image_processing_status = {:failed}) && source_url != ''"
-	params := dbx.Params{
-		"pending": ImageStatusPending,
-		"failed":  ImageStatusFailed,
-	}
 	startLabel := "处理图片"
-	if failedOnly {
-		filter = "image_processing_status = {:failed} && source_url != ''"
-		params = dbx.Params{"failed": ImageStatusFailed}
+	if strings.Contains(label, "重处理") {
 		startLabel = "重处理图片"
-	}
-
-	records, err := app.FindRecordsByFilter(CollectionSourceAssets, filter, "sort", limit, 0, params)
-	if err != nil {
-		s.finishSourceAssetProcessProgress(app, progressID, "failed", "", err)
-		return
 	}
 	s.updateSourceAssetProcessProgress(app, progressID, func(item *SourceAssetProcessProgress) {
 		item.Total = len(records)
@@ -1042,6 +1104,7 @@ func (s *Service) runSourceAssetProcess(app core.App, progressID string, limit i
 		if err != nil {
 			s.updateSourceAssetProcessProgress(app, progressID, func(item *SourceAssetProcessProgress) {
 				item.Failed++
+				item.FailedItems = append(item.FailedItems, sourceAssetFailedItem(record, err))
 				item.Logs = append(item.Logs, SourceAssetProcessProgressLog{Time: time.Now().Format(time.RFC3339), Message: fmt.Sprintf("处理失败：%s（%v）", current, err)})
 			})
 			continue
@@ -1086,7 +1149,7 @@ func (s *Service) finishSourceAssetProcessProgress(app core.App, id string, stat
 	})
 }
 
-func (s *Service) createSourceAssetJobRecord(app core.App, jobType string, mode string, status string, startedAt string) (*core.Record, error) {
+func (s *Service) createSourceAssetJobRecord(app core.App, jobType string, mode string, status string, startedAt string, assetIDs []string) (*core.Record, error) {
 	collection, err := app.FindCollectionByNameOrId(CollectionSourceAssetJobs)
 	if err != nil {
 		return nil, err
@@ -1097,6 +1160,10 @@ func (s *Service) createSourceAssetJobRecord(app core.App, jobType string, mode 
 	record.Set("status", strings.TrimSpace(status))
 	record.Set("started_at", strings.TrimSpace(startedAt))
 	record.Set("logs_json", "[]")
+	record.Set("failed_items_json", "[]")
+	if err := setJSON(record, "asset_ids_json", normalizeSourceIDSlice(assetIDs)); err != nil {
+		return nil, err
+	}
 	if err := app.Save(record); err != nil {
 		return nil, err
 	}
@@ -1116,6 +1183,12 @@ func (s *Service) saveSourceAssetDownloadJob(app core.App, progress *SourceAsset
 	record.Set("started_at", strings.TrimSpace(progress.StartedAt))
 	record.Set("finished_at", strings.TrimSpace(progress.FinishedAt))
 	record.Set("error", strings.TrimSpace(progress.Error))
+	if err := setJSON(record, "asset_ids_json", normalizeSourceIDSlice(progress.AssetIDs)); err != nil {
+		return err
+	}
+	if err := setJSON(record, "failed_items_json", progress.FailedItems); err != nil {
+		return err
+	}
 	return saveSourceAssetJobLogs(record, progress.Logs, app)
 }
 
@@ -1133,6 +1206,12 @@ func (s *Service) saveSourceAssetProcessJob(app core.App, progress *SourceAssetP
 	record.Set("started_at", strings.TrimSpace(progress.StartedAt))
 	record.Set("finished_at", strings.TrimSpace(progress.FinishedAt))
 	record.Set("error", strings.TrimSpace(progress.Error))
+	if err := setJSON(record, "asset_ids_json", normalizeSourceIDSlice(progress.AssetIDs)); err != nil {
+		return err
+	}
+	if err := setJSON(record, "failed_items_json", progress.FailedItems); err != nil {
+		return err
+	}
 	return saveSourceAssetJobLogs(record, progress.Logs, app)
 }
 
@@ -1159,9 +1238,25 @@ func (s *Service) loadSourceAssetDownloadJob(app core.App, id string) (SourceAss
 			}
 		}
 	}
+	failedItems := []SourceAssetFailedItem{}
+	if decoded, ok := decodeRawJSON(record.GetString("failed_items_json")).([]any); ok {
+		for _, item := range decoded {
+			if m, ok := item.(map[string]any); ok {
+				failedItems = append(failedItems, SourceAssetFailedItem{
+					AssetID:   strings.TrimSpace(fmt.Sprintf("%v", m["assetId"])),
+					AssetKey:  strings.TrimSpace(fmt.Sprintf("%v", m["assetKey"])),
+					ProductID: strings.TrimSpace(fmt.Sprintf("%v", m["productId"])),
+					Name:      strings.TrimSpace(fmt.Sprintf("%v", m["name"])),
+					AssetRole: strings.TrimSpace(fmt.Sprintf("%v", m["assetRole"])),
+					Error:     strings.TrimSpace(fmt.Sprintf("%v", m["error"])),
+				})
+			}
+		}
+	}
 	return SourceAssetDownloadProgress{
 		ID:          record.Id,
 		Status:      record.GetString("status"),
+		Mode:        record.GetString("mode"),
 		Total:       record.GetInt("total"),
 		Processed:   record.GetInt("processed"),
 		Failed:      record.GetInt("failed_count"),
@@ -1170,6 +1265,8 @@ func (s *Service) loadSourceAssetDownloadJob(app core.App, id string) (SourceAss
 		FinishedAt:  record.GetString("finished_at"),
 		Error:       record.GetString("error"),
 		Logs:        logs,
+		FailedItems: failedItems,
+		AssetIDs:    sourceAssetJobAssetIDs(record),
 	}, nil
 }
 
@@ -1189,6 +1286,21 @@ func (s *Service) loadSourceAssetProcessJob(app core.App, id string) (SourceAsse
 			}
 		}
 	}
+	failedItems := []SourceAssetFailedItem{}
+	if decoded, ok := decodeRawJSON(record.GetString("failed_items_json")).([]any); ok {
+		for _, item := range decoded {
+			if m, ok := item.(map[string]any); ok {
+				failedItems = append(failedItems, SourceAssetFailedItem{
+					AssetID:   strings.TrimSpace(fmt.Sprintf("%v", m["assetId"])),
+					AssetKey:  strings.TrimSpace(fmt.Sprintf("%v", m["assetKey"])),
+					ProductID: strings.TrimSpace(fmt.Sprintf("%v", m["productId"])),
+					Name:      strings.TrimSpace(fmt.Sprintf("%v", m["name"])),
+					AssetRole: strings.TrimSpace(fmt.Sprintf("%v", m["assetRole"])),
+					Error:     strings.TrimSpace(fmt.Sprintf("%v", m["error"])),
+				})
+			}
+		}
+	}
 	return SourceAssetProcessProgress{
 		ID:          record.Id,
 		Status:      record.GetString("status"),
@@ -1201,6 +1313,8 @@ func (s *Service) loadSourceAssetProcessJob(app core.App, id string) (SourceAsse
 		FinishedAt:  record.GetString("finished_at"),
 		Error:       record.GetString("error"),
 		Logs:        logs,
+		FailedItems: failedItems,
+		AssetIDs:    sourceAssetJobAssetIDs(record),
 	}, nil
 }
 
@@ -1219,7 +1333,36 @@ func sourceAssetJobLogs(raw string) []SourceAssetJobLog {
 	return logs
 }
 
+func sourceAssetJobAssetIDs(record *core.Record) []string {
+	if decoded, ok := decodeRawJSON(record.GetString("asset_ids_json")).([]any); ok {
+		ids := make([]string, 0, len(decoded))
+		for _, item := range decoded {
+			id := strings.TrimSpace(fmt.Sprintf("%v", item))
+			if id != "" {
+				ids = append(ids, id)
+			}
+		}
+		return normalizeSourceIDSlice(ids)
+	}
+	return nil
+}
+
 func sourceAssetJobItem(record *core.Record) SourceAssetJobItem {
+	failedItems := []SourceAssetFailedItem{}
+	if decoded, ok := decodeRawJSON(record.GetString("failed_items_json")).([]any); ok {
+		for _, item := range decoded {
+			if m, ok := item.(map[string]any); ok {
+				failedItems = append(failedItems, SourceAssetFailedItem{
+					AssetID:   strings.TrimSpace(fmt.Sprintf("%v", m["assetId"])),
+					AssetKey:  strings.TrimSpace(fmt.Sprintf("%v", m["assetKey"])),
+					ProductID: strings.TrimSpace(fmt.Sprintf("%v", m["productId"])),
+					Name:      strings.TrimSpace(fmt.Sprintf("%v", m["name"])),
+					AssetRole: strings.TrimSpace(fmt.Sprintf("%v", m["assetRole"])),
+					Error:     strings.TrimSpace(fmt.Sprintf("%v", m["error"])),
+				})
+			}
+		}
+	}
 	item := SourceAssetJobItem{
 		ID:          record.Id,
 		JobType:     strings.TrimSpace(record.GetString("job_type")),
@@ -1234,9 +1377,125 @@ func sourceAssetJobItem(record *core.Record) SourceAssetJobItem {
 		Error:       strings.TrimSpace(record.GetString("error")),
 		Created:     strings.TrimSpace(record.GetString("created")),
 		Logs:        sourceAssetJobLogs(record.GetString("logs_json")),
+		FailedItems: failedItems,
+		AssetIDs:    sourceAssetJobAssetIDs(record),
 	}
 	item.CanRetry = !strings.EqualFold(item.Status, "running")
 	return item
+}
+
+func sourceAssetFailedItem(record *core.Record, err error) SourceAssetFailedItem {
+	message := ""
+	if err != nil {
+		message = strings.TrimSpace(err.Error())
+	}
+	if message == "" {
+		message = strings.TrimSpace(record.GetString("original_image_error"))
+	}
+	if message == "" {
+		message = strings.TrimSpace(record.GetString("image_processing_error"))
+	}
+	return SourceAssetFailedItem{
+		AssetID:   record.Id,
+		AssetKey:  strings.TrimSpace(record.GetString("asset_key")),
+		ProductID: strings.TrimSpace(record.GetString("product_id")),
+		Name:      strings.TrimSpace(record.GetString("name")),
+		AssetRole: strings.TrimSpace(record.GetString("asset_role")),
+		Error:     message,
+	}
+}
+
+func (s *Service) sourceAssetRecordsByIDs(app core.App, ids []string) ([]*core.Record, error) {
+	records := make([]*core.Record, 0, len(ids))
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		record, err := app.FindRecordById(CollectionSourceAssets, id)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(record.GetString("source_url")) == "" {
+			continue
+		}
+		records = append(records, record)
+	}
+	return records, nil
+}
+
+func sourceAssetRecordIDs(records []*core.Record) []string {
+	ids := make([]string, 0, len(records))
+	for _, record := range records {
+		if record == nil {
+			continue
+		}
+		ids = append(ids, record.Id)
+	}
+	return normalizeSourceIDSlice(ids)
+}
+
+func normalizeSourceIDSlice(ids []string) []string {
+	normalized := make([]string, 0, len(ids))
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		normalized = append(normalized, id)
+	}
+	return normalized
+}
+
+func sourceReviewFilterAssetIDs(filter SourceReviewFilter) []string {
+	return normalizeSourceIDSlice(strings.Split(strings.TrimSpace(filter.AssetIDs), ","))
+}
+
+func displayOriginalImageStatus(record *core.Record) string {
+	if record == nil {
+		return ""
+	}
+	status := strings.TrimSpace(record.GetString("original_image_status"))
+	if status != "" {
+		return status
+	}
+	if strings.TrimSpace(record.GetString("source_url")) == "" && strings.TrimSpace(record.GetString("original_image")) == "" {
+		return "missing"
+	}
+	return status
+}
+
+func (s *Service) SourceAssetIDsForFilter(app core.App, filter SourceReviewFilter) ([]string, error) {
+	filter = normalizeSourceReviewFilter(filter)
+	filter.AssetPage = 1
+	filter.PageSize = 1000000
+
+	records, err := app.FindAllRecords(CollectionSourceAssets)
+	if err != nil {
+		return nil, err
+	}
+
+	ids := make([]string, 0, len(records))
+	for _, record := range records {
+		if !matchesSourceAssetFilter(filter, record) {
+			continue
+		}
+		if strings.TrimSpace(record.GetString("source_url")) == "" {
+			continue
+		}
+		ids = append(ids, record.Id)
+	}
+	return normalizeSourceIDSlice(ids), nil
 }
 
 func (s *Service) SourceAssetJobs(_ context.Context, app core.App, filter SourceAssetJobFilter) (SourceAssetJobsSummary, error) {
@@ -1323,7 +1582,11 @@ func (s *Service) SourceAssetJobDetail(_ context.Context, app core.App, id strin
 	if err != nil {
 		return SourceAssetJobDetail{}, err
 	}
-	return SourceAssetJobDetail{SourceAssetJobItem: sourceAssetJobItem(record)}, nil
+	item := sourceAssetJobItem(record)
+	return SourceAssetJobDetail{
+		SourceAssetJobItem: item,
+		FailedItems:        append([]SourceAssetFailedItem(nil), item.FailedItems...),
+	}, nil
 }
 
 func (s *Service) RetrySourceAssetJob(app core.App, id string, actor SourceActionActor, note string) (SourceAssetJobItem, error) {
@@ -1338,7 +1601,23 @@ func (s *Service) RetrySourceAssetJob(app core.App, id string, actor SourceActio
 
 	switch job.JobType {
 	case "download_original":
-		progress, err := s.StartSourceAssetOriginalDownloadAsync(app, 50, actor, note)
+		var (
+			progress SourceAssetDownloadProgress
+			err      error
+		)
+		if len(job.FailedItems) > 0 {
+			ids := make([]string, 0, len(job.FailedItems))
+			for _, item := range job.FailedItems {
+				if strings.TrimSpace(item.AssetID) != "" {
+					ids = append(ids, item.AssetID)
+				}
+			}
+			progress, err = s.StartSourceAssetOriginalDownloadAsyncForIDs(app, ids, actor, note)
+		} else if len(job.AssetIDs) > 0 {
+			progress, err = s.StartSourceAssetOriginalDownloadSelectionAsync(app, job.AssetIDs, actor, note)
+		} else {
+			progress, err = s.StartSourceAssetOriginalDownloadAsync(app, 50, actor, note)
+		}
 		if err != nil {
 			return SourceAssetJobItem{}, err
 		}
@@ -1348,8 +1627,24 @@ func (s *Service) RetrySourceAssetJob(app core.App, id string, actor SourceActio
 		}
 		return sourceAssetJobItem(jobRecord), nil
 	case "process_asset":
-		failedOnly := strings.EqualFold(job.Mode, "failed")
-		progress, err := s.StartSourceAssetProcessAsync(app, 50, failedOnly, actor, note)
+		var (
+			progress SourceAssetProcessProgress
+			err      error
+		)
+		if len(job.FailedItems) > 0 {
+			ids := make([]string, 0, len(job.FailedItems))
+			for _, item := range job.FailedItems {
+				if strings.TrimSpace(item.AssetID) != "" {
+					ids = append(ids, item.AssetID)
+				}
+			}
+			progress, err = s.StartSourceAssetProcessAsyncForIDs(app, ids, actor, note)
+		} else if len(job.AssetIDs) > 0 {
+			progress, err = s.StartSourceAssetProcessSelectionAsync(app, job.AssetIDs, strings.Contains(strings.ToLower(job.Mode), "failed"), actor, note)
+		} else {
+			failedOnly := strings.EqualFold(job.Mode, "failed")
+			progress, err = s.StartSourceAssetProcessAsync(app, 50, failedOnly, actor, note)
+		}
 		if err != nil {
 			return SourceAssetJobItem{}, err
 		}
@@ -1591,6 +1886,7 @@ func normalizeSourceReviewFilter(filter SourceReviewFilter) SourceReviewFilter {
 	filter.ProductStatus = strings.ToLower(strings.TrimSpace(filter.ProductStatus))
 	filter.AssetStatus = strings.ToLower(strings.TrimSpace(filter.AssetStatus))
 	filter.OriginalStatus = strings.ToLower(strings.TrimSpace(filter.OriginalStatus))
+	filter.AssetIDs = strings.Join(sourceReviewFilterAssetIDs(filter), ",")
 	filter.SyncState = strings.ToLower(strings.TrimSpace(filter.SyncState))
 	filter.CategoryKey = strings.TrimSpace(filter.CategoryKey)
 	filter.Query = strings.TrimSpace(filter.Query)
@@ -1620,6 +1916,9 @@ func buildSourceReviewParams(filter SourceReviewFilter) dbx.Params {
 	if filter.OriginalStatus != "" {
 		params["original_status"] = filter.OriginalStatus
 	}
+	if filter.AssetIDs != "" {
+		params["asset_ids"] = sourceReviewFilterAssetIDs(filter)
+	}
 	if filter.Query != "" {
 		params["query"] = "%" + filter.Query + "%"
 	}
@@ -1647,6 +1946,9 @@ func buildSourceAssetFilterExpr(filter SourceReviewFilter) string {
 	}
 	if filter.OriginalStatus != "" {
 		parts = append(parts, "original_image_status = {:original_status}")
+	}
+	if filter.AssetIDs != "" {
+		parts = append(parts, "id ?= {:asset_ids}")
 	}
 	if filter.Query != "" {
 		parts = append(parts, "(name ~ {:query} || asset_key ~ {:query} || product_id ~ {:query})")
@@ -1723,6 +2025,12 @@ func matchesSourceProductFilter(filter SourceReviewFilter, record *core.Record) 
 }
 
 func matchesSourceAssetFilter(filter SourceReviewFilter, record *core.Record) bool {
+	if filter.AssetIDs != "" {
+		allowed := sourceReviewFilterAssetIDs(filter)
+		if len(allowed) > 0 && !slices.Contains(allowed, strings.TrimSpace(record.Id)) {
+			return false
+		}
+	}
 	if filter.AssetStatus != "" && !strings.EqualFold(strings.TrimSpace(record.GetString("image_processing_status")), filter.AssetStatus) {
 		return false
 	}
@@ -1928,9 +2236,10 @@ func (s *Service) SourceReviewWorkbench(ctx context.Context, app core.App, produ
 			Name:                  record.GetString("name"),
 			AssetRole:             record.GetString("asset_role"),
 			SourceURL:             record.GetString("source_url"),
+			CanDownloadOriginal:   strings.TrimSpace(record.GetString("source_url")) != "",
 			PreviewURL:            s.sourceAssetPreviewURL(app, record),
 			OriginalImageURL:      s.recordFileURL(record, "original_image"),
-			OriginalImageStatus:   record.GetString("original_image_status"),
+			OriginalImageStatus:   displayOriginalImageStatus(record),
 			OriginalImageError:    record.GetString("original_image_error"),
 			ProcessedImageURL:     s.recordFileURL(record, "processed_image"),
 			ImageProcessingStatus: record.GetString("image_processing_status"),
@@ -1939,6 +2248,7 @@ func (s *Service) SourceReviewWorkbench(ctx context.Context, app core.App, produ
 	}
 	summary.AssetPage = filter.AssetPage
 	summary.AssetPages = totalPages(len(filteredAssets), filter.PageSize)
+	summary.FilteredAssetCount = len(filteredAssets)
 	summary.Assets = paginateAssets(filteredAssets, filter.AssetPage, filter.PageSize)
 	summary.RecentActions, _ = s.listRecentSourceActions(app, 8)
 
@@ -2313,8 +2623,9 @@ func (s *Service) SourceAssetDetail(ctx context.Context, app core.App, recordID 
 		AssetRole:             record.GetString("asset_role"),
 		PreviewURL:            s.sourceAssetPreviewURL(app, record),
 		SourceURL:             record.GetString("source_url"),
+		CanDownloadOriginal:   strings.TrimSpace(record.GetString("source_url")) != "",
 		OriginalImageURL:      s.recordFileURL(record, "original_image"),
-		OriginalImageStatus:   record.GetString("original_image_status"),
+		OriginalImageStatus:   displayOriginalImageStatus(record),
 		OriginalImageError:    record.GetString("original_image_error"),
 		ProcessedImageURL:     s.recordFileURL(record, "processed_image"),
 		ProcessedImageSource:  record.GetString("processed_image_source"),

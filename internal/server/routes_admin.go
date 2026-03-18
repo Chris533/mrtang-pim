@@ -56,10 +56,8 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		if !authorizedAdminModule(re, cfg, "dashboard") {
 			return re.ForbiddenError("当前账号没有后台总览权限。", nil)
 		}
-		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 4*time.Second)
-		defer cancel()
 		return re.JSON(http.StatusOK, admin.BuildDashboardAPIData(
-			loadCtx,
+			re.Request.Context(),
 			re.App,
 			cfg,
 			service,
@@ -71,29 +69,27 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		))
 	})
 
+	se.Router.GET("/api/pim/admin/dashboard/miniapp-live", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "dashboard") {
+			return re.ForbiddenError("当前账号没有后台总览权限。", nil)
+		}
+		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 20*time.Second)
+		defer cancel()
+		return re.JSON(http.StatusOK, admin.BuildDashboardMiniappAPIData(loadCtx, cfg, miniappService))
+	})
+
 	se.Router.GET("/api/pim/admin/target-sync", func(re *core.RequestEvent) error {
 		if !authorizedAdminModule(re, cfg, "source") {
 			return re.ForbiddenError("当前账号没有抓取入库权限。", nil)
 		}
-		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 4*time.Second)
-		defer cancel()
 
-		dataset, err := miniappService.Dataset(loadCtx)
+		summary, err := service.TargetSyncBaseSummary(re.App, strings.TrimSpace(cfg.MiniApp.SourceMode), miniappService.RawAuthStatus())
 		if err != nil {
 			return re.JSON(http.StatusOK, admin.BuildTargetSyncAPIData(
 				cfg,
-				pim.TargetSyncSummary{SourceMode: strings.TrimSpace(cfg.MiniApp.SourceMode)},
+				pim.TargetSyncBaseSummary{SourceMode: strings.TrimSpace(cfg.MiniApp.SourceMode), RawAuthStatus: miniappService.RawAuthStatus()},
 				strings.TrimSpace(re.Request.URL.Query().Get("message")),
-				"加载 miniapp dataset 失败："+err.Error(),
-			))
-		}
-		summary, err := service.TargetSyncSummary(loadCtx, re.App, *dataset)
-		if err != nil {
-			return re.JSON(http.StatusOK, admin.BuildTargetSyncAPIData(
-				cfg,
-				pim.TargetSyncSummary{SourceMode: strings.TrimSpace(dataset.Meta.Source)},
-				strings.TrimSpace(re.Request.URL.Query().Get("message")),
-				"生成抓取入库摘要失败："+err.Error(),
+				"生成抓取入库基础摘要失败："+err.Error(),
 			))
 		}
 		return re.JSON(http.StatusOK, admin.BuildTargetSyncAPIData(
@@ -102,6 +98,44 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 			strings.TrimSpace(re.Request.URL.Query().Get("message")),
 			strings.TrimSpace(re.Request.URL.Query().Get("error")),
 		))
+	})
+
+	se.Router.GET("/api/pim/admin/target-sync/live", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有抓取入库权限。", nil)
+		}
+		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 20*time.Second)
+		defer cancel()
+
+		dataset, err := miniappService.Dataset(loadCtx)
+		if err != nil {
+			return re.JSON(http.StatusOK, admin.BuildTargetSyncLiveAPIData(
+				pim.TargetSyncLiveSummary{SourceMode: strings.TrimSpace(cfg.MiniApp.SourceMode)},
+				"加载 miniapp dataset 失败："+err.Error(),
+			))
+		}
+		summary, err := service.TargetSyncLiveSummary(re.App, *dataset)
+		if err != nil {
+			return re.JSON(http.StatusOK, admin.BuildTargetSyncLiveAPIData(
+				pim.TargetSyncLiveSummary{SourceMode: strings.TrimSpace(dataset.Meta.Source)},
+				"生成 raw 实时摘要失败："+err.Error(),
+			))
+		}
+		return re.JSON(http.StatusOK, admin.BuildTargetSyncLiveAPIData(summary, ""))
+	})
+
+	se.Router.GET("/api/pim/admin/target-sync/checkout-live", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有抓取入库权限。", nil)
+		}
+		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 20*time.Second)
+		defer cancel()
+
+		dataset, err := miniappService.Dataset(loadCtx)
+		if err != nil {
+			return re.JSON(http.StatusOK, admin.BuildTargetSyncCheckoutLiveAPIData(pim.TargetSyncCheckoutLiveSummary{}, "加载 miniapp dataset 失败："+err.Error()))
+		}
+		return re.JSON(http.StatusOK, admin.BuildTargetSyncCheckoutLiveAPIData(service.TargetSyncCheckoutLiveSummary(*dataset), ""))
 	})
 
 	se.Router.POST("/api/pim/admin/source/import", func(re *core.RequestEvent) error {
@@ -310,6 +344,107 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		})
 	})
 
+	se.Router.POST("/api/pim/admin/source/products/batch-status", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		status := strings.TrimSpace(re.Request.FormValue("status"))
+		ids := readIDList(re.Request.FormValue("productIds"))
+		if status == "" || len(ids) == 0 {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "请先选择商品并指定审核状态。",
+			})
+		}
+		summary, err := service.BatchUpdateSourceProductReviewStatusWithAudit(re.Request.Context(), re.App, ids, status, sourceActionNote(re), sourceActionActor(re))
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "批量更新商品审核状态失败：" + err.Error(),
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": fmt.Sprintf("批量更新完成：成功 %d，失败 %d。", summary.Processed, summary.Failed),
+			"summary": summary,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/source/products/batch-promote", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		ids := readIDList(re.Request.FormValue("productIds"))
+		if len(ids) == 0 {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "请先选择要桥接的商品。",
+			})
+		}
+		summary, err := service.BatchPromoteSourceProductsWithAudit(re.Request.Context(), re.App, ids, false, sourceActionActor(re), sourceActionNote(re))
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "批量桥接商品失败：" + err.Error(),
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": fmt.Sprintf("批量桥接完成：成功 %d，失败 %d。", summary.Processed, summary.Failed),
+			"summary": summary,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/source/products/batch-promote-sync", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		ids := readIDList(re.Request.FormValue("productIds"))
+		if len(ids) == 0 {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "请先选择要桥接并同步的商品。",
+			})
+		}
+		summary, err := service.BatchPromoteSourceProductsWithAudit(re.Request.Context(), re.App, ids, true, sourceActionActor(re), sourceActionNote(re))
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "批量桥接并同步商品失败：" + err.Error(),
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": fmt.Sprintf("批量桥接并同步完成：成功 %d，失败 %d。", summary.Processed, summary.Failed),
+			"summary": summary,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/source/products/batch-retry-sync", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		ids := readIDList(re.Request.FormValue("productIds"))
+		if len(ids) == 0 {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "请先选择要重试同步的商品。",
+			})
+		}
+		summary, err := service.BatchRetrySourceProductSyncWithAudit(re.Request.Context(), re.App, ids, sourceActionActor(re), sourceActionNote(re))
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "批量重试商品同步失败：" + err.Error(),
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": fmt.Sprintf("批量重试同步完成：成功 %d，失败 %d。", summary.Processed, summary.Failed),
+			"summary": summary,
+		})
+	})
+
 	se.Router.POST("/api/pim/admin/source/assets/process", func(re *core.RequestEvent) error {
 		if !authorizedAdminModule(re, cfg, "source") {
 			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
@@ -345,9 +480,15 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 			})
 		}
 		if err := service.DownloadSourceAssetOriginalWithAudit(re.Request.Context(), re.App, assetID, sourceActionActor(re), sourceActionNote(re)); err != nil {
-			return re.JSON(http.StatusInternalServerError, map[string]any{
+			statusCode := http.StatusInternalServerError
+			message := "下载原图失败：" + err.Error()
+			if strings.Contains(strings.ToLower(err.Error()), "missing source_url") {
+				statusCode = http.StatusBadRequest
+				message = "下载原图失败：该图片资产缺少可用源图地址，请先检查抓取结果。"
+			}
+			return re.JSON(statusCode, map[string]any{
 				"ok":      false,
-				"message": "下载原图失败：" + err.Error(),
+				"message": message,
 			})
 		}
 		return re.JSON(http.StatusOK, map[string]any{
@@ -362,14 +503,91 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		}
 		progress, err := service.StartSourceAssetOriginalDownloadAsync(re.App, 50, sourceActionActor(re), sourceActionNote(re))
 		if err != nil {
-			return re.JSON(http.StatusInternalServerError, map[string]any{
-				"ok":      false,
-				"message": "批量下载原图失败：" + err.Error(),
+			statusCode := http.StatusInternalServerError
+			if strings.Contains(err.Error(), "执行中") {
+				statusCode = http.StatusConflict
+			}
+			return re.JSON(statusCode, map[string]any{
+				"ok":       false,
+				"message":  "批量下载原图失败：" + err.Error(),
+				"progress": progress,
 			})
 		}
 		return re.JSON(http.StatusOK, map[string]any{
 			"ok":       true,
 			"message":  "原图批量下载任务已启动。",
+			"progress": progress,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/source/assets/download-selected", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		ids := readIDList(re.Request.FormValue("assetIds"))
+		if len(ids) == 0 {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "请先选择要下载原图的图片。",
+			})
+		}
+		progress, err := service.StartSourceAssetOriginalDownloadSelectionAsync(re.App, ids, sourceActionActor(re), sourceActionNote(re))
+		if err != nil {
+			statusCode := http.StatusInternalServerError
+			if strings.Contains(err.Error(), "执行中") {
+				statusCode = http.StatusConflict
+			}
+			return re.JSON(statusCode, map[string]any{
+				"ok":       false,
+				"message":  "启动选中图片原图下载失败：" + err.Error(),
+				"progress": progress,
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":       true,
+			"message":  fmt.Sprintf("已启动 %d 张图片的原图下载任务。", len(ids)),
+			"progress": progress,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/source/assets/download-filtered", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		filter := pim.SourceReviewFilter{
+			AssetStatus:    strings.TrimSpace(re.Request.FormValue("assetStatus")),
+			OriginalStatus: strings.TrimSpace(re.Request.FormValue("originalStatus")),
+			AssetIDs:       strings.TrimSpace(re.Request.FormValue("assetIds")),
+			Query:          strings.TrimSpace(re.Request.FormValue("q")),
+		}
+		ids, err := service.SourceAssetIDsForFilter(re.App, filter)
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "读取当前筛选图片失败：" + err.Error(),
+			})
+		}
+		if len(ids) == 0 {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "当前筛选结果下没有可下载原图的图片。",
+			})
+		}
+		progress, err := service.StartSourceAssetOriginalDownloadSelectionAsync(re.App, ids, sourceActionActor(re), sourceActionNote(re))
+		if err != nil {
+			statusCode := http.StatusInternalServerError
+			if strings.Contains(err.Error(), "执行中") {
+				statusCode = http.StatusConflict
+			}
+			return re.JSON(statusCode, map[string]any{
+				"ok":       false,
+				"message":  "启动当前筛选结果原图下载失败：" + err.Error(),
+				"progress": progress,
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":       true,
+			"message":  fmt.Sprintf("已启动当前筛选结果 %d 张图片的原图下载任务。", len(ids)),
 			"progress": progress,
 		})
 	})
@@ -404,9 +622,14 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		}
 		progress, err := service.StartSourceAssetProcessAsync(re.App, 20, false, sourceActionActor(re), sourceActionNote(re))
 		if err != nil {
-			return re.JSON(http.StatusInternalServerError, map[string]any{
-				"ok":      false,
-				"message": "批量处理待处理图片失败：" + err.Error(),
+			statusCode := http.StatusInternalServerError
+			if strings.Contains(err.Error(), "执行中") {
+				statusCode = http.StatusConflict
+			}
+			return re.JSON(statusCode, map[string]any{
+				"ok":       false,
+				"message":  "批量处理待处理图片失败：" + err.Error(),
+				"progress": progress,
 			})
 		}
 		return re.JSON(http.StatusOK, map[string]any{
@@ -422,14 +645,101 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		}
 		progress, err := service.StartSourceAssetProcessAsync(re.App, 50, true, sourceActionActor(re), sourceActionNote(re))
 		if err != nil {
-			return re.JSON(http.StatusInternalServerError, map[string]any{
-				"ok":      false,
-				"message": "批量重处理失败图片失败：" + err.Error(),
+			statusCode := http.StatusInternalServerError
+			if strings.Contains(err.Error(), "执行中") {
+				statusCode = http.StatusConflict
+			}
+			return re.JSON(statusCode, map[string]any{
+				"ok":       false,
+				"message":  "批量重处理失败图片失败：" + err.Error(),
+				"progress": progress,
 			})
 		}
 		return re.JSON(http.StatusOK, map[string]any{
 			"ok":       true,
 			"message":  "失败图片重处理任务已启动。",
+			"progress": progress,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/source/assets/process-selected", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		ids := readIDList(re.Request.FormValue("assetIds"))
+		if len(ids) == 0 {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "请先选择要处理的图片。",
+			})
+		}
+		failedOnly := strings.EqualFold(strings.TrimSpace(re.Request.FormValue("failedOnly")), "true")
+		progress, err := service.StartSourceAssetProcessSelectionAsync(re.App, ids, failedOnly, sourceActionActor(re), sourceActionNote(re))
+		if err != nil {
+			statusCode := http.StatusInternalServerError
+			if strings.Contains(err.Error(), "执行中") {
+				statusCode = http.StatusConflict
+			}
+			return re.JSON(statusCode, map[string]any{
+				"ok":       false,
+				"message":  "启动选中图片处理任务失败：" + err.Error(),
+				"progress": progress,
+			})
+		}
+		message := fmt.Sprintf("已启动 %d 张图片的处理任务。", len(ids))
+		if failedOnly {
+			message = fmt.Sprintf("已启动 %d 张选中失败图片的重处理任务。", len(ids))
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":       true,
+			"message":  message,
+			"progress": progress,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/source/assets/process-filtered", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		filter := pim.SourceReviewFilter{
+			AssetStatus:    strings.TrimSpace(re.Request.FormValue("assetStatus")),
+			OriginalStatus: strings.TrimSpace(re.Request.FormValue("originalStatus")),
+			AssetIDs:       strings.TrimSpace(re.Request.FormValue("assetIds")),
+			Query:          strings.TrimSpace(re.Request.FormValue("q")),
+		}
+		ids, err := service.SourceAssetIDsForFilter(re.App, filter)
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "读取当前筛选图片失败：" + err.Error(),
+			})
+		}
+		if len(ids) == 0 {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "当前筛选结果下没有可处理的图片。",
+			})
+		}
+		failedOnly := strings.EqualFold(strings.TrimSpace(re.Request.FormValue("failedOnly")), "true")
+		progress, err := service.StartSourceAssetProcessSelectionAsync(re.App, ids, failedOnly, sourceActionActor(re), sourceActionNote(re))
+		if err != nil {
+			statusCode := http.StatusInternalServerError
+			if strings.Contains(err.Error(), "执行中") {
+				statusCode = http.StatusConflict
+			}
+			return re.JSON(statusCode, map[string]any{
+				"ok":       false,
+				"message":  "启动当前筛选结果图片处理失败：" + err.Error(),
+				"progress": progress,
+			})
+		}
+		message := fmt.Sprintf("已启动当前筛选结果 %d 张图片的处理任务。", len(ids))
+		if failedOnly {
+			message = fmt.Sprintf("已启动当前筛选结果 %d 张失败图片的重处理任务。", len(ids))
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":       true,
+			"message":  message,
 			"progress": progress,
 		})
 	})
@@ -901,16 +1211,16 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		if err != nil {
 			return re.HTML(http.StatusOK, admin.RenderTargetSyncHTML(
 				cfg,
-				pim.TargetSyncSummary{SourceMode: strings.TrimSpace(cfg.MiniApp.SourceMode)},
+				pim.TargetSyncSummary{SourceMode: strings.TrimSpace(cfg.MiniApp.SourceMode), RawAuthStatus: miniappService.RawAuthStatus()},
 				strings.TrimSpace(re.Request.URL.Query().Get("message")),
 				"加载 miniapp dataset 失败："+err.Error(),
 			))
 		}
-		summary, err := service.TargetSyncSummary(loadCtx, re.App, *dataset)
+		summary, err := service.TargetSyncSummary(loadCtx, re.App, *dataset, miniappService.RawAuthStatus())
 		if err != nil {
 			return re.HTML(http.StatusOK, admin.RenderTargetSyncHTML(
 				cfg,
-				pim.TargetSyncSummary{SourceMode: strings.TrimSpace(dataset.Meta.Source)},
+				pim.TargetSyncSummary{SourceMode: strings.TrimSpace(dataset.Meta.Source), RawAuthStatus: miniappService.RawAuthStatus()},
 				strings.TrimSpace(re.Request.URL.Query().Get("message")),
 				"生成抓取入库摘要失败："+err.Error(),
 			))
@@ -1893,6 +2203,7 @@ func readSourceReviewFilter(re *core.RequestEvent) pim.SourceReviewFilter {
 		ProductStatus:  strings.TrimSpace(re.Request.URL.Query().Get("productStatus")),
 		AssetStatus:    strings.TrimSpace(re.Request.URL.Query().Get("assetStatus")),
 		OriginalStatus: strings.TrimSpace(re.Request.URL.Query().Get("originalStatus")),
+		AssetIDs:       strings.TrimSpace(re.Request.URL.Query().Get("assetIds")),
 		SyncState:      strings.TrimSpace(re.Request.URL.Query().Get("syncState")),
 		Query:          strings.TrimSpace(re.Request.URL.Query().Get("q")),
 	}
@@ -2164,4 +2475,22 @@ func readQueryInt(re *core.RequestEvent, key string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+func readIDList(raw string) []string {
+	parts := strings.Split(strings.TrimSpace(raw), ",")
+	ids := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, item := range parts {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		ids = append(ids, item)
+	}
+	return ids
 }

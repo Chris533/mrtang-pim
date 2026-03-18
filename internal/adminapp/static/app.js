@@ -74,7 +74,10 @@ async function postForm(url, values) {
     data = { message: text };
   }
   if (!response.ok) {
-    throw new Error((data && data.message) || text || `HTTP ${response.status}`);
+    const error = new Error((data && data.message) || text || `HTTP ${response.status}`);
+    error.payload = data;
+    error.status = response.status;
+    throw error;
   }
   return data || {};
 }
@@ -92,6 +95,22 @@ function useResource(url, deps = []) {
   return state;
 }
 
+function classifyLoadError(error) {
+  const message = String(error || "").trim();
+  const lowered = message.toLowerCase();
+  if (!message) return { title: "加载失败", detail: "请求没有返回可识别的错误信息。" };
+  if (lowered.includes("deadline exceeded") || lowered.includes("timeout")) {
+    return { title: "请求超时", detail: "源站返回过慢，当前区块已局部降级。你可以稍后重试。", raw: message };
+  }
+  if (lowered.includes("authorization") || lowered.includes("unauthorized") || lowered.includes("forbidden")) {
+    return { title: "鉴权失败", detail: "当前会话的 Bearer 或登录上下文不可用，请先检查 raw 续活状态。", raw: message };
+  }
+  if (message.includes("返回空登录数据") || lowered.includes("empty")) {
+    return { title: "上下文缺失", detail: "源站没有返回有效登录或业务上下文，请检查 openId、contactsId、customerId 是否匹配当前会话。", raw: message };
+  }
+  return { title: "加载失败", detail: message, raw: message };
+}
+
 function tone(value) {
   const normalized = (value || "").toLowerCase();
   if (["raw", "success", "raw_live", "ok", "synced", "completed", "processed", "downloaded"].includes(normalized)) return "success";
@@ -104,6 +123,17 @@ function sourceModeLabel(mode) {
   if (normalized === "raw") return "RAW Source";
   if (normalized === "snapshot") return "Snapshot Source";
   return mode || "未识别来源";
+}
+
+function rawWarmupLabel(status) {
+  const normalized = (status || "").toLowerCase();
+  if (normalized === "success") return "续活成功";
+  if (normalized === "running") return "续活中";
+  if (normalized === "partial") return "部分成功";
+  if (normalized === "failed") return "续活失败";
+  if (normalized === "skipped") return "已跳过";
+  if (normalized === "idle") return "未执行";
+  return status || "-";
 }
 
 function checkoutStatusLabel(status) {
@@ -141,6 +171,7 @@ function originalImageStatusLabel(status) {
   if (normalized === "downloading") return "下载中";
   if (normalized === "downloaded") return "已下载";
   if (normalized === "failed") return "下载失败";
+  if (normalized === "missing") return "无源图地址";
   return status || "-";
 }
 
@@ -148,7 +179,7 @@ function sourceAssetJobTypeLabel(jobType, mode) {
   const normalized = (jobType || "").toLowerCase();
   if (normalized === "download_original") return "原图下载";
   if (normalized === "process_asset") {
-    return (mode || "").toLowerCase() === "failed" ? "失败图片重处理" : "图片处理";
+    return (mode || "").toLowerCase().includes("failed") ? "失败图片重处理" : "图片处理";
   }
   return jobType || "-";
 }
@@ -163,13 +194,31 @@ function sourceAssetJobRecentError(item) {
   return "";
 }
 
+function normalizeIDList(values) {
+  const items = Array.isArray(values)
+    ? values
+    : String(values || "")
+        .split(",")
+        .map((item) => item.trim());
+  const seen = new Set();
+  return items.filter((item) => {
+    if (!item || seen.has(item)) return false;
+    seen.add(item);
+    return true;
+  });
+}
+
 function sourceAssetJobTargetHref(item) {
+  const assetIDs = normalizeIDList((item && item.AssetIDs) || []);
+  if (assetIDs.length) {
+    return buildURL("/_/mrtang-admin/source/assets", { assetIds: assetIDs.join(",") });
+  }
   const jobType = ((item && item.JobType) || "").toLowerCase();
   const mode = ((item && item.Mode) || "").toLowerCase();
   if (jobType === "download_original") {
     return buildURL("/_/mrtang-admin/source/assets", { originalStatus: "failed" });
   }
-  if (jobType === "process_asset" && mode === "failed") {
+  if (jobType === "process_asset" && mode.includes("failed")) {
     return buildURL("/_/mrtang-admin/source/assets", { assetStatus: "failed" });
   }
   if (jobType === "process_asset") {
@@ -179,12 +228,69 @@ function sourceAssetJobTargetHref(item) {
 }
 
 function sourceAssetJobTargetLabel(item) {
+  const assetIDs = normalizeIDList((item && item.AssetIDs) || []);
+  if (assetIDs.length) return "查看本任务图片";
   const jobType = ((item && item.JobType) || "").toLowerCase();
   const mode = ((item && item.Mode) || "").toLowerCase();
   if (jobType === "download_original") return "查看原图失败图片";
-  if (jobType === "process_asset" && mode === "failed") return "查看处理失败图片";
+  if (jobType === "process_asset" && mode.includes("failed")) return "查看处理失败图片";
   if (jobType === "process_asset") return "查看待处理图片";
   return "查看相关图片";
+}
+
+function sourceAssetJobRetryLabel(item) {
+  return ((item && item.FailedItems) || []).length ? "仅重跑失败项" : "重新执行";
+}
+
+function sourceAssetJobModeLabel(mode) {
+  const normalized = (mode || "").toLowerCase();
+  if (normalized === "selected") return "选中项";
+  if (normalized === "selected_failed") return "选中失败项";
+  if (normalized === "failed") return "失败项";
+  if (normalized === "failed_only") return "失败项";
+  if (normalized === "pending") return "待处理";
+  return "全量";
+}
+
+function sourceAssetJobSelectionCount(item) {
+  return normalizeIDList((item && item.AssetIDs) || []).length;
+}
+
+function sourceAssetJobSuccessRate(item) {
+  const total = Number((item && item.Total) || 0);
+  if (!total) return "0%";
+  const processed = Number((item && item.Processed) || 0);
+  return `${Math.round((processed / total) * 100)}%`;
+}
+
+function sourceAssetJobSuccessLabel(item) {
+  return `成功 ${item && item.Processed ? item.Processed : 0}`;
+}
+
+function sourceAssetJobSuccessHref(item) {
+  const assetIDs = normalizeIDList((item && item.AssetIDs) || []);
+  const jobType = ((item && item.JobType) || "").toLowerCase();
+  if (!assetIDs.length) return "";
+  if (jobType === "download_original") {
+    return buildURL("/_/mrtang-admin/source/assets", { assetIds: assetIDs.join(","), originalStatus: "downloaded" });
+  }
+  if (jobType === "process_asset") {
+    return buildURL("/_/mrtang-admin/source/assets", { assetIds: assetIDs.join(","), assetStatus: "processed" });
+  }
+  return buildURL("/_/mrtang-admin/source/assets", { assetIds: assetIDs.join(",") });
+}
+
+function sourceAssetJobFailureHref(item) {
+  const assetIDs = normalizeIDList((item && item.AssetIDs) || []);
+  const jobType = ((item && item.JobType) || "").toLowerCase();
+  if (!assetIDs.length) return sourceAssetJobTargetHref(item);
+  if (jobType === "download_original") {
+    return buildURL("/_/mrtang-admin/source/assets", { assetIds: assetIDs.join(","), originalStatus: "failed" });
+  }
+  if (jobType === "process_asset") {
+    return buildURL("/_/mrtang-admin/source/assets", { assetIds: assetIDs.join(","), assetStatus: "failed" });
+  }
+  return buildURL("/_/mrtang-admin/source/assets", { assetIds: assetIDs.join(",") });
 }
 
 function NavLink({ href, label, active }) {
@@ -276,14 +382,54 @@ function ActionNotice({ state }) {
   return null;
 }
 
+function buildPaginationItems(currentPage, totalPages) {
+  const page = Math.max(1, Number(currentPage) || 1);
+  const pages = Math.max(1, Number(totalPages) || 1);
+  const visible = new Set([1, pages, page - 1, page, page + 1, page - 2, page + 2]);
+  const sorted = Array.from(visible)
+    .filter((item) => item >= 1 && item <= pages)
+    .sort((left, right) => left - right);
+  const items = [];
+  for (let index = 0; index < sorted.length; index += 1) {
+    const value = sorted[index];
+    if (index > 0 && value-sorted[index - 1] > 1) {
+      items.push("ellipsis");
+    }
+    items.push(value);
+  }
+  return items;
+}
+
+function Pagination({ basePath, pageParam, currentPage, totalPages, params }) {
+  const page = Math.max(1, Number(currentPage) || 1);
+  const pages = Math.max(1, Number(totalPages) || 1);
+  if (pages <= 1) return null;
+  const items = buildPaginationItems(page, pages);
+  const baseParams = { ...(params || {}) };
+  delete baseParams[pageParam];
+  return html`
+    <div class="pagination">
+      <a class=${`page-link ${page <= 1 ? "disabled" : ""}`} href=${page <= 1 ? "#" : buildURL(basePath, { ...baseParams, [pageParam]: page - 1 })}>上一页</a>
+      ${items.map((item) => item === "ellipsis"
+        ? html`<span class="page-ellipsis">…</span>`
+        : html`<a class=${`page-link ${item === page ? "active" : ""}`} href=${buildURL(basePath, { ...baseParams, [pageParam]: item })}>${item}</a>`)}
+      <a class=${`page-link ${page >= pages ? "disabled" : ""}`} href=${page >= pages ? "#" : buildURL(basePath, { ...baseParams, [pageParam]: page + 1 })}>下一页</a>
+    </div>
+  `;
+}
+
 function DashboardPage() {
   const [reloadKey, setReloadKey] = useState(0);
+  const [miniappReloadKey, setMiniappReloadKey] = useState(0);
   const [actionState, setActionState] = useState({ busy: "", message: "", error: "" });
   const resource = useResource("/api/pim/admin/dashboard", [reloadKey]);
+  const miniappResource = useResource("/api/pim/admin/dashboard/miniapp-live", [reloadKey, miniappReloadKey]);
   if (resource.loading) return html`<${LoadingSection} label="总览数据" />`;
   if (resource.error) return html`<${ErrorSection} error=${resource.error} />`;
   const data = resource.data || {};
-  const miniapp = data.Miniapp || {};
+  const miniappPayload = miniappResource.data || {};
+  const miniapp = miniappPayload.Miniapp || {};
+  const miniappErrorInfo = classifyLoadError(miniappPayload.MiniappError || "");
   const source = data.SourceCapture || {};
   const procurement = data.Procurement || {};
 
@@ -304,19 +450,30 @@ function DashboardPage() {
         <div class="card-kicker">Miniapp Source Coverage</div>
         <h2 class="card-title">当前数据源覆盖</h2>
         <div class="inline-pills">
-          <${StatusBadge} label=${sourceModeLabel(miniapp.SourceMode)} currentTone=${tone(miniapp.SourceMode)} />
+          <${StatusBadge} label=${sourceModeLabel(miniapp.SourceMode || "-")} currentTone=${tone(miniapp.SourceMode)} />
           <span class="pill">configMode: <code>${miniapp.ConfigSourceMode || "-"}</code></span>
           <span class="pill">datasetSource: <code>${miniapp.DatasetSource || "-"}</code></span>
           <span class="pill">sourceURL: <code>${miniapp.SourceURL || "-"}</code></span>
+          ${miniapp.RawAuthStatus && miniapp.RawAuthStatus.Enabled ? html`<span class="pill">续活状态: <strong>${rawWarmupLabel(miniapp.RawAuthStatus.Status)}</strong></span>` : null}
         </div>
-        ${data.MiniappError ? html`<div class="flash error" style="margin-top:14px;">${data.MiniappError}</div>` : null}
+        ${miniappResource.loading ? html`<div class="small" style="margin-top:14px;">正在加载 raw 实时摘要...</div>` : null}
+        ${miniappPayload.MiniappError ? html`<div class="flash error" style="margin-top:14px;">
+          <div><strong>${miniappErrorInfo.title}</strong></div>
+          <div class="small" style="margin-top:8px;">${miniappErrorInfo.detail}</div>
+          <div class="small" style="margin-top:8px;"><code>${miniappErrorInfo.raw || miniappPayload.MiniappError}</code></div>
+          <div class="action-row" style="margin-top:12px;"><button class="btn secondary" type="button" onClick=${() => setMiniappReloadKey((value) => value + 1)}>重试加载</button></div>
+        </div>` : null}
+        ${miniapp.RawAuthStatus && miniapp.RawAuthStatus.Enabled ? html`<div class=${`flash ${((miniapp.RawAuthStatus.Status || "").toLowerCase() === "failed" ? "error" : "ok")}`} style="margin-top:14px;">
+          <div>${miniapp.RawAuthStatus.Message || "raw 登录续活状态未知。"}</div>
+          <div class="small" style="margin-top:8px;">上次尝试：${miniapp.RawAuthStatus.LastAttemptAt || "-"} / 最近成功：${miniapp.RawAuthStatus.LastSuccessAt || "-"} / OpenID：${miniapp.RawAuthStatus.OpenID || "未配置"}</div>
+        </div>` : null}
         <div class="metric-grid section">
-          <${MetricCard} eyebrow="Contracts" value=${miniapp.ContractCount || 0} detail=${`Dataset source: ${miniapp.DatasetSource || "-"}`} />
-          <${MetricCard} eyebrow="Homepage" value=${miniapp.HomepageSectionCount || 0} detail=${`${miniapp.HomepageProductCount || 0} 个首页商品`} />
-          <${MetricCard} eyebrow="Category Tree" value=${miniapp.CategoryTopLevelCount || 0} detail=${`${miniapp.CategoryNodeCount || 0} 个分类节点`} />
-          <${MetricCard} eyebrow="Category Sections" value=${miniapp.CategorySectionCount || 0} detail=${`${miniapp.CategorySectionWithProducts || 0} 个带商品`} />
-          <${MetricCard} eyebrow="Products" value=${miniapp.ProductTotal || 0} detail=${`${miniapp.ProductRRDetailCount || 0} rr_detail / ${miniapp.ProductSkeletonCount || 0} skeleton`} />
-          <${MetricCard} eyebrow="Checkout" value=${miniapp.OrderOperationCount || 0} detail=${`${miniapp.CartOperationCount || 0} cart / ${miniapp.FreightScenarioCount || 0} freight`} />
+          <${MetricCard} eyebrow="Contracts" value=${miniappResource.loading ? "..." : (miniapp.ContractCount || 0)} detail=${`Dataset source: ${miniapp.DatasetSource || "-"}`} />
+          <${MetricCard} eyebrow="Homepage" value=${miniappResource.loading ? "..." : (miniapp.HomepageSectionCount || 0)} detail=${`${miniapp.HomepageProductCount || 0} 个首页商品`} />
+          <${MetricCard} eyebrow="Category Tree" value=${miniappResource.loading ? "..." : (miniapp.CategoryTopLevelCount || 0)} detail=${`${miniapp.CategoryNodeCount || 0} 个分类节点`} />
+          <${MetricCard} eyebrow="Category Sections" value=${miniappResource.loading ? "..." : (miniapp.CategorySectionCount || 0)} detail=${`${miniapp.CategorySectionWithProducts || 0} 个带商品`} />
+          <${MetricCard} eyebrow="Products" value=${miniappResource.loading ? "..." : (miniapp.ProductTotal || 0)} detail=${`${miniapp.ProductRRDetailCount || 0} rr_detail / ${miniapp.ProductSkeletonCount || 0} skeleton`} />
+          <${MetricCard} eyebrow="Checkout" value=${miniappResource.loading ? "..." : (miniapp.OrderOperationCount || 0)} detail=${`${miniapp.CartOperationCount || 0} cart / ${miniapp.FreightScenarioCount || 0} freight`} />
         </div>
         <div class="inline-pills">
           <span class="pill">multiUnitVisible: <code>${miniapp.MultiUnitTotal || 0}</code></span>
@@ -378,11 +535,15 @@ function confirmSubmit(message, event) {
 
 function TargetSyncPage() {
   const [reloadKey, setReloadKey] = useState(0);
+  const [liveReloadKey, setLiveReloadKey] = useState(0);
+  const [checkoutReloadKey, setCheckoutReloadKey] = useState(0);
   const [actionState, setActionState] = useState({ busy: "", message: "", error: "", href: "", hrefLabel: "" });
   const [activeRunId, setActiveRunId] = useState("");
   const [activeRun, setActiveRun] = useState(null);
   const [activeRunError, setActiveRunError] = useState("");
   const resource = useResource("/api/pim/admin/target-sync", [reloadKey]);
+  const liveResource = useResource("/api/pim/admin/target-sync/live", [reloadKey, liveReloadKey]);
+  const checkoutResource = useResource("/api/pim/admin/target-sync/checkout-live", [reloadKey, checkoutReloadKey]);
 
   useEffect(() => {
     if (!resource.data || activeRunId) return;
@@ -432,6 +593,10 @@ function TargetSyncPage() {
   if (resource.error) return html`<${ErrorSection} error=${resource.error} />`;
   const payload = resource.data || {};
   const summary = payload.summary || {};
+  const livePayload = liveResource.data || {};
+  const liveSummary = livePayload.summary || {};
+  const checkoutPayload = checkoutResource.data || {};
+  const checkoutSummary = checkoutPayload.summary || {};
 
   async function ensureJob(entityType, scopeKey = "", scopeLabel = "") {
     setActionState({ busy: `ensure:${entityType}:${scopeKey}`, message: "", error: "", href: "", hrefLabel: "" });
@@ -491,11 +656,16 @@ function TargetSyncPage() {
     }
   }
 
-  const scopeOptions = summary.ScopeOptions || [];
+  const scopeOptions = liveSummary.ScopeOptions || [];
   const progressTotal = (activeRun && activeRun.ProgressTotal) || 0;
   const progressDone = (activeRun && activeRun.ProgressDone) || 0;
   const progressPercent = progressTotal > 0 ? Math.min(100, Math.round((progressDone / progressTotal) * 100)) : 0;
   const recentRuns = summary.Runs || [];
+  const effectiveSourceMode = liveSummary.SourceMode || summary.SourceMode;
+  const liveError = livePayload.flashError || "";
+  const checkoutError = checkoutPayload.flashError || "";
+  const liveErrorInfo = classifyLoadError(liveError);
+  const checkoutErrorInfo = classifyLoadError(checkoutError);
 
   return html`
     <section class="section split-grid">
@@ -512,18 +682,29 @@ function TargetSyncPage() {
           <button class="btn secondary" type="button" disabled=${actionState.busy === "run:assets:"} onClick=${() => runJob("assets", "", "全量", "确认立即执行全量图片抓取入库吗？")}>${actionState.busy === "run:assets:" ? "启动中..." : "立即执行图片抓取入库"}</button>
         </div>
         <div class="inline-pills section">
-          <${StatusBadge} label=${sourceModeLabel(summary.SourceMode)} currentTone=${tone(summary.SourceMode)} />
+          <${StatusBadge} label=${sourceModeLabel(effectiveSourceMode)} currentTone=${tone(effectiveSourceMode)} />
           <span class="pill">sourceURL: <code>${payload.sourceURL || "-"}</code></span>
           <span class="pill">${payload.requiresAuth ? "当前 API 需要 Bearer 鉴权" : "当前 API 默认公开"}</span>
+          ${summary.RawAuthStatus && summary.RawAuthStatus.Enabled ? html`<span class="pill">续活状态: <strong>${rawWarmupLabel(summary.RawAuthStatus.Status)}</strong></span>` : null}
         </div>
+        ${summary.RawAuthStatus && summary.RawAuthStatus.Enabled ? html`<div class=${`flash ${((summary.RawAuthStatus.Status || "").toLowerCase() === "failed" ? "error" : "ok")}`} style="margin-top:14px;">
+          <div>${summary.RawAuthStatus.Message || "raw 登录续活状态未知。"}</div>
+          <div class="small" style="margin-top:8px;">上次尝试：${summary.RawAuthStatus.LastAttemptAt || "-"} / 最近成功：${summary.RawAuthStatus.LastSuccessAt || "-"} / OpenID：${summary.RawAuthStatus.OpenID || "未配置"}</div>
+        </div>` : null}
         <div class="metric-grid section">
           <${MetricCard} eyebrow="抓取任务" value=${summary.JobCount || 0} />
           <${MetricCard} eyebrow="运行记录" value=${summary.RunCount || 0} />
-          <${MetricCard} eyebrow="顶级分类" value=${summary.TopLevelCount || 0} />
-          <${MetricCard} eyebrow="分类节点" value=${summary.ExpectedNodeCount || 0} />
-          <${MetricCard} eyebrow="目标商品" value=${summary.ExpectedProductCount || 0} detail=${`${summary.ExpectedMultiUnitCount || 0} 个多单位`} />
-          <${MetricCard} eyebrow="目标图片" value=${summary.ExpectedAssetCount || 0} />
+          <${MetricCard} eyebrow="顶级分类" value=${liveResource.loading ? "..." : (liveSummary.TopLevelCount || 0)} />
+          <${MetricCard} eyebrow="分类节点" value=${liveResource.loading ? "..." : (liveSummary.ExpectedNodeCount || 0)} />
+          <${MetricCard} eyebrow="目标商品" value=${liveResource.loading ? "..." : (liveSummary.ExpectedProductCount || 0)} detail=${liveResource.loading ? "正在加载 raw 实时摘要" : `${liveSummary.ExpectedMultiUnitCount || 0} 个多单位`} />
+          <${MetricCard} eyebrow="目标图片" value=${liveResource.loading ? "..." : (liveSummary.ExpectedAssetCount || 0)} />
         </div>
+        ${liveError ? html`<div class="flash error" style="margin-top:14px;">
+          <div><strong>${liveErrorInfo.title}</strong></div>
+          <div class="small" style="margin-top:8px;">${liveErrorInfo.detail}</div>
+          <div class="small" style="margin-top:8px;"><code>${liveErrorInfo.raw || liveError}</code></div>
+          <div class="action-row" style="margin-top:12px;"><button class="btn secondary" type="button" onClick=${() => setLiveReloadKey((value) => value + 1)}>重试范围摘要</button></div>
+        </div>` : null}
       </div></section>
 
       <section class="card"><div class="card-body">
@@ -568,6 +749,13 @@ function TargetSyncPage() {
       <section class="table-card"><div class="table-card"><div class="card-body">
         <div class="card-kicker">按范围抓取入库</div>
         <h2 class="card-title">顶级分类批次</h2>
+        ${liveResource.loading ? html`<div class="small section">正在加载 raw 分类范围摘要...</div>` : null}
+        ${liveError ? html`<div class="flash error" style="margin-top:14px;">
+          <div><strong>${liveErrorInfo.title}</strong></div>
+          <div class="small" style="margin-top:8px;">${liveErrorInfo.detail}</div>
+          <div class="small" style="margin-top:8px;"><code>${liveErrorInfo.raw || liveError}</code></div>
+          <div class="action-row" style="margin-top:12px;"><button class="btn secondary" type="button" onClick=${() => setLiveReloadKey((value) => value + 1)}>重试范围摘要</button></div>
+        </div>` : null}
         <div class="table-wrap section"><table><thead><tr><th>分类</th><th>节点</th><th>商品</th><th>图片</th><th>动作</th></tr></thead><tbody>
           ${scopeOptions.length ? scopeOptions.filter((item) => item.Key).map((item) => html`<tr>
             <td><strong>${item.Label || "-"}</strong><div class="small">${item.Key || "-"}</div></td>
@@ -591,8 +779,15 @@ function TargetSyncPage() {
       <section class="table-card"><div class="table-card"><div class="card-body">
         <div class="card-kicker">Checkout 来源矩阵</div>
         <h2 class="card-title">当前实际 contractId</h2>
+        ${checkoutResource.loading ? html`<div class="small section">正在加载 checkout 来源矩阵...</div>` : null}
+        ${checkoutError ? html`<div class="flash error" style="margin-top:14px;">
+          <div><strong>${checkoutErrorInfo.title}</strong></div>
+          <div class="small" style="margin-top:8px;">${checkoutErrorInfo.detail}</div>
+          <div class="small" style="margin-top:8px;"><code>${checkoutErrorInfo.raw || checkoutError}</code></div>
+          <div class="action-row" style="margin-top:12px;"><button class="btn secondary" type="button" onClick=${() => setCheckoutReloadKey((value) => value + 1)}>重试 checkout 摘要</button></div>
+        </div>` : null}
         <div class="table-wrap section"><table><thead><tr><th>链路</th><th>状态</th><th>contractId</th><th>说明</th></tr></thead><tbody>
-          ${(summary.CheckoutSources || []).length ? (summary.CheckoutSources || []).map((item) => html`<tr><td><strong>${item.Label || "-"}</strong></td><td><${StatusBadge} label=${checkoutStatusLabel(item.Status)} currentTone=${tone(item.Status)} /></td><td class="small"><code>${item.ContractID || "-"}</code></td><td class="small">${item.Note || "-"}</td></tr>`) : html`<tr><td colspan="4" class="small">当前还没有 checkout 来源数据。</td></tr>`}
+          ${(checkoutSummary.CheckoutSources || []).length ? (checkoutSummary.CheckoutSources || []).map((item) => html`<tr><td><strong>${item.Label || "-"}</strong></td><td><${StatusBadge} label=${checkoutStatusLabel(item.Status)} currentTone=${tone(item.Status)} /></td><td class="small"><code>${item.ContractID || "-"}</code></td><td class="small">${item.Note || "-"}</td></tr>`) : html`<tr><td colspan="4" class="small">当前还没有 checkout 来源数据。</td></tr>`}
         </tbody></table></div>
       </div></div></section>
 
@@ -797,6 +992,7 @@ function SourceProductsPage() {
   const apiURL = buildURL("/api/pim/admin/source/products", { categoryKey, productStatus, syncState, q, productPage: page, pageSize });
   const [reloadKey, setReloadKey] = useState(0);
   const [actionState, setActionState] = useState({ busy: "", message: "", error: "" });
+  const [selectedIDs, setSelectedIDs] = useState([]);
   const resource = useResource(apiURL, [reloadKey]);
   if (resource.loading) return html`<${LoadingSection} label="源数据商品" />`;
   if (resource.error) return html`<${ErrorSection} error=${resource.error} />`;
@@ -804,6 +1000,13 @@ function SourceProductsPage() {
   const summary = payload.summary || {};
   const filter = payload.filter || {};
   const products = summary.Products || [];
+  const visibleIDs = products.map((item) => item.ID || "").filter(Boolean);
+  const selectedVisibleIDs = normalizeIDList(selectedIDs).filter((id) => visibleIDs.includes(id));
+  const allVisibleSelected = products.length > 0 && selectedVisibleIDs.length === visibleIDs.length;
+
+  useEffect(() => {
+    setSelectedIDs((current) => normalizeIDList(current).filter((id) => visibleIDs.includes(id)));
+  }, [visibleIDs.join(",")]);
 
   async function productAction(url, values, confirmMessage, busyKey, successMessage) {
     if (confirmMessage && !window.confirm(confirmMessage)) return;
@@ -815,6 +1018,38 @@ function SourceProductsPage() {
     } catch (error) {
       setActionState({ busy: "", message: "", error: error.message || successMessage || "操作失败" });
     }
+  }
+
+  async function batchProductAction(url, values, confirmMessage, busyKey, successMessage) {
+    if (!selectedVisibleIDs.length) return;
+    if (confirmMessage && !window.confirm(confirmMessage)) return;
+    setActionState({ busy: busyKey, message: "", error: "" });
+    try {
+      const result = await postForm(url, { ...values, productIds: selectedVisibleIDs.join(",") });
+      setActionState({ busy: "", message: result.message || successMessage, error: "" });
+      setReloadKey((value) => value + 1);
+      setSelectedIDs([]);
+    } catch (error) {
+      setActionState({ busy: "", message: "", error: error.message || successMessage || "批量操作失败" });
+    }
+  }
+
+  function toggleSelected(id) {
+    setSelectedIDs((current) => {
+      const normalized = normalizeIDList(current);
+      if (normalized.includes(id)) {
+        return normalized.filter((item) => item !== id);
+      }
+      return [...normalized, id];
+    });
+  }
+
+  function toggleSelectAll() {
+    if (allVisibleSelected) {
+      setSelectedIDs((current) => normalizeIDList(current).filter((id) => !visibleIDs.includes(id)));
+      return;
+    }
+    setSelectedIDs((current) => normalizeIDList([...current, ...visibleIDs]));
   }
 
   return html`
@@ -854,15 +1089,25 @@ function SourceProductsPage() {
         <span class="pill">待审核 <code>${summary.ImportedCount || 0}</code></span>
         <span class="pill">待桥接 <code>${summary.ApprovedCount || 0}</code></span>
         <span class="pill">同步失败 <code>${summary.SyncErrorCount || 0}</code></span>
+        ${selectedVisibleIDs.length ? html`<span class="pill">当前选中 <code>${selectedVisibleIDs.length}</code></span>` : null}
       </div>
     </div></section>
 
     <section class="section table-card"><div class="table-card"><div class="card-body">
       <div class="card-kicker">列表</div>
       <h2 class="card-title">商品批次</h2>
-      <div class="table-wrap section"><table><thead><tr><th>商品</th><th>分类 / 单位</th><th>审核</th><th>桥接</th><th>动作</th></tr></thead><tbody>
+      <div class="action-row" style="margin-bottom:12px;">
+        <button class="btn secondary" type="button" disabled=${!selectedVisibleIDs.length || actionState.busy === "batch-approve"} onClick=${() => batchProductAction("/api/pim/admin/source/products/batch-status", { status: "approved" }, `确认将选中的 ${selectedVisibleIDs.length} 个商品标记为通过吗？`, "batch-approve", "批量更新商品审核状态已完成。")}>${actionState.busy === "batch-approve" ? "处理中..." : "选中项批量通过"}</button>
+        <button class="btn secondary" type="button" disabled=${!selectedVisibleIDs.length || actionState.busy === "batch-reject"} onClick=${() => batchProductAction("/api/pim/admin/source/products/batch-status", { status: "rejected" }, `确认拒绝选中的 ${selectedVisibleIDs.length} 个商品吗？`, "batch-reject", "批量更新商品审核状态已完成。")}>${actionState.busy === "batch-reject" ? "处理中..." : "选中项批量拒绝"}</button>
+        <button class="btn secondary" type="button" disabled=${!selectedVisibleIDs.length || actionState.busy === "batch-promote"} onClick=${() => batchProductAction("/api/pim/admin/source/products/batch-promote", {}, `确认桥接选中的 ${selectedVisibleIDs.length} 个商品吗？`, "batch-promote", "批量桥接已完成。")}>${actionState.busy === "batch-promote" ? "处理中..." : "选中项批量桥接"}</button>
+        <button class="btn secondary" type="button" disabled=${!selectedVisibleIDs.length || actionState.busy === "batch-promote-sync"} onClick=${() => batchProductAction("/api/pim/admin/source/products/batch-promote-sync", {}, `确认桥接并同步选中的 ${selectedVisibleIDs.length} 个商品吗？`, "batch-promote-sync", "批量桥接并同步已完成。")}>${actionState.busy === "batch-promote-sync" ? "处理中..." : "选中项批量桥接并同步"}</button>
+        <button class="btn secondary" type="button" disabled=${!selectedVisibleIDs.length || actionState.busy === "batch-retry-sync"} onClick=${() => batchProductAction("/api/pim/admin/source/products/batch-retry-sync", {}, `确认重试选中的 ${selectedVisibleIDs.length} 个商品同步吗？`, "batch-retry-sync", "批量重试同步已完成。")}>${actionState.busy === "batch-retry-sync" ? "处理中..." : "选中项批量重试同步"}</button>
+        ${selectedVisibleIDs.length ? html`<button class="btn secondary" type="button" onClick=${() => setSelectedIDs([])}>清空选择</button>` : null}
+      </div>
+      <div class="table-wrap section"><table><thead><tr><th><input type="checkbox" checked=${allVisibleSelected} onChange=${toggleSelectAll} /></th><th>商品</th><th>分类 / 单位</th><th>审核</th><th>桥接</th><th>动作</th></tr></thead><tbody>
         ${products.length ? products.map((item) => html`
           <tr>
+            <td><input type="checkbox" checked=${selectedVisibleIDs.includes(item.ID || "")} onChange=${() => toggleSelected(item.ID || "")} /></td>
             <td><strong>${item.Name || "-"}</strong><div class="small">${item.ProductID || "-"}</div></td>
             <td class="small">${item.CategoryPath || "-"}<br />${item.UnitCount || 0} 个单位 / ${item.HasMultiUnit ? "多单位" : "单单位"}</td>
             <td><${StatusBadge} label=${item.ReviewStatus || "-"} currentTone=${tone(item.ReviewStatus)} /></td>
@@ -876,7 +1121,7 @@ function SourceProductsPage() {
               </div>
             </td>
           </tr>
-        `) : html`<tr><td colspan="5" class="small">当前筛选下没有商品。</td></tr>`}
+        `) : html`<tr><td colspan="6" class="small">当前筛选下没有商品。</td></tr>`}
       </tbody></table></div>
     </div></div></section>
   `;
@@ -886,12 +1131,14 @@ function SourceAssetsPage() {
   const qs = new URLSearchParams(window.location.search);
   const assetStatus = qs.get("assetStatus") || "";
   const originalStatus = qs.get("originalStatus") || "";
+  const assetIds = qs.get("assetIds") || "";
   const q = qs.get("q") || "";
   const page = qs.get("assetPage") || qs.get("page") || "";
   const pageSize = qs.get("pageSize") || "";
-  const apiURL = buildURL("/api/pim/admin/source/assets", { assetStatus, originalStatus, q, assetPage: page, pageSize });
+  const apiURL = buildURL("/api/pim/admin/source/assets", { assetStatus, originalStatus, assetIds, q, assetPage: page, pageSize });
   const [reloadKey, setReloadKey] = useState(0);
   const [actionState, setActionState] = useState({ busy: "", message: "", error: "" });
+  const [selectedIDs, setSelectedIDs] = useState(normalizeIDList(assetIds));
   const [activeDownloadId, setActiveDownloadId] = useState("");
   const [activeDownload, setActiveDownload] = useState(null);
   const [activeDownloadError, setActiveDownloadError] = useState("");
@@ -964,12 +1211,35 @@ function SourceAssetsPage() {
       window.clearInterval(timer);
     };
   }, [activeProcessId]);
-  if (resource.loading) return html`<${LoadingSection} label="源数据图片" />`;
-  if (resource.error) return html`<${ErrorSection} error=${resource.error} />`;
   const payload = resource.data || {};
   const summary = payload.summary || {};
   const filter = payload.filter || {};
   const assets = summary.Assets || [];
+  const currentAssetPage = Number(summary.AssetPage || filter.AssetPage || page || 1) || 1;
+  const assetPages = Number(summary.AssetPages || 1) || 1;
+  const filterAssetIDs = normalizeIDList(filter.AssetIDs || assetIds);
+  const visibleIDs = assets.map((item) => item.ID || "").filter(Boolean);
+  const selectedVisibleIDs = normalizeIDList(selectedIDs).filter((id) => visibleIDs.includes(id));
+  const allVisibleSelected = assets.length > 0 && selectedVisibleIDs.length === visibleIDs.length;
+  const activeProcessMode = ((activeProcess && activeProcess.Mode) || "").toLowerCase();
+  const filteredActionPayload = {
+    assetStatus: filter.AssetStatus || "",
+    originalStatus: filter.OriginalStatus || "",
+    assetIds: filter.AssetIDs || "",
+    q: filter.Query || "",
+  };
+
+  useEffect(() => {
+    setSelectedIDs((current) => {
+      const normalizedCurrent = normalizeIDList(current);
+      const retained = normalizedCurrent.filter((id) => visibleIDs.includes(id));
+      if (retained.length) return retained;
+      if (filterAssetIDs.length) return filterAssetIDs.filter((id) => visibleIDs.includes(id));
+      return retained;
+    });
+  }, [visibleIDs.join(","), filter.AssetIDs || ""]);
+  if (resource.loading) return html`<${LoadingSection} label="源数据图片" />`;
+  if (resource.error) return html`<${ErrorSection} error=${resource.error} />`;
 
   async function assetAction(url, values, confirmMessage, busyKey, successMessage) {
     if (confirmMessage && !window.confirm(confirmMessage)) return;
@@ -994,6 +1264,13 @@ function SourceAssetsPage() {
       setActiveDownloadError("");
       setActionState({ busy: "", message: result.message || "原图批量下载任务已启动。", error: "" });
     } catch (error) {
+      const progress = error && error.payload && error.payload.progress;
+      if (progress && progress.ID) {
+        setActiveDownload(progress);
+        setActiveDownloadId(progress.ID);
+        setActionState({ busy: "", message: "已有原图下载任务执行中，已切换到当前任务进度。", error: "" });
+        return;
+      }
       setActionState({ busy: "", message: "", error: error.message || "批量下载原图失败" });
     }
   }
@@ -1009,8 +1286,133 @@ function SourceAssetsPage() {
       setActiveProcessError("");
       setActionState({ busy: "", message: result.message || defaultMessage, error: "" });
     } catch (error) {
+      const progress = error && error.payload && error.payload.progress;
+      if (progress && progress.ID) {
+        setActiveProcess(progress);
+        setActiveProcessId(progress.ID);
+        setActionState({ busy: "", message: "已有图片处理任务执行中，已切换到当前任务进度。", error: "" });
+        return;
+      }
       setActionState({ busy: "", message: "", error: error.message || defaultMessage || "批量处理图片失败" });
     }
+  }
+
+  async function startSelectedDownload() {
+    if (!selectedVisibleIDs.length) return;
+    if (!window.confirm(`确认下载选中的 ${selectedVisibleIDs.length} 张图片原图吗？`)) return;
+    setActionState({ busy: "download-selected", message: "", error: "" });
+    try {
+      const result = await postForm("/api/pim/admin/source/assets/download-selected", { assetIds: selectedVisibleIDs.join(",") });
+      const progress = result.progress || {};
+      setActiveDownload(progress);
+      setActiveDownloadId(progress.ID || "");
+      setActiveDownloadError("");
+      setActionState({ busy: "", message: result.message || "选中图片原图下载任务已启动。", error: "" });
+    } catch (error) {
+      const progress = error && error.payload && error.payload.progress;
+      if (progress && progress.ID) {
+        setActiveDownload(progress);
+        setActiveDownloadId(progress.ID);
+        setActionState({ busy: "", message: "已有原图下载任务执行中，已切换到当前任务进度。", error: "" });
+        return;
+      }
+      setActionState({ busy: "", message: "", error: error.message || "启动选中图片原图下载失败" });
+    }
+  }
+
+  async function startFilteredDownload() {
+    if (!summary.FilteredAssetCount) return;
+    if (!window.confirm(`确认下载当前筛选结果 ${summary.FilteredAssetCount} 张图片的原图吗？`)) return;
+    setActionState({ busy: "download-filtered", message: "", error: "" });
+    try {
+      const result = await postForm("/api/pim/admin/source/assets/download-filtered", filteredActionPayload);
+      const progress = result.progress || {};
+      setActiveDownload(progress);
+      setActiveDownloadId(progress.ID || "");
+      setActiveDownloadError("");
+      setActionState({ busy: "", message: result.message || "当前筛选结果原图下载任务已启动。", error: "" });
+    } catch (error) {
+      const progress = error && error.payload && error.payload.progress;
+      if (progress && progress.ID) {
+        setActiveDownload(progress);
+        setActiveDownloadId(progress.ID);
+        setActionState({ busy: "", message: "已有原图下载任务执行中，已切换到当前任务进度。", error: "" });
+        return;
+      }
+      setActionState({ busy: "", message: "", error: error.message || "启动当前筛选结果原图下载失败" });
+    }
+  }
+
+  async function startSelectedProcess(failedOnly) {
+    if (!selectedVisibleIDs.length) return;
+    const title = failedOnly ? "重处理选中失败图片" : "处理选中图片";
+    if (!window.confirm(`确认${title}（${selectedVisibleIDs.length} 张）吗？`)) return;
+    setActionState({ busy: failedOnly ? "process-selected-failed" : "process-selected", message: "", error: "" });
+    try {
+      const result = await postForm("/api/pim/admin/source/assets/process-selected", {
+        assetIds: selectedVisibleIDs.join(","),
+        failedOnly: failedOnly ? "true" : "false",
+      });
+      const progress = result.progress || {};
+      setActiveProcess(progress);
+      setActiveProcessId(progress.ID || "");
+      setActiveProcessError("");
+      setActionState({ busy: "", message: result.message || `${title}任务已启动。`, error: "" });
+    } catch (error) {
+      const progress = error && error.payload && error.payload.progress;
+      if (progress && progress.ID) {
+        setActiveProcess(progress);
+        setActiveProcessId(progress.ID);
+        setActionState({ busy: "", message: "已有图片处理任务执行中，已切换到当前任务进度。", error: "" });
+        return;
+      }
+      setActionState({ busy: "", message: "", error: error.message || `${title}失败` });
+    }
+  }
+
+  async function startFilteredProcess(failedOnly) {
+    if (!summary.FilteredAssetCount) return;
+    const title = failedOnly ? "重处理当前筛选结果失败图片" : "处理当前筛选结果图片";
+    if (!window.confirm(`确认${title}（${summary.FilteredAssetCount} 张）吗？`)) return;
+    setActionState({ busy: failedOnly ? "process-filtered-failed" : "process-filtered", message: "", error: "" });
+    try {
+      const result = await postForm("/api/pim/admin/source/assets/process-filtered", {
+        ...filteredActionPayload,
+        failedOnly: failedOnly ? "true" : "false",
+      });
+      const progress = result.progress || {};
+      setActiveProcess(progress);
+      setActiveProcessId(progress.ID || "");
+      setActiveProcessError("");
+      setActionState({ busy: "", message: result.message || `${title}任务已启动。`, error: "" });
+    } catch (error) {
+      const progress = error && error.payload && error.payload.progress;
+      if (progress && progress.ID) {
+        setActiveProcess(progress);
+        setActiveProcessId(progress.ID);
+        setActionState({ busy: "", message: "已有图片处理任务执行中，已切换到当前任务进度。", error: "" });
+        return;
+      }
+      setActionState({ busy: "", message: "", error: error.message || `${title}失败` });
+    }
+  }
+
+  function toggleSelected(id) {
+    setSelectedIDs((current) => {
+      const normalized = normalizeIDList(current);
+      if (normalized.includes(id)) {
+        return normalized.filter((item) => item !== id);
+      }
+      return [...normalized, id];
+    });
+  }
+
+  function toggleSelectAll() {
+    if (allVisibleSelected) {
+      setSelectedIDs((current) => normalizeIDList(current).filter((id) => !visibleIDs.includes(id)));
+      return;
+    }
+    setSelectedIDs((current) => normalizeIDList([...current, ...visibleIDs]));
   }
 
   return html`
@@ -1021,6 +1423,7 @@ function SourceAssetsPage() {
       ${payload.flashMessage ? html`<div class="flash ok" style="margin-top:14px;">${payload.flashMessage}</div>` : null}
       <${ActionNotice} state=${actionState} />
       <form class="action-row" method="get" action="/_/mrtang-admin/source/assets">
+        ${filter.AssetIDs ? html`<input type="hidden" name="assetIds" value=${filter.AssetIDs} />` : null}
         <select name="assetStatus" defaultValue=${filter.AssetStatus || ""}>
           <option value="">全部图片状态</option>
           <option value="pending">待处理</option>
@@ -1050,9 +1453,13 @@ function SourceAssetsPage() {
         <span class="pill">待处理 <code>${summary.AssetPending || 0}</code></span>
         <span class="pill">失败 <code>${summary.AssetFailed || 0}</code></span>
         <span class="pill">已处理 <code>${summary.AssetProcessed || 0}</code></span>
+        <span class="pill">当前筛选 <code>${summary.FilteredAssetCount || 0}</code></span>
+        ${filterAssetIDs.length ? html`<span class="pill">任务图片 <code>${filterAssetIDs.length}</code></span>` : null}
+        ${selectedVisibleIDs.length ? html`<span class="pill">当前选中 <code>${selectedVisibleIDs.length}</code></span>` : null}
         <a class="pill" href=${buildURL("/_/mrtang-admin/source/assets", { originalStatus: "failed" })}>原图失败</a>
         <a class="pill" href=${buildURL("/_/mrtang-admin/source/assets", { assetStatus: "failed" })}>处理失败</a>
         <a class="pill" href="/_/mrtang-admin/source/asset-jobs">查看任务历史</a>
+        ${filterAssetIDs.length ? html`<a class="pill" href="/_/mrtang-admin/source/assets">退出任务图片视图</a>` : null}
       </div>
       ${(summary.AssetFailureReasons || []).length ? html`<div class="inline-pills section">
         ${(summary.AssetFailureReasons || []).map((reason) => html`<span class="pill">${reason.Message || "未知失败"} <code>${reason.Count || 0}</code></span>`)}
@@ -1070,7 +1477,7 @@ function SourceAssetsPage() {
       </div>` : null}
       ${activeDownloadError ? html`<div class="flash error" style="margin-bottom:12px;">${activeDownloadError}</div>` : null}
       ${activeProcess ? html`<div class="flash ok" style="margin-bottom:12px;">
-        <div>图片批量处理：${(activeProcess.Mode || "").toLowerCase() === "failed" ? "失败图片重处理" : "待处理图片"} / ${(activeProcess.Status || "").toLowerCase() === "running" ? "执行中" : "已完成"}</div>
+        <div>图片批量处理：${activeProcessMode.includes("failed") ? "失败图片重处理" : "待处理图片"} / ${(activeProcess.Status || "").toLowerCase() === "running" ? "执行中" : "已完成"}</div>
         <div class="small" style="margin-top:8px;">已处理 ${activeProcess.Processed || 0} / ${activeProcess.Total || 0}，失败 ${activeProcess.Failed || 0}${activeProcess.CurrentItem ? `，当前项：${activeProcess.CurrentItem}` : ""}</div>
         ${(activeProcess.Logs || []).length ? html`<div class="small" style="margin-top:8px;">${(activeProcess.Logs || []).slice(-5).map((item) => `${item.Time || "-"} ${item.Message || "-"}`).join(" / ")}</div>` : null}
         ${activeProcess.ID ? html`<div class="small" style="margin-top:8px;"><a href=${buildURL("/_/mrtang-admin/source/asset-jobs/detail", { id: activeProcess.ID, returnTo: window.location.pathname + window.location.search })}>查看任务详情</a></div>` : null}
@@ -1078,12 +1485,24 @@ function SourceAssetsPage() {
       ${activeProcessError ? html`<div class="flash error" style="margin-bottom:12px;">${activeProcessError}</div>` : null}
       <div class="action-row" style="margin-bottom:12px;">
         <button class="btn secondary" type="button" disabled=${actionState.busy === "download-pending" || !!activeDownloadId} onClick=${startDownloadPending}>${actionState.busy === "download-pending" || !!activeDownloadId ? "下载中..." : "批量下载待下载原图"}</button>
-        <button class="btn secondary" type="button" disabled=${actionState.busy === "process-pending" || !!activeProcessId} onClick=${() => startProcessBatch("/api/pim/admin/source/assets/process-pending", "确认批量处理待处理图片吗？", "process-pending", "图片批量处理任务已启动。")}>${actionState.busy === "process-pending" || (!!activeProcessId && ((activeProcess && (activeProcess.Mode || "").toLowerCase()) !== "failed")) ? "处理中..." : "批量处理待处理图片"}</button>
-        <button class="btn secondary" type="button" disabled=${actionState.busy === "reprocess-failed" || !!activeProcessId} onClick=${() => startProcessBatch("/api/pim/admin/source/assets/reprocess-failed", "确认批量重处理失败图片吗？", "reprocess-failed", "失败图片重处理任务已启动。")}>${actionState.busy === "reprocess-failed" || (!!activeProcessId && ((activeProcess && (activeProcess.Mode || "").toLowerCase()) === "failed")) ? "处理中..." : "批量重处理失败图片"}</button>
+        <button class="btn secondary" type="button" disabled=${actionState.busy === "process-pending" || !!activeProcessId} onClick=${() => startProcessBatch("/api/pim/admin/source/assets/process-pending", "确认批量处理待处理图片吗？", "process-pending", "图片批量处理任务已启动。")}>${actionState.busy === "process-pending" || (!!activeProcessId && !activeProcessMode.includes("failed")) ? "处理中..." : "批量处理待处理图片"}</button>
+        <button class="btn secondary" type="button" disabled=${actionState.busy === "reprocess-failed" || !!activeProcessId} onClick=${() => startProcessBatch("/api/pim/admin/source/assets/reprocess-failed", "确认批量重处理失败图片吗？", "reprocess-failed", "失败图片重处理任务已启动。")}>${actionState.busy === "reprocess-failed" || (!!activeProcessId && activeProcessMode.includes("failed")) ? "处理中..." : "批量重处理失败图片"}</button>
       </div>
-      <div class="table-wrap section"><table><thead><tr><th>图片</th><th>商品</th><th>原图</th><th>处理</th><th>错误</th><th>动作</th></tr></thead><tbody>
+      <div class="action-row" style="margin-bottom:12px;">
+        <button class="btn secondary" type="button" disabled=${!summary.FilteredAssetCount || actionState.busy === "download-filtered" || !!activeDownloadId} onClick=${startFilteredDownload}>${actionState.busy === "download-filtered" ? "处理中..." : "按当前筛选结果下载原图"}</button>
+        <button class="btn secondary" type="button" disabled=${!summary.FilteredAssetCount || actionState.busy === "process-filtered" || !!activeProcessId} onClick=${() => startFilteredProcess(false)}>${actionState.busy === "process-filtered" ? "处理中..." : "按当前筛选结果处理"}</button>
+        <button class="btn secondary" type="button" disabled=${!summary.FilteredAssetCount || actionState.busy === "process-filtered-failed" || !!activeProcessId} onClick=${() => startFilteredProcess(true)}>${actionState.busy === "process-filtered-failed" ? "处理中..." : "按当前筛选结果重处理失败项"}</button>
+      </div>
+      <div class="action-row" style="margin-bottom:12px;">
+        <button class="btn secondary" type="button" disabled=${!selectedVisibleIDs.length || actionState.busy === "download-selected" || !!activeDownloadId} onClick=${startSelectedDownload}>${actionState.busy === "download-selected" ? "处理中..." : "仅对选中图片下载原图"}</button>
+        <button class="btn secondary" type="button" disabled=${!selectedVisibleIDs.length || actionState.busy === "process-selected" || !!activeProcessId} onClick=${() => startSelectedProcess(false)}>${actionState.busy === "process-selected" ? "处理中..." : "仅对选中图片处理"}</button>
+        <button class="btn secondary" type="button" disabled=${!selectedVisibleIDs.length || actionState.busy === "process-selected-failed" || !!activeProcessId} onClick=${() => startSelectedProcess(true)}>${actionState.busy === "process-selected-failed" ? "处理中..." : "仅对选中失败图片重处理"}</button>
+        ${selectedVisibleIDs.length ? html`<button class="btn secondary" type="button" onClick=${() => setSelectedIDs([])}>清空选择</button>` : null}
+      </div>
+      <div class="table-wrap section"><table><thead><tr><th><input type="checkbox" checked=${allVisibleSelected} onChange=${toggleSelectAll} /></th><th>图片</th><th>商品</th><th>原图</th><th>处理</th><th>错误</th><th>动作</th></tr></thead><tbody>
         ${assets.length ? assets.map((item) => html`
           <tr>
+            <td><input type="checkbox" checked=${selectedVisibleIDs.includes(item.ID || "")} onChange=${() => toggleSelected(item.ID || "")} /></td>
             <td><strong>${item.AssetRole || "-"}</strong><div class="small">${item.AssetKey || "-"}</div></td>
             <td>${item.Name || "-"}<div class="small">${item.ProductID || "-"}</div></td>
             <td>
@@ -1102,13 +1521,29 @@ function SourceAssetsPage() {
             <td>
               <div class="action-row">
                 <a class="btn secondary" href=${`/_/mrtang-admin/source/assets/detail?id=${encodeURIComponent(item.ID || "")}&returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`}>详情</a>
-                <button class="btn secondary" type="button" disabled=${actionState.busy === `download:${item.ID || ""}`} onClick=${() => assetAction("/api/pim/admin/source/assets/download", { id: item.ID || "" }, "确认下载这张图片的原图吗？", `download:${item.ID || ""}`, "已下载原图。")}>${actionState.busy === `download:${item.ID || ""}` ? "下载中..." : "下载原图"}</button>
-                <button class="btn secondary" type="button" disabled=${actionState.busy === `asset:${item.ID || ""}`} onClick=${() => assetAction("/api/pim/admin/source/assets/process", { id: item.ID || "" }, "确认处理这张图片吗？", `asset:${item.ID || ""}`, "图片已进入处理流程。")}>${actionState.busy === `asset:${item.ID || ""}` ? "处理中..." : "处理"}</button>
+                <button class="btn secondary" type="button" disabled=${actionState.busy === `download:${item.ID || ""}` || !item.CanDownloadOriginal} title=${item.CanDownloadOriginal ? "" : "该图片资产没有可用源图地址"} onClick=${() => assetAction("/api/pim/admin/source/assets/download", { id: item.ID || "" }, "确认下载这张图片的原图吗？", `download:${item.ID || ""}`, "已下载原图。")}>${actionState.busy === `download:${item.ID || ""}` ? "下载中..." : (item.CanDownloadOriginal ? "下载原图" : "不可下载")}</button>
+                <button class="btn secondary" type="button" disabled=${actionState.busy === `asset:${item.ID || ""}` || (!item.CanDownloadOriginal && !item.OriginalImageURL)} title=${(!item.CanDownloadOriginal && !item.OriginalImageURL) ? "该图片资产没有可用源图地址或原图文件" : ""} onClick=${() => assetAction("/api/pim/admin/source/assets/process", { id: item.ID || "" }, "确认处理这张图片吗？", `asset:${item.ID || ""}`, "图片已进入处理流程。")}>${actionState.busy === `asset:${item.ID || ""}` ? "处理中..." : ((!item.CanDownloadOriginal && !item.OriginalImageURL) ? "不可处理" : "处理")}</button>
               </div>
             </td>
           </tr>
-        `) : html`<tr><td colspan="6" class="small">当前筛选下没有图片。</td></tr>`}
+        `) : html`<tr><td colspan="7" class="small">当前筛选下没有图片。</td></tr>`}
       </tbody></table></div>
+      <div class="action-row" style="align-items:center; justify-content:space-between;">
+        <div class="small">第 ${currentAssetPage} / ${assetPages} 页，共 ${summary.FilteredAssetCount || 0} 条当前筛选结果。</div>
+        <${Pagination}
+          basePath="/_/mrtang-admin/source/assets"
+          pageParam="assetPage"
+          currentPage=${currentAssetPage}
+          totalPages=${assetPages}
+          params=${{
+            assetStatus: filter.AssetStatus || "",
+            originalStatus: filter.OriginalStatus || "",
+            assetIds: filter.AssetIDs || "",
+            q: filter.Query || "",
+            pageSize: filter.PageSize || 24,
+          }}
+        />
+      </div>
     </div></div></section>
 
     <section class="section table-card"><div class="table-card"><div class="card-body">
@@ -1119,11 +1554,11 @@ function SourceAssetsPage() {
       ${!jobsResource.loading && !jobsResource.error ? html`<div class="table-wrap section"><table><thead><tr><th>任务</th><th>状态</th><th>进度</th><th>错误摘要</th><th>动作</th></tr></thead><tbody>
         ${(((jobsResource.data || {}).summary || {}).Items || []).length ? (((jobsResource.data || {}).summary || {}).Items || []).map((item) => html`
           <tr>
-            <td><strong>${sourceAssetJobTypeLabel(item.JobType, item.Mode)}</strong><div class="small">${item.StartedAt || item.Created || "-"}</div></td>
+            <td><strong>${sourceAssetJobTypeLabel(item.JobType, item.Mode)}</strong><div class="small">${sourceAssetJobModeLabel(item.Mode)} / ${item.StartedAt || item.Created || "-"}</div></td>
             <td><${StatusBadge} label=${syncStatusLabel(item.Status)} currentTone=${tone(item.Status)} /></td>
-            <td class="small">${item.Processed || 0} / ${item.Total || 0}<br />失败 ${item.Failed || 0}</td>
+            <td class="small">成功 ${item.Processed || 0} / 总数 ${item.Total || 0}<br />失败 ${item.Failed || 0} / 成功率 ${sourceAssetJobSuccessRate(item)}${sourceAssetJobSelectionCount(item) ? html`<br />范围 ${sourceAssetJobSelectionCount(item)} 张` : null}</td>
             <td class="small">${sourceAssetJobRecentError(item) || "-"}</td>
-            <td><div class="action-row"><a class="btn secondary" href=${buildURL("/_/mrtang-admin/source/asset-jobs/detail", { id: item.ID || "", returnTo: window.location.pathname + window.location.search })}>详情</a><a class="btn secondary" href=${sourceAssetJobTargetHref(item)}>${sourceAssetJobTargetLabel(item)}</a></div></td>
+            <td><div class="action-row"><a class="btn secondary" href=${buildURL("/_/mrtang-admin/source/asset-jobs/detail", { id: item.ID || "", returnTo: window.location.pathname + window.location.search })}>详情</a><a class="btn secondary" href=${sourceAssetJobTargetHref(item)}>${sourceAssetJobTargetLabel(item)}</a>${item.Processed ? html`<a class="btn secondary" href=${sourceAssetJobSuccessHref(item)}>${sourceAssetJobSuccessLabel(item)}</a>` : null}</div></td>
           </tr>
         `) : html`<tr><td colspan="5" class="small">还没有图片任务记录。</td></tr>`}
       </tbody></table></div>` : null}
@@ -1214,18 +1649,19 @@ function SourceAssetJobsPage() {
           <tr>
             <td>
               <strong>${sourceAssetJobTypeLabel(item.JobType, item.Mode)}</strong>
-              <div class="small">${item.Mode ? `模式：${item.Mode}` : item.JobType || "-"}</div>
+              <div class="small">范围：${sourceAssetJobModeLabel(item.Mode)}</div>
               <div class="small">${item.ID || "-"}</div>
             </td>
             <td><${StatusBadge} label=${syncStatusLabel(item.Status)} currentTone=${tone(item.Status)} /></td>
-            <td class="small">${item.Processed || 0} / ${item.Total || 0}<br />失败 ${item.Failed || 0}</td>
+            <td class="small">成功 ${item.Processed || 0} / 总数 ${item.Total || 0}<br />失败 ${item.Failed || 0} / 成功率 ${sourceAssetJobSuccessRate(item)}${sourceAssetJobSelectionCount(item) ? html`<br />范围 ${sourceAssetJobSelectionCount(item)} 张` : null}</td>
             <td class="small">${item.CurrentItem || "-"}${sourceAssetJobRecentError(item) ? html`<div style="margin-top:8px;">${sourceAssetJobRecentError(item)}</div>` : null}</td>
             <td class="small">${item.StartedAt || item.Created || "-"}<br />${item.FinishedAt || "-"}</td>
             <td>
               <div class="action-row">
                 <a class="btn secondary" href=${buildURL("/_/mrtang-admin/source/asset-jobs/detail", { id: item.ID || "", returnTo: window.location.pathname + window.location.search })}>详情</a>
                 <a class="btn secondary" href=${sourceAssetJobTargetHref(item)}>${sourceAssetJobTargetLabel(item)}</a>
-                ${item.CanRetry ? html`<button class="btn secondary" type="button" disabled=${actionState.busy === (item.ID || "")} onClick=${() => retryJob(item)}>${actionState.busy === (item.ID || "") ? "处理中..." : "重新执行"}</button>` : html`<span class="pill">执行中</span>`}
+                ${item.Processed ? html`<a class="btn secondary" href=${sourceAssetJobSuccessHref(item)}>${sourceAssetJobSuccessLabel(item)}</a>` : null}
+                ${item.CanRetry ? html`<button class="btn secondary" type="button" disabled=${actionState.busy === (item.ID || "")} onClick=${() => retryJob(item)}>${actionState.busy === (item.ID || "") ? "处理中..." : sourceAssetJobRetryLabel(item)}</button>` : html`<span class="pill">执行中</span>`}
               </div>
             </td>
           </tr>
@@ -1274,12 +1710,16 @@ function SourceAssetJobDetailPage() {
         <div class="inline-pills">
           <span class="pill">任务 ID <code>${detail.ID || "-"}</code></span>
           <${StatusBadge} label=${syncStatusLabel(detail.Status)} currentTone=${tone(detail.Status)} />
-          <span class="pill">模式 <code>${detail.Mode || "-"}</code></span>
+          <span class="pill">范围 <code>${sourceAssetJobModeLabel(detail.Mode)}</code></span>
+          ${sourceAssetJobSelectionCount(detail) ? html`<span class="pill">涉及图片 <code>${sourceAssetJobSelectionCount(detail)}</code></span>` : null}
+          <span class="pill">成功率 <code>${sourceAssetJobSuccessRate(detail)}</code></span>
         </div>
         <div class="action-row" style="margin-top:12px;">
           <a class="btn secondary" href=${backHref}>返回上一页</a>
           <a class="btn secondary" href=${sourceAssetJobTargetHref(detail)}>${sourceAssetJobTargetLabel(detail)}</a>
-          ${detail.CanRetry ? html`<button class="btn secondary" type="button" disabled=${actionState.busy === "retry"} onClick=${retryCurrent}>${actionState.busy === "retry" ? "处理中..." : "重新执行"}</button>` : html`<span class="pill">任务仍在执行中</span>`}
+          ${detail.Processed ? html`<a class="btn secondary" href=${sourceAssetJobSuccessHref(detail)}>查看成功项</a>` : null}
+          ${detail.Failed ? html`<a class="btn secondary" href=${sourceAssetJobFailureHref(detail)}>查看失败项</a>` : null}
+          ${detail.CanRetry ? html`<button class="btn secondary" type="button" disabled=${actionState.busy === "retry"} onClick=${retryCurrent}>${actionState.busy === "retry" ? "处理中..." : sourceAssetJobRetryLabel(detail)}</button>` : html`<span class="pill">任务仍在执行中</span>`}
         </div>
       </div></section>
       <section class="card"><div class="card-body">
@@ -1287,8 +1727,9 @@ function SourceAssetJobDetailPage() {
         <h2 class="card-title">执行状态</h2>
         <div class="metric-grid section">
           <${MetricCard} eyebrow="总数" value=${detail.Total || 0} />
-          <${MetricCard} eyebrow="已处理" value=${detail.Processed || 0} />
+          <${MetricCard} eyebrow="成功" value=${detail.Processed || 0} />
           <${MetricCard} eyebrow="失败" value=${detail.Failed || 0} />
+          <${MetricCard} eyebrow="涉及图片" value=${sourceAssetJobSelectionCount(detail) || 0} />
           <${MetricCard} eyebrow="当前项" value=${detail.CurrentItem || "-"} />
         </div>
         <div class="small">开始：${detail.StartedAt || "-"} / 结束：${detail.FinishedAt || "-"}</div>
@@ -1301,6 +1742,20 @@ function SourceAssetJobDetailPage() {
       <h2 class="card-title">最近任务日志</h2>
       <div class="table-wrap section"><table><thead><tr><th>时间</th><th>内容</th></tr></thead><tbody>
         ${(detail.Logs || []).length ? (detail.Logs || []).map((item) => html`<tr><td class="small">${item.Time || "-"}</td><td>${item.Message || "-"}</td></tr>`) : html`<tr><td colspan="2" class="small">当前任务还没有日志。</td></tr>`}
+      </tbody></table></div>
+    </div></div></section>
+
+    <section class="section table-card"><div class="table-card"><div class="card-body">
+      <div class="card-kicker">失败图片</div>
+      <h2 class="card-title">本次任务失败项</h2>
+      <div class="table-wrap section"><table><thead><tr><th>图片</th><th>商品</th><th>角色</th><th>错误</th><th>动作</th></tr></thead><tbody>
+        ${(detail.FailedItems || []).length ? (detail.FailedItems || []).map((item) => html`<tr>
+          <td><strong>${item.AssetKey || "-"}</strong><div class="small">${item.AssetID || "-"}</div></td>
+          <td>${item.Name || "-"}<div class="small">${item.ProductID || "-"}</div></td>
+          <td class="small">${item.AssetRole || "-"}</td>
+          <td class="small">${item.Error || "-"}</td>
+          <td><a class="btn secondary" href=${buildURL("/_/mrtang-admin/source/assets/detail", { id: item.AssetID || "", returnTo: window.location.pathname + window.location.search })}>查看图片</a></td>
+        </tr>`) : html`<tr><td colspan="5" class="small">当前任务没有失败图片。</td></tr>`}
       </tbody></table></div>
     </div></div></section>
   `;
@@ -1577,8 +2032,8 @@ function SourceAssetDetailPage() {
         <div class="action-row">
           <a class="btn secondary" href=${backHref}>返回上一页</a>
           <input type="text" value=${note} onInput=${(event) => setNote(event.currentTarget.value)} placeholder="处理备注" />
-          <button class="btn secondary" type="button" disabled=${actionState.busy === "download"} onClick=${downloadOriginal}>${actionState.busy === "download" ? "下载中..." : "下载原图"}</button>
-          <button class="btn secondary" type="button" disabled=${actionState.busy === "process"} onClick=${processAsset}>${actionState.busy === "process" ? "处理中..." : "处理 / 重处理"}</button>
+          <button class="btn secondary" type="button" disabled=${actionState.busy === "download" || !detail.CanDownloadOriginal} title=${detail.CanDownloadOriginal ? "" : "该图片资产没有可用源图地址"} onClick=${downloadOriginal}>${actionState.busy === "download" ? "下载中..." : (detail.CanDownloadOriginal ? "下载原图" : "不可下载")}</button>
+          <button class="btn secondary" type="button" disabled=${actionState.busy === "process" || (!detail.CanDownloadOriginal && !detail.OriginalImageURL)} title=${(!detail.CanDownloadOriginal && !detail.OriginalImageURL) ? "该图片资产没有可用源图地址或原图文件" : ""} onClick=${processAsset}>${actionState.busy === "process" ? "处理中..." : ((!detail.CanDownloadOriginal && !detail.OriginalImageURL) ? "不可处理" : "处理 / 重处理")}</button>
         </div>
       </div></section>
       <section class="card"><div class="card-body">

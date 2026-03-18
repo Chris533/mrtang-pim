@@ -31,6 +31,13 @@ func (s *Service) Dataset(ctx context.Context) (*model.Dataset, error) {
 	return s.source.FetchDataset(ctx)
 }
 
+func (s *Service) RawAuthStatus() model.RawAuthStatus {
+	if statusSource, ok := s.source.(api.StatusSource); ok {
+		return statusSource.RawAuthStatus()
+	}
+	return model.RawAuthStatus{}
+}
+
 func (s *Service) Contracts(ctx context.Context, localPathPrefix string) ([]model.Contract, error) {
 	dataset, err := s.Dataset(ctx)
 	if err != nil {

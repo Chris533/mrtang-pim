@@ -97,21 +97,61 @@ type TargetCategoryDiffItem struct {
 }
 
 type TargetSyncSummary struct {
+	SourceMode              string                     `json:"sourceMode"`
+	RawAuthStatus           miniappmodel.RawAuthStatus `json:"rawAuthStatus"`
+	JobCount                int                        `json:"jobCount"`
+	RunCount                int                        `json:"runCount"`
+	CategoryCount           int                        `json:"categoryCount"`
+	SourceProductCount      int                        `json:"sourceProductCount"`
+	SourceAssetCount        int                        `json:"sourceAssetCount"`
+	ExpectedNodeCount       int                        `json:"expectedNodeCount"`
+	ExpectedProductCount    int                        `json:"expectedProductCount"`
+	ExpectedAssetCount      int                        `json:"expectedAssetCount"`
+	ExpectedMultiUnitCount  int                        `json:"expectedMultiUnitCount"`
+	TopLevelCount           int                        `json:"topLevelCount"`
+	SourceImportedCount     int                        `json:"sourceImportedCount"`
+	SourceApprovedCount     int                        `json:"sourceApprovedCount"`
+	SourceAssetPendingCount int                        `json:"sourceAssetPendingCount"`
+	SourceAssetFailedCount  int                        `json:"sourceAssetFailedCount"`
+	DiffNewCount            int                        `json:"diffNewCount"`
+	DiffChangedCount        int                        `json:"diffChangedCount"`
+	DiffMissingCount        int                        `json:"diffMissingCount"`
+	ProductDiffNewCount     int                        `json:"productDiffNewCount"`
+	ProductDiffChangedCount int                        `json:"productDiffChangedCount"`
+	AssetDiffNewCount       int                        `json:"assetDiffNewCount"`
+	AssetDiffChangedCount   int                        `json:"assetDiffChangedCount"`
+	Jobs                    []TargetSyncJob            `json:"jobs"`
+	Runs                    []TargetSyncRun            `json:"runs"`
+	ScopeOptions            []TargetSyncScopeOption    `json:"scopeOptions"`
+	CategoryDiffs           []TargetCategoryDiffItem   `json:"categoryDiffs"`
+	CheckoutSources         []TargetCheckoutSource     `json:"checkoutSources"`
+	RecentMiniappWrites     []TargetMiniappWrite       `json:"recentMiniappWrites"`
+}
+
+type TargetSyncBaseSummary struct {
+	SourceMode              string                     `json:"sourceMode"`
+	RawAuthStatus           miniappmodel.RawAuthStatus `json:"rawAuthStatus"`
+	JobCount                int                        `json:"jobCount"`
+	RunCount                int                        `json:"runCount"`
+	CategoryCount           int                        `json:"categoryCount"`
+	SourceProductCount      int                        `json:"sourceProductCount"`
+	SourceAssetCount        int                        `json:"sourceAssetCount"`
+	SourceImportedCount     int                        `json:"sourceImportedCount"`
+	SourceApprovedCount     int                        `json:"sourceApprovedCount"`
+	SourceAssetPendingCount int                        `json:"sourceAssetPendingCount"`
+	SourceAssetFailedCount  int                        `json:"sourceAssetFailedCount"`
+	Jobs                    []TargetSyncJob            `json:"jobs"`
+	Runs                    []TargetSyncRun            `json:"runs"`
+	RecentMiniappWrites     []TargetMiniappWrite       `json:"recentMiniappWrites"`
+}
+
+type TargetSyncLiveSummary struct {
 	SourceMode              string                   `json:"sourceMode"`
-	JobCount                int                      `json:"jobCount"`
-	RunCount                int                      `json:"runCount"`
-	CategoryCount           int                      `json:"categoryCount"`
-	SourceProductCount      int                      `json:"sourceProductCount"`
-	SourceAssetCount        int                      `json:"sourceAssetCount"`
 	ExpectedNodeCount       int                      `json:"expectedNodeCount"`
 	ExpectedProductCount    int                      `json:"expectedProductCount"`
 	ExpectedAssetCount      int                      `json:"expectedAssetCount"`
 	ExpectedMultiUnitCount  int                      `json:"expectedMultiUnitCount"`
 	TopLevelCount           int                      `json:"topLevelCount"`
-	SourceImportedCount     int                      `json:"sourceImportedCount"`
-	SourceApprovedCount     int                      `json:"sourceApprovedCount"`
-	SourceAssetPendingCount int                      `json:"sourceAssetPendingCount"`
-	SourceAssetFailedCount  int                      `json:"sourceAssetFailedCount"`
 	DiffNewCount            int                      `json:"diffNewCount"`
 	DiffChangedCount        int                      `json:"diffChangedCount"`
 	DiffMissingCount        int                      `json:"diffMissingCount"`
@@ -119,12 +159,13 @@ type TargetSyncSummary struct {
 	ProductDiffChangedCount int                      `json:"productDiffChangedCount"`
 	AssetDiffNewCount       int                      `json:"assetDiffNewCount"`
 	AssetDiffChangedCount   int                      `json:"assetDiffChangedCount"`
-	Jobs                    []TargetSyncJob          `json:"jobs"`
-	Runs                    []TargetSyncRun          `json:"runs"`
 	ScopeOptions            []TargetSyncScopeOption  `json:"scopeOptions"`
 	CategoryDiffs           []TargetCategoryDiffItem `json:"categoryDiffs"`
 	CheckoutSources         []TargetCheckoutSource   `json:"checkoutSources"`
-	RecentMiniappWrites     []TargetMiniappWrite     `json:"recentMiniappWrites"`
+}
+
+type TargetSyncCheckoutLiveSummary struct {
+	CheckoutSources []TargetCheckoutSource `json:"checkoutSources"`
 }
 
 type TargetCheckoutSource struct {
@@ -184,27 +225,125 @@ type targetSyncProgressTracker struct {
 	logs   []TargetSyncProgressLog
 }
 
-func (s *Service) TargetSyncSummary(_ context.Context, app core.App, dataset miniappmodel.Dataset) (TargetSyncSummary, error) {
-	expectedNodes := flattenCategoryNodes(dataset.CategoryPage.Tree)
-	sourceCategories, err := app.FindAllRecords(CollectionSourceCategories)
+func (s *Service) TargetSyncSummary(_ context.Context, app core.App, dataset miniappmodel.Dataset, rawAuthStatus miniappmodel.RawAuthStatus) (TargetSyncSummary, error) {
+	base, err := s.TargetSyncBaseSummary(app, dataset.Meta.Source, rawAuthStatus)
 	if err != nil {
 		return TargetSyncSummary{}, err
+	}
+	live, err := s.TargetSyncLiveSummary(app, dataset)
+	if err != nil {
+		return TargetSyncSummary{}, err
+	}
+	return TargetSyncSummary{
+		SourceMode:              base.SourceMode,
+		RawAuthStatus:           base.RawAuthStatus,
+		JobCount:                base.JobCount,
+		RunCount:                base.RunCount,
+		CategoryCount:           base.CategoryCount,
+		SourceProductCount:      base.SourceProductCount,
+		SourceAssetCount:        base.SourceAssetCount,
+		ExpectedNodeCount:       live.ExpectedNodeCount,
+		ExpectedProductCount:    live.ExpectedProductCount,
+		ExpectedAssetCount:      live.ExpectedAssetCount,
+		ExpectedMultiUnitCount:  live.ExpectedMultiUnitCount,
+		TopLevelCount:           live.TopLevelCount,
+		SourceImportedCount:     base.SourceImportedCount,
+		SourceApprovedCount:     base.SourceApprovedCount,
+		SourceAssetPendingCount: base.SourceAssetPendingCount,
+		SourceAssetFailedCount:  base.SourceAssetFailedCount,
+		DiffNewCount:            live.DiffNewCount,
+		DiffChangedCount:        live.DiffChangedCount,
+		DiffMissingCount:        live.DiffMissingCount,
+		ProductDiffNewCount:     live.ProductDiffNewCount,
+		ProductDiffChangedCount: live.ProductDiffChangedCount,
+		AssetDiffNewCount:       live.AssetDiffNewCount,
+		AssetDiffChangedCount:   live.AssetDiffChangedCount,
+		Jobs:                    base.Jobs,
+		Runs:                    base.Runs,
+		ScopeOptions:            live.ScopeOptions,
+		CategoryDiffs:           live.CategoryDiffs,
+		CheckoutSources:         live.CheckoutSources,
+		RecentMiniappWrites:     base.RecentMiniappWrites,
+	}, nil
+}
+
+func (s *Service) TargetSyncBaseSummary(app core.App, sourceMode string, rawAuthStatus miniappmodel.RawAuthStatus) (TargetSyncBaseSummary, error) {
+	if err := s.reconcileStaleTargetSyncRuns(app); err != nil {
+		return TargetSyncBaseSummary{}, err
+	}
+	sourceCategories, err := app.FindAllRecords(CollectionSourceCategories)
+	if err != nil {
+		return TargetSyncBaseSummary{}, err
 	}
 	sourceProducts, err := app.FindAllRecords(CollectionSourceProducts)
 	if err != nil {
-		return TargetSyncSummary{}, err
+		return TargetSyncBaseSummary{}, err
 	}
 	sourceAssets, err := app.FindAllRecords(CollectionSourceAssets)
 	if err != nil {
-		return TargetSyncSummary{}, err
+		return TargetSyncBaseSummary{}, err
 	}
 	jobs, err := s.listTargetSyncJobs(app, 20)
 	if err != nil {
-		return TargetSyncSummary{}, err
+		return TargetSyncBaseSummary{}, err
 	}
 	runs, err := s.listTargetSyncRuns(app, 12)
 	if err != nil {
-		return TargetSyncSummary{}, err
+		return TargetSyncBaseSummary{}, err
+	}
+
+	importedCount := 0
+	approvedCount := 0
+	for _, record := range sourceProducts {
+		switch strings.ToLower(strings.TrimSpace(record.GetString("review_status"))) {
+		case "imported":
+			importedCount++
+		case "approved":
+			approvedCount++
+		}
+	}
+	assetPendingCount := 0
+	assetFailedCount := 0
+	for _, record := range sourceAssets {
+		switch strings.ToLower(strings.TrimSpace(record.GetString("image_processing_status"))) {
+		case ImageStatusPending:
+			assetPendingCount++
+		case ImageStatusFailed:
+			assetFailedCount++
+		}
+	}
+
+	return TargetSyncBaseSummary{
+		SourceMode:              strings.TrimSpace(sourceMode),
+		RawAuthStatus:           rawAuthStatus,
+		JobCount:                len(jobs),
+		RunCount:                len(runs),
+		CategoryCount:           len(sourceCategories),
+		SourceProductCount:      len(sourceProducts),
+		SourceAssetCount:        len(sourceAssets),
+		SourceImportedCount:     importedCount,
+		SourceApprovedCount:     approvedCount,
+		SourceAssetPendingCount: assetPendingCount,
+		SourceAssetFailedCount:  assetFailedCount,
+		Jobs:                    jobs,
+		Runs:                    runs,
+		RecentMiniappWrites:     targetMiniappWrites(app, 8),
+	}, nil
+}
+
+func (s *Service) TargetSyncLiveSummary(app core.App, dataset miniappmodel.Dataset) (TargetSyncLiveSummary, error) {
+	expectedNodes := flattenCategoryNodes(dataset.CategoryPage.Tree)
+	sourceCategories, err := app.FindAllRecords(CollectionSourceCategories)
+	if err != nil {
+		return TargetSyncLiveSummary{}, err
+	}
+	sourceProducts, err := app.FindAllRecords(CollectionSourceProducts)
+	if err != nil {
+		return TargetSyncLiveSummary{}, err
+	}
+	sourceAssets, err := app.FindAllRecords(CollectionSourceAssets)
+	if err != nil {
+		return TargetSyncLiveSummary{}, err
 	}
 
 	diffItems, diffNew, diffChanged, diffMissing := targetCategoryDiff(dataset.CategoryPage.Tree, sourceCategories)
@@ -230,43 +369,14 @@ func (s *Service) TargetSyncSummary(_ context.Context, app core.App, dataset min
 			AssetCount:   len(topAssets),
 		})
 	}
-	importedCount := 0
-	approvedCount := 0
-	for _, record := range sourceProducts {
-		switch strings.ToLower(strings.TrimSpace(record.GetString("review_status"))) {
-		case "imported":
-			importedCount++
-		case "approved":
-			approvedCount++
-		}
-	}
-	assetPendingCount := 0
-	assetFailedCount := 0
-	for _, record := range sourceAssets {
-		switch strings.ToLower(strings.TrimSpace(record.GetString("image_processing_status"))) {
-		case ImageStatusPending:
-			assetPendingCount++
-		case ImageStatusFailed:
-			assetFailedCount++
-		}
-	}
 
-	return TargetSyncSummary{
+	return TargetSyncLiveSummary{
 		SourceMode:              dataset.Meta.Source,
-		JobCount:                len(jobs),
-		RunCount:                len(runs),
-		CategoryCount:           len(sourceCategories),
-		SourceProductCount:      len(sourceProducts),
-		SourceAssetCount:        len(sourceAssets),
 		ExpectedNodeCount:       len(expectedNodes),
 		ExpectedProductCount:    len(allProducts),
 		ExpectedAssetCount:      len(allAssets),
 		ExpectedMultiUnitCount:  countTargetMultiUnitProducts(allProducts),
 		TopLevelCount:           len(dataset.CategoryPage.Tree),
-		SourceImportedCount:     importedCount,
-		SourceApprovedCount:     approvedCount,
-		SourceAssetPendingCount: assetPendingCount,
-		SourceAssetFailedCount:  assetFailedCount,
 		DiffNewCount:            diffNew,
 		DiffChangedCount:        diffChanged,
 		DiffMissingCount:        diffMissing,
@@ -274,13 +384,16 @@ func (s *Service) TargetSyncSummary(_ context.Context, app core.App, dataset min
 		ProductDiffChangedCount: productDiffChanged,
 		AssetDiffNewCount:       assetDiffNew,
 		AssetDiffChangedCount:   assetDiffChanged,
-		Jobs:                    jobs,
-		Runs:                    runs,
 		ScopeOptions:            scopeOptions,
 		CategoryDiffs:           diffItems,
 		CheckoutSources:         targetCheckoutSources(dataset),
-		RecentMiniappWrites:     targetMiniappWrites(app, 8),
 	}, nil
+}
+
+func (s *Service) TargetSyncCheckoutLiveSummary(dataset miniappmodel.Dataset) TargetSyncCheckoutLiveSummary {
+	return TargetSyncCheckoutLiveSummary{
+		CheckoutSources: targetCheckoutSources(dataset),
+	}
 }
 
 func targetCheckoutSources(dataset miniappmodel.Dataset) []TargetCheckoutSource {
@@ -406,6 +519,9 @@ func (s *Service) StartTargetSyncAsync(app core.App, sourceLoader func(context.C
 	if sourceLoader == nil {
 		return TargetSyncRun{}, fmt.Errorf("target sync source loader is nil")
 	}
+	if err := s.reconcileStaleTargetSyncRuns(app); err != nil {
+		return TargetSyncRun{}, err
+	}
 	job, err := s.EnsureTargetSyncJobSpec(app, strings.TrimSpace(s.cfg.MiniApp.SourceMode), entityType, scopeKey, scopeLabel)
 	if err != nil {
 		return TargetSyncRun{}, err
@@ -434,8 +550,21 @@ func (s *Service) StartTargetSyncAsync(app core.App, sourceLoader func(context.C
 		_ = tracker.setStage("loading_dataset", "加载源站数据集", 0)
 		_ = tracker.addLog("loading_dataset", "info", "开始读取当前源站数据集。")
 
-		dataset, loadErr := sourceLoader(runCtx)
+		if normalizeTargetSyncEntity(job.EntityType) == TargetSyncEntityAssets && strings.TrimSpace(job.ScopeKey) == "" {
+			if result, ok, fastErr := s.trySyncTargetAssetsFromSourceProducts(runCtx, app, job, tracker); fastErr != nil {
+				_ = tracker.addLog("loading_dataset", "warning", "已落库商品快捷路径失败，回退到源站数据集加载："+fastErr.Error())
+			} else if ok {
+				_, _ = s.finalizeTargetSyncRun(app, record, result)
+				_ = s.updateTargetSyncJobStatus(app, job.JobKey, result)
+				return
+			}
+		}
+
+		datasetCtx, datasetCancel := context.WithTimeout(runCtx, s.targetSyncDatasetLoadTimeout())
+		dataset, loadErr := sourceLoader(datasetCtx)
+		datasetCancel()
 		if loadErr != nil {
+			_ = tracker.addLog("loading_dataset", "error", "加载源站数据集失败："+loadErr.Error())
 			result := targetCategorySyncResult{
 				entityType:   job.EntityType,
 				jobKey:       job.JobKey,
@@ -538,6 +667,27 @@ func (s *Service) executeTargetSync(ctx context.Context, app core.App, dataset m
 	return result, err
 }
 
+func (s *Service) trySyncTargetAssetsFromSourceProducts(ctx context.Context, app core.App, job TargetSyncJob, tracker *targetSyncProgressTracker) (targetCategorySyncResult, bool, error) {
+	products, err := s.sourceProductsForAssetSync(app)
+	if err != nil {
+		return targetCategorySyncResult{}, false, err
+	}
+	if len(products) == 0 {
+		if tracker != nil {
+			_ = tracker.addLog("loading_dataset", "info", "未发现已落库商品，继续回退到源站数据集加载。")
+		}
+		return targetCategorySyncResult{}, false, nil
+	}
+	if tracker != nil {
+		_ = tracker.addLog("loading_dataset", "info", fmt.Sprintf("检测到 %d 条已落库商品，图片资产抓取入库改走本地快捷路径。", len(products)))
+	}
+	result, err := s.syncTargetAssetsFromProducts(ctx, app, products, job, tracker)
+	if err != nil {
+		return targetCategorySyncResult{}, false, err
+	}
+	return result, true, nil
+}
+
 func (s *Service) syncTargetCategories(_ context.Context, app core.App, dataset miniappmodel.Dataset, scopeKey string, tracker *targetSyncProgressTracker) (targetCategorySyncResult, error) {
 	result := targetCategorySyncResult{
 		entityType: TargetSyncEntityCategoryTree,
@@ -577,7 +727,7 @@ func (s *Service) syncTargetCategories(_ context.Context, app core.App, dataset 
 			_ = tracker.step(node.Label)
 		}
 		expectedPath := categoryPathByKey[node.Key]
-		created, changed, upsertErr := upsertTargetCategoryNode(app, node, expectedPath, parentKeyByKey[node.Key])
+		created, changed, upsertErr := upsertTargetCategoryNode(app, node, expectedPath, parentKeyByKey[node.Key], s.cfg.MiniApp.RawAssetBaseURL)
 		if upsertErr != nil {
 			return result, upsertErr
 		}
@@ -674,16 +824,25 @@ func (s *Service) syncTargetProducts(ctx context.Context, app core.App, dataset 
 	return result, nil
 }
 
-func (s *Service) syncTargetAssets(_ context.Context, app core.App, dataset miniappmodel.Dataset, scopeKey string, tracker *targetSyncProgressTracker) (targetCategorySyncResult, error) {
+func (s *Service) syncTargetAssets(ctx context.Context, app core.App, dataset miniappmodel.Dataset, scopeKey string, tracker *targetSyncProgressTracker) (targetCategorySyncResult, error) {
+	return s.syncTargetAssetsFromProducts(ctx, app, filteredTargetProducts(dataset, scopeKey), TargetSyncJob{
+		EntityType: TargetSyncEntityAssets,
+		ScopeType:  targetScopeType(scopeKey),
+		ScopeKey:   strings.TrimSpace(scopeKey),
+		ScopeLabel: targetScopeLabel(dataset, scopeKey),
+		SourceMode: dataset.Meta.Source,
+	}, tracker)
+}
+
+func (s *Service) syncTargetAssetsFromProducts(_ context.Context, app core.App, products []miniappmodel.ProductPage, job TargetSyncJob, tracker *targetSyncProgressTracker) (targetCategorySyncResult, error) {
 	result := targetCategorySyncResult{
 		entityType: TargetSyncEntityAssets,
 		status:     TargetSyncStatusSuccess,
-		sourceMode: dataset.Meta.Source,
+		sourceMode: targetSyncFirstNonEmpty(job.SourceMode, "source_products"),
 	}
-	products := filteredTargetProducts(dataset, scopeKey)
-	result.scopeType = targetScopeType(scopeKey)
-	result.scopeKey = strings.TrimSpace(scopeKey)
-	result.scopeLabel = targetScopeLabel(dataset, scopeKey)
+	result.scopeType = targetSyncFirstNonEmpty(job.ScopeType, TargetSyncScopeAll)
+	result.scopeKey = strings.TrimSpace(job.ScopeKey)
+	result.scopeLabel = targetSyncFirstNonEmpty(job.ScopeLabel, "全量")
 	totalAssets := 0
 	for _, product := range products {
 		totalAssets += len(collectProductAssets(product))
@@ -701,7 +860,7 @@ func (s *Service) syncTargetAssets(_ context.Context, app core.App, dataset mini
 			}
 			existing, _ := app.FindFirstRecordByFilter(CollectionSourceAssets, "asset_key = {:asset_key}", dbx.Params{"asset_key": asset.Key})
 			before := sourceAssetSignature(existing)
-			created, err := upsertTargetAssetItem(app, product, asset)
+			created, err := upsertTargetAssetItem(app, product, asset, s.cfg.MiniApp.RawAssetBaseURL)
 			if err != nil {
 				return result, err
 			}
@@ -729,6 +888,61 @@ func (s *Service) syncTargetAssets(_ context.Context, app core.App, dataset mini
 	return result, nil
 }
 
+func (s *Service) sourceProductsForAssetSync(app core.App) ([]miniappmodel.ProductPage, error) {
+	records, err := app.FindAllRecords(CollectionSourceProducts)
+	if err != nil {
+		return nil, err
+	}
+	products := make([]miniappmodel.ProductPage, 0, len(records))
+	for _, record := range records {
+		product, ok := sourceProductPageFromRecord(record)
+		if !ok {
+			continue
+		}
+		products = append(products, product)
+	}
+	return products, nil
+}
+
+func sourceProductPageFromRecord(record *core.Record) (miniappmodel.ProductPage, bool) {
+	if record == nil {
+		return miniappmodel.ProductPage{}, false
+	}
+	product := miniappmodel.ProductPage{
+		ID:         strings.TrimSpace(record.GetString("product_id")),
+		SpuID:      strings.TrimSpace(record.GetString("spu_id")),
+		SkuID:      strings.TrimSpace(record.GetString("sku_id")),
+		SourceType: strings.TrimSpace(record.GetString("source_type")),
+	}
+	if product.ID == "" {
+		return miniappmodel.ProductPage{}, false
+	}
+	decodeTargetSyncJSONField(record.GetString("source_sections"), &product.SourceSections)
+	decodeTargetSyncJSONField(record.GetString("summary_json"), &product.Summary)
+	decodeTargetSyncJSONField(record.GetString("detail_json"), &product.Detail)
+	decodeTargetSyncJSONField(record.GetString("pricing_json"), &product.Pricing)
+	decodeTargetSyncJSONField(record.GetString("package_json"), &product.Package)
+	decodeTargetSyncJSONField(record.GetString("context_json"), &product.Context)
+	if strings.TrimSpace(product.Summary.Name) == "" {
+		product.Summary.Name = strings.TrimSpace(record.GetString("name"))
+	}
+	if strings.TrimSpace(product.Summary.Cover) == "" {
+		product.Summary.Cover = strings.TrimSpace(record.GetString("cover_url"))
+	}
+	if strings.TrimSpace(product.Summary.DefaultUnit) == "" {
+		product.Summary.DefaultUnit = strings.TrimSpace(record.GetString("default_unit"))
+	}
+	return product, true
+}
+
+func decodeTargetSyncJSONField[T any](raw string, target *T) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || target == nil {
+		return
+	}
+	_ = json.Unmarshal([]byte(raw), target)
+}
+
 func countMissingScopedCategories(existing []*core.Record, scopeMap map[string]miniappmodel.CategoryNode) int {
 	existingMap := make(map[string]struct{}, len(existing))
 	for _, record := range existing {
@@ -743,7 +957,7 @@ func countMissingScopedCategories(existing []*core.Record, scopeMap map[string]m
 	return missing
 }
 
-func upsertTargetCategoryNode(app core.App, node miniappmodel.CategoryNode, categoryPath string, parentKey string) (bool, bool, error) {
+func upsertTargetCategoryNode(app core.App, node miniappmodel.CategoryNode, categoryPath string, parentKey string, assetBaseURL string) (bool, bool, error) {
 	var changed bool
 	created, err := upsertByFilter(app, CollectionSourceCategories, "source_key = {:source_key}", dbx.Params{"source_key": node.Key}, func(record *core.Record, created bool) error {
 		before := targetCategoryRecordSignature(record)
@@ -752,7 +966,7 @@ func upsertTargetCategoryNode(app core.App, node miniappmodel.CategoryNode, cate
 		record.Set("path_name", node.PathName)
 		record.Set("category_path", categoryPath)
 		record.Set("parent_key", parentKey)
-		record.Set("image_url", sanitizeAbsoluteURL(node.ImageURL))
+		record.Set("image_url", sanitizeURLWithBase(node.ImageURL, assetBaseURL))
 		record.Set("depth", node.Depth)
 		record.Set("sort", node.Sort)
 		record.Set("has_children", node.HasChildren)
@@ -1040,11 +1254,177 @@ func (s *Service) listTargetSyncRuns(app core.App, limit int) ([]TargetSyncRun, 
 }
 
 func (s *Service) GetTargetSyncRun(app core.App, id string) (TargetSyncRun, error) {
+	if err := s.reconcileStaleTargetSyncRuns(app); err != nil {
+		return TargetSyncRun{}, err
+	}
 	record, err := app.FindRecordById(CollectionTargetSyncRuns, id)
 	if err != nil {
 		return TargetSyncRun{}, err
 	}
 	return targetSyncRunFromRecord(record), nil
+}
+
+func (s *Service) reconcileStaleTargetSyncRuns(app core.App) error {
+	records, err := app.FindRecordsByFilter(
+		CollectionTargetSyncRuns,
+		"status = {:status}",
+		"",
+		200,
+		0,
+		dbx.Params{"status": TargetSyncStatusRunning},
+	)
+	if err != nil {
+		return err
+	}
+	cutoff := time.Now().Add(-s.targetSyncStaleAfter())
+	for _, record := range records {
+		jobKey := strings.TrimSpace(record.GetString("job_key"))
+		if activeRunID, ok := s.activeTargetSyncRun(jobKey); ok && activeRunID == record.Id {
+			continue
+		}
+		lastProgressAt := targetSyncFirstNonEmpty(
+			record.GetString("last_progress_at"),
+			record.GetString("started_at"),
+		)
+		if parsed, ok := parseTargetSyncTime(lastProgressAt); ok && parsed.After(cutoff) {
+			continue
+		}
+		if err := s.markTargetSyncRunStale(app, record); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) markTargetSyncRunStale(app core.App, record *core.Record) error {
+	now := time.Now().Format(time.RFC3339)
+	logs := decodeTargetSyncProgressLogs(record.GetString("progress_logs_json"))
+	if completed, created, updated, unchanged := targetSyncCompletedFromLogs(logs, record); completed {
+		message := "任务已完成，但结束状态未及时回写，系统已自动补写为完成。"
+		record.Set("status", TargetSyncStatusSuccess)
+		record.Set("error_message", "")
+		record.Set("finished_at", now)
+		record.Set("last_progress_at", now)
+		record.Set("created_count", created)
+		record.Set("updated_count", updated)
+		record.Set("unchanged_count", unchanged)
+		record.Set("current_stage", "completed")
+		record.Set("current_item", "")
+		logs = append(logs, TargetSyncProgressLog{
+			Time:    now,
+			Stage:   "completed",
+			Level:   "info",
+			Message: message,
+		})
+		if len(logs) > 80 {
+			logs = logs[len(logs)-80:]
+		}
+		if err := setJSON(record, "progress_logs_json", logs); err != nil {
+			return err
+		}
+		if err := app.Save(record); err != nil {
+			return err
+		}
+		return s.updateTargetSyncJobStatus(app, record.GetString("job_key"), targetCategorySyncResult{
+			status:         TargetSyncStatusSuccess,
+			sourceMode:     record.GetString("source_mode"),
+			createdCount:   created,
+			updatedCount:   updated,
+			unchangedCount: unchanged,
+		})
+	}
+
+	message := "任务已失联，通常是服务重启或 raw 读取超时后未正常回写，系统已自动结束该任务。"
+	record.Set("status", TargetSyncStatusFailed)
+	record.Set("error_message", message)
+	record.Set("finished_at", now)
+	record.Set("last_progress_at", now)
+	logs = append(logs, TargetSyncProgressLog{
+		Time:    now,
+		Stage:   targetSyncFirstNonEmpty(record.GetString("current_stage"), "stale_recovery"),
+		Level:   "error",
+		Message: message,
+	})
+	if len(logs) > 80 {
+		logs = logs[len(logs)-80:]
+	}
+	if err := setJSON(record, "progress_logs_json", logs); err != nil {
+		return err
+	}
+	if err := app.Save(record); err != nil {
+		return err
+	}
+	return s.updateTargetSyncJobStatus(app, record.GetString("job_key"), targetCategorySyncResult{
+		status:       TargetSyncStatusFailed,
+		sourceMode:   record.GetString("source_mode"),
+		errorMessage: message,
+	})
+}
+
+func (s *Service) targetSyncStaleAfter() time.Duration {
+	timeout := s.cfg.MiniApp.SourceTimeout * 3
+	if timeout < 45*time.Second {
+		timeout = 45 * time.Second
+	}
+	return timeout
+}
+
+func (s *Service) targetSyncDatasetLoadTimeout() time.Duration {
+	timeout := s.cfg.MiniApp.SourceTimeout + 10*time.Second
+	if timeout < 30*time.Second {
+		timeout = 30 * time.Second
+	}
+	if timeout > 2*time.Minute {
+		timeout = 2 * time.Minute
+	}
+	return timeout
+}
+
+func targetSyncCompletedFromLogs(logs []TargetSyncProgressLog, record *core.Record) (bool, int, int, int) {
+	total := record.GetInt("progress_total")
+	done := record.GetInt("progress_done")
+	if total <= 0 || done < total {
+		return false, 0, 0, 0
+	}
+	for idx := len(logs) - 1; idx >= 0; idx-- {
+		message := strings.TrimSpace(logs[idx].Message)
+		if message == "" {
+			continue
+		}
+		created, updated, unchanged, ok := parseTargetSyncCompletionCounts(message)
+		if ok {
+			return true, created, updated, unchanged
+		}
+	}
+	return true, record.GetInt("created_count"), record.GetInt("updated_count"), record.GetInt("unchanged_count")
+}
+
+func parseTargetSyncCompletionCounts(message string) (int, int, int, bool) {
+	patterns := []string{
+		"抓取入库完成：新增 %d，更新 %d，未变化 %d。",
+		"分类抓取入库完成：新增 %d，更新 %d，未变化 %d。",
+		"商品规格抓取入库完成：新增 %d，更新 %d，未变化 %d。",
+		"图片抓取入库完成：新增 %d，更新 %d，未变化 %d。",
+	}
+	for _, pattern := range patterns {
+		var created, updated, unchanged int
+		if _, err := fmt.Sscanf(message, pattern, &created, &updated, &unchanged); err == nil {
+			return created, updated, unchanged, true
+		}
+	}
+	return 0, 0, 0, false
+}
+
+func parseTargetSyncTime(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed, true
 }
 
 func targetSyncJobFromRecord(record *core.Record) TargetSyncJob {
@@ -1485,14 +1865,14 @@ func expectedAssetSignature(asset sourceAssetItem) string {
 	}, "|")
 }
 
-func upsertTargetAssetItem(app core.App, product miniappmodel.ProductPage, asset sourceAssetItem) (bool, error) {
+func upsertTargetAssetItem(app core.App, product miniappmodel.ProductPage, asset sourceAssetItem, assetBaseURL string) (bool, error) {
 	return upsertByFilter(app, CollectionSourceAssets, "asset_key = {:asset_key}", dbx.Params{"asset_key": asset.Key}, func(record *core.Record, created bool) error {
 		record.Set("asset_key", asset.Key)
 		record.Set("product_id", product.ID)
 		record.Set("spu_id", product.SpuID)
 		record.Set("sku_id", product.SkuID)
 		record.Set("name", product.Summary.Name)
-		record.Set("source_url", sanitizeAbsoluteURL(asset.URL))
+		record.Set("source_url", sanitizeURLWithBase(asset.URL, assetBaseURL))
 		record.Set("asset_role", asset.Role)
 		record.Set("sort", asset.Sort)
 		if created && strings.TrimSpace(record.GetString("original_image_status")) == "" && strings.TrimSpace(record.GetString("source_url")) != "" {

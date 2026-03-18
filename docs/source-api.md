@@ -55,15 +55,23 @@
 - `MINIAPP_USER_AGENT=...`
 - `MINIAPP_RAW_TEMPLATE_ID=962`
 - `MINIAPP_RAW_REFERER=https://servicewechat.com/.../page-frame.html`
+- `MINIAPP_RAW_OPEN_ID=...`
+- `MINIAPP_RAW_CONTACTS_ID=...`
+- `MINIAPP_RAW_CUSTOMER_ID=...`
+- `MINIAPP_RAW_IS_DISTRIBUTOR=true`
 - `MINIAPP_RAW_CONCURRENCY=4`
 - `MINIAPP_RAW_MIN_INTERVAL=300ms`
 - `MINIAPP_RAW_RETRY_MAX=2`
+- `MINIAPP_RAW_WARMUP_MIN_INTERVAL=30m`
+- `MINIAPP_RAW_WARMUP_MAX_INTERVAL=60m`
 
 ### raw 模式当前边界
 
 - 已接入：分类树、分类商品、商品详情、价格、多单位、套餐、商品上下文、购物车列表、购物车详情、结算预览、默认地址、地址列表、地址解析、运费试算
 - 显式写操作：加入购物车、改数量、添加地址、提交订单
 - 安全策略：`FetchDataset()` 自动抓取阶段保持只读优先，不自动触发真实添加地址和真实下单
+- 续活策略：raw 在抓数据和执行显式 cart/order 动作前会先做登录上下文 warmup；若配置了 `MINIAPP_RAW_OPEN_ID`，还会补做预授权状态校验；续活窗口会在 `MINIAPP_RAW_WARMUP_MIN_INTERVAL` 到 `MINIAPP_RAW_WARMUP_MAX_INTERVAL` 之间随机取值
+- 如果 `get_login_status` 返回空数据，优先补齐 `MINIAPP_RAW_CONTACTS_ID`、`MINIAPP_RAW_CUSTOMER_ID`，并确认 `MINIAPP_RAW_IS_DISTRIBUTOR` 与真实小程序请求一致
 
 ### 关于旧 http 模式
 

@@ -88,10 +88,16 @@ func newMiniAppSource(cfg config.Config) miniappapi.Source {
 			UserAgent:           cfg.MiniApp.UserAgent,
 			TemplateID:          cfg.MiniApp.RawTemplateID,
 			Referer:             cfg.MiniApp.RawReferer,
+			OpenID:              cfg.MiniApp.RawOpenID,
+			ContactsID:          cfg.MiniApp.RawContactsID,
+			CustomerID:          cfg.MiniApp.RawCustomerID,
+			IsDistributor:       cfg.MiniApp.RawIsDistributor,
 			Timeout:             cfg.MiniApp.SourceTimeout,
 			Concurrency:         cfg.MiniApp.RawConcurrency,
 			MinInterval:         cfg.MiniApp.RawMinInterval,
 			RetryMax:            cfg.MiniApp.RawRetryMax,
+			WarmupMinInterval:   cfg.MiniApp.RawWarmupMinInterval,
+			WarmupMaxInterval:   cfg.MiniApp.RawWarmupMaxInterval,
 		}, snapshot)
 	default:
 		base = snapshot

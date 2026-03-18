@@ -39,9 +39,16 @@ type MiniAppConfig struct {
 	SourceTimeout         time.Duration
 	RawTemplateID         string
 	RawReferer            string
+	RawOpenID             string
+	RawContactsID         string
+	RawCustomerID         string
+	RawIsDistributor      bool
+	RawAssetBaseURL       string
 	RawConcurrency        int
 	RawMinInterval        time.Duration
 	RawRetryMax           int
+	RawWarmupMinInterval  time.Duration
+	RawWarmupMaxInterval  time.Duration
 	HomepageSnapshotFile  string
 	CategorySnapshotFile  string
 	ProductSnapshotFile   string
@@ -108,9 +115,16 @@ func Load() Config {
 			SourceTimeout:         getEnvDuration("MINIAPP_SOURCE_TIMEOUT", 20*time.Second),
 			RawTemplateID:         getEnv("MINIAPP_RAW_TEMPLATE_ID", "962"),
 			RawReferer:            getEnv("MINIAPP_RAW_REFERER", "https://servicewechat.com/wx57f975d225fcd0bf/9/page-frame.html"),
+			RawOpenID:             strings.TrimSpace(os.Getenv("MINIAPP_RAW_OPEN_ID")),
+			RawContactsID:         strings.TrimSpace(os.Getenv("MINIAPP_RAW_CONTACTS_ID")),
+			RawCustomerID:         strings.TrimSpace(os.Getenv("MINIAPP_RAW_CUSTOMER_ID")),
+			RawIsDistributor:      getEnvBool("MINIAPP_RAW_IS_DISTRIBUTOR", true),
+			RawAssetBaseURL:       strings.TrimSpace(os.Getenv("MINIAPP_RAW_ASSET_BASE_URL")),
 			RawConcurrency:        getEnvInt("MINIAPP_RAW_CONCURRENCY", 4),
 			RawMinInterval:        getEnvDuration("MINIAPP_RAW_MIN_INTERVAL", 300*time.Millisecond),
 			RawRetryMax:           getEnvInt("MINIAPP_RAW_RETRY_MAX", 2),
+			RawWarmupMinInterval:  getEnvDuration("MINIAPP_RAW_WARMUP_MIN_INTERVAL", 30*time.Minute),
+			RawWarmupMaxInterval:  getEnvDuration("MINIAPP_RAW_WARMUP_MAX_INTERVAL", 60*time.Minute),
 			HomepageSnapshotFile:  getEnv("MINIAPP_HOMEPAGE_SNAPSHOT", "./datasets/miniapp/homepage"),
 			CategorySnapshotFile:  getEnv("MINIAPP_CATEGORY_SNAPSHOT", "./datasets/miniapp/category-page"),
 			ProductSnapshotFile:   getEnv("MINIAPP_PRODUCT_SNAPSHOT", "./datasets/miniapp/product-page"),

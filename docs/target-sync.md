@@ -33,6 +33,7 @@
   - 商品主数据、详情、规格、多单位价格
 - `assets`
   - 封面、轮播、详情图
+  - 全量图片资产抓取入库会优先复用已落库 `source_products` 生成图片资源，避免每次都重新等待完整 raw 分类树
 
 ## PocketBase 集合
 
@@ -51,6 +52,8 @@
 
 `/_/mrtang-admin/target-sync` 当前支持：
 
+- 页面先加载基础摘要，再分块加载 raw 实时摘要
+- raw 分类树或商品摘要超时时，只影响对应区块，不再整页失败
 - 保存全量抓取任务
 - 按顶级分类保存任务
 - 异步启动全量或按顶级分类的：
@@ -92,12 +95,41 @@
 - 分类树、分类商品、商品详情、购物车列表、购物车详情、结算预览会直接请求真实源站
 - 默认地址、地址列表、地址解析、运费试算会走真实只读链路
 - 添加地址、提交订单只会在显式调用接口并传完整 request body 时执行
+- 在抓数据和执行显式 cart/order 动作前，会先做 raw 登录续活
+- 如果配置了 `MINIAPP_RAW_OPEN_ID`，续活会额外补做 `get_bb_auth_status`
 
 这意味着：
 
 - 后台打开 `target-sync`、`source`、`checkout summary` 不会自动真实下单
 - 真实写操作必须由你主动调用对应接口
 - 写操作失败时，应优先检查 body 是否完整、购物车和地址是否是同一登录上下文
+
+### raw 续活相关配置
+
+- `MINIAPP_AUTH_ACCOUNT_ID`
+  - 当前 raw 请求使用的 Bearer
+- `MINIAPP_RAW_OPEN_ID`
+  - 可选；配置后可补做预授权状态校验
+- `MINIAPP_RAW_CONTACTS_ID`
+  - 建议配置；用于 raw 续活时调用 `get_login_status`
+- `MINIAPP_RAW_CUSTOMER_ID`
+  - 建议配置；用于 raw 续活时调用 `get_login_status`
+- `MINIAPP_RAW_IS_DISTRIBUTOR`
+  - 默认 `true`；应尽量和真实小程序请求一致
+- `MINIAPP_RAW_WARMUP_MIN_INTERVAL`
+  - raw 登录续活成功后的最小缓存窗口，默认 `30m`
+- `MINIAPP_RAW_WARMUP_MAX_INTERVAL`
+  - raw 登录续活成功后的最大缓存窗口，默认 `60m`
+
+系统会在这个区间内随机选择下一次续活窗口，避免所有实例固定同一时间续活。
+
+如果后台提示“续活登录状态失败：返回空登录数据”，通常优先检查：
+
+- `MINIAPP_RAW_CONTACTS_ID`
+- `MINIAPP_RAW_CUSTOMER_ID`
+- `MINIAPP_RAW_IS_DISTRIBUTOR`
+
+这三个值是否和当前真实小程序会话一致。
 
 ## 运行详情
 

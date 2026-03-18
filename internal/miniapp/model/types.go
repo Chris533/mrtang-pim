@@ -15,6 +15,16 @@ type Meta struct {
 	Notes       []string `json:"notes"`
 }
 
+type RawAuthStatus struct {
+	Enabled       bool   `json:"enabled"`
+	Status        string `json:"status"`
+	Message       string `json:"message"`
+	LastAttemptAt string `json:"lastAttemptAt"`
+	LastSuccessAt string `json:"lastSuccessAt"`
+	LastErrorAt   string `json:"lastErrorAt"`
+	OpenID        string `json:"openId"`
+}
+
 type Contract struct {
 	ID           string            `json:"id"`
 	Name         string            `json:"name"`

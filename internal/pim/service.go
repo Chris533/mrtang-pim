@@ -224,9 +224,19 @@ type SourceAssetDownloadProgressLog struct {
 	Message string `json:"message"`
 }
 
+type SourceAssetFailedItem struct {
+	AssetID   string `json:"assetId"`
+	AssetKey  string `json:"assetKey"`
+	ProductID string `json:"productId"`
+	Name      string `json:"name"`
+	AssetRole string `json:"assetRole"`
+	Error     string `json:"error"`
+}
+
 type SourceAssetDownloadProgress struct {
 	ID          string                           `json:"id"`
 	Status      string                           `json:"status"`
+	Mode        string                           `json:"mode"`
 	Total       int                              `json:"total"`
 	Processed   int                              `json:"processed"`
 	Failed      int                              `json:"failed"`
@@ -235,6 +245,8 @@ type SourceAssetDownloadProgress struct {
 	FinishedAt  string                           `json:"finishedAt"`
 	Error       string                           `json:"error"`
 	Logs        []SourceAssetDownloadProgressLog `json:"logs"`
+	FailedItems []SourceAssetFailedItem          `json:"failedItems"`
+	AssetIDs    []string                         `json:"assetIds"`
 }
 
 type SourceAssetProcessProgressLog struct {
@@ -254,6 +266,8 @@ type SourceAssetProcessProgress struct {
 	FinishedAt  string                          `json:"finishedAt"`
 	Error       string                          `json:"error"`
 	Logs        []SourceAssetProcessProgressLog `json:"logs"`
+	FailedItems []SourceAssetFailedItem         `json:"failedItems"`
+	AssetIDs    []string                        `json:"assetIds"`
 }
 
 type Service struct {

@@ -18,6 +18,13 @@ func NewOverlaySource(base Source) *OverlaySource {
 	}
 }
 
+func (s *OverlaySource) RawAuthStatus() model.RawAuthStatus {
+	if statusSource, ok := s.base.(StatusSource); ok {
+		return statusSource.RawAuthStatus()
+	}
+	return model.RawAuthStatus{}
+}
+
 func (s *OverlaySource) FetchDataset(ctx context.Context) (*model.Dataset, error) {
 	dataset, err := s.base.FetchDataset(ctx)
 	if err != nil || dataset == nil {

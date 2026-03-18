@@ -12,13 +12,24 @@ import (
 )
 
 type DashboardAPIData = mrtangAdminPageData
+type DashboardMiniappLiveAPIData = DashboardMiniappAPIData
 
 type TargetSyncAPIData struct {
-	Summary      pim.TargetSyncSummary `json:"summary"`
-	FlashMessage string                `json:"flashMessage"`
-	FlashError   string                `json:"flashError"`
-	RequiresAuth bool                  `json:"requiresAuth"`
-	SourceURL    string                `json:"sourceURL"`
+	Summary      pim.TargetSyncBaseSummary `json:"summary"`
+	FlashMessage string                    `json:"flashMessage"`
+	FlashError   string                    `json:"flashError"`
+	RequiresAuth bool                      `json:"requiresAuth"`
+	SourceURL    string                    `json:"sourceURL"`
+}
+
+type TargetSyncLiveAPIData struct {
+	Summary    pim.TargetSyncLiveSummary `json:"summary"`
+	FlashError string                    `json:"flashError"`
+}
+
+type TargetSyncCheckoutLiveAPIData struct {
+	Summary    pim.TargetSyncCheckoutLiveSummary `json:"summary"`
+	FlashError string                            `json:"flashError"`
 }
 
 type SourceModuleAPIData struct {
@@ -100,7 +111,7 @@ func BuildDashboardAPIData(
 	flashMessage string,
 	flashError string,
 ) DashboardAPIData {
-	data := buildMrtangAdminPageData(ctx, app, cfg, pimService, miniappService)
+	data := buildMrtangAdminBaseData(ctx, app, cfg, pimService)
 	data.CanAccessSource = canAccessSource
 	data.CanAccessProcurement = canAccessProcurement
 	data.FlashMessage = strings.TrimSpace(flashMessage)
@@ -108,9 +119,13 @@ func BuildDashboardAPIData(
 	return data
 }
 
+func BuildDashboardMiniappAPIData(ctx context.Context, cfg config.Config, miniappService *miniappservice.Service) DashboardMiniappLiveAPIData {
+	return buildDashboardMiniappAPIData(ctx, cfg, miniappService)
+}
+
 func BuildTargetSyncAPIData(
 	cfg config.Config,
-	summary pim.TargetSyncSummary,
+	summary pim.TargetSyncBaseSummary,
 	flashMessage string,
 	flashError string,
 ) TargetSyncAPIData {
@@ -120,6 +135,20 @@ func BuildTargetSyncAPIData(
 		FlashError:   strings.TrimSpace(flashError),
 		RequiresAuth: strings.TrimSpace(cfg.MiniApp.AuthorizedAccountID) != "",
 		SourceURL:    strings.TrimSpace(cfg.MiniApp.SourceURL),
+	}
+}
+
+func BuildTargetSyncLiveAPIData(summary pim.TargetSyncLiveSummary, flashError string) TargetSyncLiveAPIData {
+	return TargetSyncLiveAPIData{
+		Summary:    summary,
+		FlashError: strings.TrimSpace(flashError),
+	}
+}
+
+func BuildTargetSyncCheckoutLiveAPIData(summary pim.TargetSyncCheckoutLiveSummary, flashError string) TargetSyncCheckoutLiveAPIData {
+	return TargetSyncCheckoutLiveAPIData{
+		Summary:    summary,
+		FlashError: strings.TrimSpace(flashError),
 	}
 }
 
