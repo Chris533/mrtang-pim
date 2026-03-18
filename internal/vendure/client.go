@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
+	"net/textproto"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -19,26 +21,59 @@ import (
 )
 
 type ProductPayload struct {
-	Name           string
-	Slug           string
-	Description    string
-	SKU            string
-	CurrencyCode   string
-	ConsumerPrice  int
-	AssetURL       string
-	AssetName      string
-	BusinessPrice  int
-	DefaultStock   int
-	SalesUnit      string
-	VendureProduct string
-	VendureVariant string
-	NeedColdChain  bool
+	Name              string
+	Slug              string
+	Description       string
+	SKU               string
+	CurrencyCode      string
+	ConsumerPrice     int
+	AssetURL          string
+	AssetName         string
+	CEndAssetURL      string
+	CEndAssetName     string
+	BusinessPrice     int
+	SupplierCode      string
+	SupplierCostPrice int
+	ConversionRate    float64
+	SourceProductID   string
+	SourceType        string
+	TargetAudience    string
+	DefaultStock      int
+	SalesUnit         string
+	VendureProduct    string
+	VendureVariant    string
+	NeedColdChain     bool
 }
 
 type SyncResult struct {
 	ProductID string
 	VariantID string
 	AssetID   string
+}
+
+type CollectionPayload struct {
+	SourceCategoryKey   string
+	SourceCategoryPath  string
+	SourceCategoryLevel int
+	Name                string
+	Slug                string
+	Description         string
+	ParentCollectionID  string
+}
+
+type CollectionSyncResult struct {
+	CollectionID string
+	Created      bool
+}
+
+type collectionFilterArg struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+type collectionFilter struct {
+	Code string                `json:"code"`
+	Args []collectionFilterArg `json:"args"`
 }
 
 type Client struct {
@@ -75,8 +110,21 @@ func (c *Client) SyncProduct(ctx context.Context, payload ProductPayload) (SyncR
 		result.AssetID = assetID
 	}
 
+	cEndAssetID := ""
+	if strings.TrimSpace(payload.CEndAssetURL) != "" {
+		if strings.TrimSpace(payload.CEndAssetURL) == strings.TrimSpace(payload.AssetURL) && result.AssetID != "" {
+			cEndAssetID = result.AssetID
+		} else {
+			assetID, err := c.uploadAsset(ctx, payload.CEndAssetURL, payload.CEndAssetName)
+			if err != nil {
+				return SyncResult{}, err
+			}
+			cEndAssetID = assetID
+		}
+	}
+
 	if strings.TrimSpace(payload.VendureProduct) == "" {
-		productID, err := c.createProduct(ctx, payload, result.AssetID)
+		productID, err := c.createProduct(ctx, payload, result.AssetID, cEndAssetID)
 		if err != nil {
 			return SyncResult{}, err
 		}
@@ -93,7 +141,7 @@ func (c *Client) SyncProduct(ctx context.Context, payload ProductPayload) (SyncR
 	result.ProductID = payload.VendureProduct
 	result.VariantID = payload.VendureVariant
 
-	if err := c.updateProduct(ctx, payload, result.AssetID); err != nil {
+	if err := c.updateProduct(ctx, payload, result.AssetID, cEndAssetID); err != nil {
 		return SyncResult{}, err
 	}
 
@@ -141,6 +189,38 @@ mutation UpdateProduct($input: UpdateProductInput!) {
 	return err
 }
 
+func (c *Client) EnsureCollection(ctx context.Context, payload CollectionPayload) (CollectionSyncResult, error) {
+	if err := c.ensureAuthenticated(ctx); err != nil {
+		return CollectionSyncResult{}, err
+	}
+	if strings.TrimSpace(payload.SourceCategoryKey) == "" {
+		return CollectionSyncResult{}, fmt.Errorf("source category key is required")
+	}
+	if strings.TrimSpace(payload.Name) == "" {
+		return CollectionSyncResult{}, fmt.Errorf("collection name is required")
+	}
+	if strings.TrimSpace(payload.Slug) == "" {
+		return CollectionSyncResult{}, fmt.Errorf("collection slug is required")
+	}
+
+	existing, err := c.findCollectionBySourceKey(ctx, payload.SourceCategoryKey)
+	if err != nil {
+		return CollectionSyncResult{}, err
+	}
+	if existing != nil {
+		if err := c.updateCollection(ctx, existing.ID, payload); err != nil {
+			return CollectionSyncResult{}, err
+		}
+		return CollectionSyncResult{CollectionID: existing.ID, Created: false}, nil
+	}
+
+	id, err := c.createCollection(ctx, payload)
+	if err != nil {
+		return CollectionSyncResult{}, err
+	}
+	return CollectionSyncResult{CollectionID: id, Created: true}, nil
+}
+
 func (c *Client) ensureAuthenticated(ctx context.Context) error {
 	if strings.TrimSpace(c.cfg.Token) != "" {
 		return nil
@@ -186,17 +266,11 @@ mutation Login($username: String!, $password: String!) {
 	return nil
 }
 
-func (c *Client) createProduct(ctx context.Context, payload ProductPayload, assetID string) (string, error) {
+func (c *Client) createProduct(ctx context.Context, payload ProductPayload, assetID string, cEndAssetID string) (string, error) {
 	mutation := `
 mutation CreateProduct($input: CreateProductInput!) {
   createProduct(input: $input) {
-    ... on Product {
-      id
-    }
-    ... on ErrorResult {
-      errorCode
-      message
-    }
+    id
   }
 }`
 
@@ -217,6 +291,10 @@ mutation CreateProduct($input: CreateProductInput!) {
 		input["assetIds"] = []string{assetID}
 	}
 
+	if customFields := c.buildProductCustomFields(payload, cEndAssetID); len(customFields) > 0 {
+		input["customFields"] = customFields
+	}
+
 	var response struct {
 		CreateProduct graphQLNode `json:"createProduct"`
 	}
@@ -232,13 +310,7 @@ func (c *Client) createVariant(ctx context.Context, payload ProductPayload, prod
 	mutation := `
 mutation CreateProductVariants($input: [CreateProductVariantInput!]!) {
   createProductVariants(input: $input) {
-    ... on ProductVariant {
-      id
-    }
-    ... on ErrorResult {
-      errorCode
-      message
-    }
+    id
   }
 }`
 
@@ -252,6 +324,7 @@ mutation CreateProductVariants($input: [CreateProductVariantInput!]!) {
 			},
 		},
 		"sku":         payload.SKU,
+		"price":       payload.ConsumerPrice,
 		"stockOnHand": payload.DefaultStock,
 		"prices": []map[string]any{
 			{
@@ -259,10 +332,7 @@ mutation CreateProductVariants($input: [CreateProductVariantInput!]!) {
 				"price":        payload.ConsumerPrice,
 			},
 		},
-		"customFields": map[string]any{
-			"salesUnit": payload.SalesUnit,
-			"bPrice":    payload.BusinessPrice,
-		},
+		"customFields": c.buildVariantCustomFields(payload),
 	}
 
 	if assetID != "" {
@@ -285,17 +355,11 @@ mutation CreateProductVariants($input: [CreateProductVariantInput!]!) {
 	return response.CreateProductVariants[0].ID, nil
 }
 
-func (c *Client) updateProduct(ctx context.Context, payload ProductPayload, assetID string) error {
+func (c *Client) updateProduct(ctx context.Context, payload ProductPayload, assetID string, cEndAssetID string) error {
 	mutation := `
 mutation UpdateProduct($input: UpdateProductInput!) {
   updateProduct(input: $input) {
-    ... on Product {
-      id
-    }
-    ... on ErrorResult {
-      errorCode
-      message
-    }
+    id
   }
 }`
 
@@ -317,6 +381,10 @@ mutation UpdateProduct($input: UpdateProductInput!) {
 		input["assetIds"] = []string{assetID}
 	}
 
+	if customFields := c.buildProductCustomFields(payload, cEndAssetID); len(customFields) > 0 {
+		input["customFields"] = customFields
+	}
+
 	var response struct {
 		UpdateProduct graphQLNode `json:"updateProduct"`
 	}
@@ -329,13 +397,7 @@ func (c *Client) updateVariant(ctx context.Context, payload ProductPayload, asse
 	mutation := `
 mutation UpdateProductVariant($input: UpdateProductVariantInput!) {
   updateProductVariant(input: $input) {
-    ... on ProductVariant {
-      id
-    }
-    ... on ErrorResult {
-      errorCode
-      message
-    }
+    id
   }
 }`
 
@@ -343,6 +405,7 @@ mutation UpdateProductVariant($input: UpdateProductVariantInput!) {
 		"id":          payload.VendureVariant,
 		"enabled":     true,
 		"sku":         payload.SKU,
+		"price":       payload.ConsumerPrice,
 		"stockOnHand": payload.DefaultStock,
 		"translations": []map[string]any{
 			{
@@ -356,10 +419,7 @@ mutation UpdateProductVariant($input: UpdateProductVariantInput!) {
 				"price":        payload.ConsumerPrice,
 			},
 		},
-		"customFields": map[string]any{
-			"salesUnit": payload.SalesUnit,
-			"bPrice":    payload.BusinessPrice,
-		},
+		"customFields": c.buildVariantCustomFields(payload),
 	}
 
 	if assetID != "" {
@@ -373,6 +433,310 @@ mutation UpdateProductVariant($input: UpdateProductVariantInput!) {
 
 	_, err := c.graphQL(ctx, mutation, map[string]any{"input": input}, &response)
 	return err
+}
+
+type collectionNode struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Slug   string `json:"slug"`
+	Parent *struct {
+		ID string `json:"id"`
+	} `json:"parent"`
+}
+
+func (c *Client) findCollectionBySourceKey(ctx context.Context, sourceKey string) (*collectionNode, error) {
+	query := `
+query Collections($options: CollectionListOptions) {
+  collections(options: $options) {
+    items {
+      id
+      name
+      slug
+      parent { id }
+    }
+  }
+}`
+
+	var response struct {
+		Collections struct {
+			Items []collectionNode `json:"items"`
+		} `json:"collections"`
+	}
+
+	_, err := c.graphQL(ctx, query, map[string]any{
+		"options": map[string]any{
+			"take": 1,
+			"filter": map[string]any{
+				"sourceCategoryKey": map[string]any{
+					"eq": sourceKey,
+				},
+			},
+		},
+	}, &response)
+	if err != nil {
+		return nil, err
+	}
+	if len(response.Collections.Items) == 0 {
+		return nil, nil
+	}
+	return &response.Collections.Items[0], nil
+}
+
+func (c *Client) createCollection(ctx context.Context, payload CollectionPayload) (string, error) {
+	mutation := `
+mutation CreateCollection($input: CreateCollectionInput!) {
+  createCollection(input: $input) {
+    id
+  }
+}`
+
+	input := c.collectionInput(payload, false)
+	var response struct {
+		CreateCollection graphQLNode `json:"createCollection"`
+	}
+	if _, err := c.graphQL(ctx, mutation, map[string]any{"input": input}, &response); err != nil {
+		return "", err
+	}
+	return response.CreateCollection.ID, nil
+}
+
+func (c *Client) updateCollection(ctx context.Context, collectionID string, payload CollectionPayload) error {
+	mutation := `
+mutation UpdateCollection($input: UpdateCollectionInput!) {
+  updateCollection(input: $input) {
+    id
+  }
+}`
+
+	input := c.collectionInput(payload, true)
+	input["id"] = collectionID
+
+	var response struct {
+		UpdateCollection graphQLNode `json:"updateCollection"`
+	}
+	_, err := c.graphQL(ctx, mutation, map[string]any{"input": input}, &response)
+	return err
+}
+
+func (c *Client) EnsureProductInCollections(ctx context.Context, productID string, collectionIDs []string) error {
+	if err := c.ensureAuthenticated(ctx); err != nil {
+		return err
+	}
+	productID = strings.TrimSpace(productID)
+	if productID == "" {
+		return fmt.Errorf("product id is required")
+	}
+	for _, collectionID := range uniqueNonEmptyStrings(collectionIDs) {
+		if err := c.ensureProductInCollection(ctx, collectionID, productID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Client) SyncProductCollectionsExact(ctx context.Context, productID string, desiredCollectionIDs []string, candidateCollectionIDs []string) error {
+	if err := c.ensureAuthenticated(ctx); err != nil {
+		return err
+	}
+	productID = strings.TrimSpace(productID)
+	if productID == "" {
+		return fmt.Errorf("product id is required")
+	}
+
+	desired := uniqueNonEmptyStrings(desiredCollectionIDs)
+	candidates := uniqueNonEmptyStrings(candidateCollectionIDs)
+	current, err := c.productCollectionIDs(ctx, productID)
+	if err != nil {
+		return err
+	}
+	candidates = uniqueNonEmptyStrings(append(candidates, current...))
+	desiredSet := make(map[string]struct{}, len(desired))
+	for _, id := range desired {
+		desiredSet[id] = struct{}{}
+	}
+	for _, id := range desired {
+		if err := c.ensureProductCollectionMembership(ctx, id, productID, true); err != nil {
+			return err
+		}
+	}
+	for _, id := range candidates {
+		if _, keep := desiredSet[id]; keep {
+			continue
+		}
+		if err := c.ensureProductCollectionMembership(ctx, id, productID, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Client) productCollectionIDs(ctx context.Context, productID string) ([]string, error) {
+	query := `
+query ProductCollections($id: ID!) {
+  product(id: $id) {
+    id
+    collections {
+      id
+    }
+  }
+}`
+
+	var response struct {
+		Product struct {
+			ID          string `json:"id"`
+			Collections []struct {
+				ID string `json:"id"`
+			} `json:"collections"`
+		} `json:"product"`
+	}
+
+	if _, err := c.graphQL(ctx, query, map[string]any{"id": productID}, &response); err != nil {
+		return nil, err
+	}
+
+	ids := make([]string, 0, len(response.Product.Collections))
+	for _, collection := range response.Product.Collections {
+		if id := strings.TrimSpace(collection.ID); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return uniqueNonEmptyStrings(ids), nil
+}
+
+func (c *Client) ensureProductInCollection(ctx context.Context, collectionID string, productID string) error {
+	return c.ensureProductCollectionMembership(ctx, collectionID, productID, true)
+}
+
+func (c *Client) ensureProductCollectionMembership(ctx context.Context, collectionID string, productID string, shouldExist bool) error {
+	collectionID = strings.TrimSpace(collectionID)
+	if collectionID == "" {
+		return nil
+	}
+
+	filters, err := c.collectionFilters(ctx, collectionID)
+	if err != nil {
+		return err
+	}
+	if shouldExist {
+		filters = upsertProductCollectionFilter(filters, productID)
+	} else {
+		filters = removeProductCollectionFilter(filters, productID)
+	}
+
+	mutation := `
+mutation UpdateCollectionFilters($input: UpdateCollectionInput!) {
+  updateCollection(input: $input) {
+    id
+  }
+}`
+
+	input := map[string]any{
+		"id":             collectionID,
+		"inheritFilters": false,
+		"filters":        encodeCollectionFilters(filters),
+	}
+
+	var response struct {
+		UpdateCollection graphQLNode `json:"updateCollection"`
+	}
+
+	_, err = c.graphQL(ctx, mutation, map[string]any{"input": input}, &response)
+	return err
+}
+
+func (c *Client) collectionFilters(ctx context.Context, collectionID string) ([]collectionFilter, error) {
+	query := `
+query CollectionFilters($id: ID!) {
+  collection(id: $id) {
+    id
+    filters {
+      code
+      args {
+        name
+        value
+      }
+    }
+  }
+}`
+
+	var response struct {
+		Collection struct {
+			ID      string             `json:"id"`
+			Filters []collectionFilter `json:"filters"`
+		} `json:"collection"`
+	}
+
+	if _, err := c.graphQL(ctx, query, map[string]any{"id": collectionID}, &response); err != nil {
+		return nil, err
+	}
+	return response.Collection.Filters, nil
+}
+
+func (c *Client) collectionInput(payload CollectionPayload, includeParent bool) map[string]any {
+	input := map[string]any{
+		"isPrivate":      false,
+		"inheritFilters": false,
+		"filters":        []map[string]any{},
+		"translations": []map[string]any{
+			{
+				"languageCode": c.cfg.LanguageCode,
+				"name":         payload.Name,
+				"slug":         payload.Slug,
+				"description":  payload.Description,
+			},
+		},
+		"customFields": map[string]any{
+			"sourceCategoryKey":   payload.SourceCategoryKey,
+			"sourceCategoryPath":  payload.SourceCategoryPath,
+			"sourceCategoryLevel": payload.SourceCategoryLevel,
+		},
+	}
+	if includeParent && strings.TrimSpace(payload.ParentCollectionID) != "" {
+		input["parentId"] = payload.ParentCollectionID
+	}
+	if !includeParent && strings.TrimSpace(payload.ParentCollectionID) != "" {
+		input["parentId"] = payload.ParentCollectionID
+	}
+	return input
+}
+
+func (c *Client) buildProductCustomFields(payload ProductPayload, cEndAssetID string) map[string]any {
+	customFields := map[string]any{}
+
+	if field := strings.TrimSpace(c.cfg.ProductTargetAudienceField); field != "" && strings.TrimSpace(payload.TargetAudience) != "" {
+		customFields[field] = payload.TargetAudience
+	}
+
+	if field := strings.TrimSpace(c.cfg.ProductCEndAssetField); field != "" && strings.TrimSpace(cEndAssetID) != "" {
+		customFields[relationInputFieldName(field)] = cEndAssetID
+	}
+
+	return customFields
+}
+
+func (c *Client) buildVariantCustomFields(payload ProductPayload) map[string]any {
+	customFields := map[string]any{
+		"salesUnit": payload.SalesUnit,
+		"bPrice":    payload.BusinessPrice,
+	}
+
+	if field := strings.TrimSpace(c.cfg.VariantSupplierCodeField); field != "" && strings.TrimSpace(payload.SupplierCode) != "" {
+		customFields[field] = payload.SupplierCode
+	}
+	if field := strings.TrimSpace(c.cfg.VariantSupplierCostField); field != "" && payload.SupplierCostPrice > 0 {
+		customFields[field] = payload.SupplierCostPrice
+	}
+	if field := strings.TrimSpace(c.cfg.VariantConversionRateField); field != "" && payload.ConversionRate > 0 {
+		customFields[field] = payload.ConversionRate
+	}
+	if field := strings.TrimSpace(c.cfg.VariantSourceProductField); field != "" && strings.TrimSpace(payload.SourceProductID) != "" {
+		customFields[field] = payload.SourceProductID
+	}
+	if field := strings.TrimSpace(c.cfg.VariantSourceTypeField); field != "" && strings.TrimSpace(payload.SourceType) != "" {
+		customFields[field] = payload.SourceType
+	}
+
+	return customFields
 }
 
 func (c *Client) uploadAsset(ctx context.Context, fileURL string, filename string) (string, error) {
@@ -402,7 +766,13 @@ func (c *Client) uploadAsset(ctx context.Context, fileURL string, filename strin
 
 	var decoded struct {
 		Data struct {
-			CreateAssets []graphQLNode `json:"createAssets"`
+			CreateAssets []struct {
+				Typename  string `json:"__typename"`
+				ID        string `json:"id"`
+				Name      string `json:"name"`
+				ErrorCode string `json:"errorCode"`
+				Message   string `json:"message"`
+			} `json:"createAssets"`
 		} `json:"data"`
 		Errors []graphQLError `json:"errors"`
 	}
@@ -418,8 +788,15 @@ func (c *Client) uploadAsset(ctx context.Context, fileURL string, filename strin
 	if len(decoded.Data.CreateAssets) == 0 {
 		return "", fmt.Errorf("vendure returned no assets")
 	}
+	first := decoded.Data.CreateAssets[0]
+	if strings.EqualFold(first.Typename, "ErrorResult") || strings.TrimSpace(first.ID) == "" {
+		if strings.TrimSpace(first.Message) != "" {
+			return "", fmt.Errorf("vendure asset upload error: %s", first.Message)
+		}
+		return "", fmt.Errorf("vendure asset upload returned empty asset id")
+	}
 
-	return decoded.Data.CreateAssets[0].ID, nil
+	return first.ID, nil
 }
 
 func (c *Client) buildUploadBody(ctx context.Context, fileURL string, filename string) (*bytes.Buffer, string, error) {
@@ -443,6 +820,8 @@ func (c *Client) buildUploadBody(ctx context.Context, fileURL string, filename s
 		return nil, "", err
 	}
 
+	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
+
 	if strings.TrimSpace(filename) == "" {
 		parsed, err := url.Parse(fileURL)
 		if err == nil {
@@ -454,9 +833,12 @@ func (c *Client) buildUploadBody(ctx context.Context, fileURL string, filename s
 		filename = "asset-upload"
 	}
 
+	contentType = detectUploadContentType(filename, contentType, content)
+
 	operations := map[string]any{
 		"query": `mutation CreateAssets($input: [CreateAssetInput!]!) {
   createAssets(input: $input) {
+    __typename
     ... on Asset {
       id
       name
@@ -503,7 +885,10 @@ func (c *Client) buildUploadBody(ctx context.Context, fileURL string, filename s
 		return nil, "", err
 	}
 
-	part, err := writer.CreateFormFile("0", filename)
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, "0", escapeMultipartFilename(filename)))
+	header.Set("Content-Type", contentType)
+	part, err := writer.CreatePart(header)
 	if err != nil {
 		return nil, "", err
 	}
@@ -517,6 +902,41 @@ func (c *Client) buildUploadBody(ctx context.Context, fileURL string, filename s
 	}
 
 	return buffer, writer.FormDataContentType(), nil
+}
+
+func detectUploadContentType(filename string, responseContentType string, content []byte) string {
+	contentType := strings.TrimSpace(responseContentType)
+	if contentType != "" {
+		if idx := strings.Index(contentType, ";"); idx >= 0 {
+			contentType = strings.TrimSpace(contentType[:idx])
+		}
+	}
+	if isPermittedUploadContentType(contentType) {
+		return contentType
+	}
+
+	if extType := mime.TypeByExtension(strings.ToLower(filepath.Ext(filename))); isPermittedUploadContentType(extType) {
+		return extType
+	}
+
+	if sniffed := strings.TrimSpace(http.DetectContentType(content)); isPermittedUploadContentType(sniffed) {
+		return sniffed
+	}
+
+	return "application/octet-stream"
+}
+
+func isPermittedUploadContentType(contentType string) bool {
+	value := strings.TrimSpace(strings.ToLower(contentType))
+	if value == "" || value == "application/octet-stream" {
+		return false
+	}
+	return true
+}
+
+func escapeMultipartFilename(filename string) string {
+	replacer := strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
+	return replacer.Replace(filename)
 }
 
 func (c *Client) graphQL(ctx context.Context, query string, variables map[string]any, target any) ([]graphQLError, error) {
@@ -579,6 +999,155 @@ func (c *Client) attachHeaders(req *http.Request) {
 	if strings.TrimSpace(c.cfg.ChannelToken) != "" {
 		req.Header.Set("vendure-token", c.cfg.ChannelToken)
 	}
+}
+
+func upsertProductCollectionFilter(filters []collectionFilter, productID string) []collectionFilter {
+	const filterCode = "product-id-filter"
+	normalizedID := strings.TrimSpace(productID)
+	if normalizedID == "" {
+		return filters
+	}
+
+	for idx, filter := range filters {
+		if !strings.EqualFold(strings.TrimSpace(filter.Code), filterCode) {
+			continue
+		}
+		ids := parseConfigArgIDList(filter.Args, "productIds")
+		if !containsString(ids, normalizedID) {
+			ids = append(ids, normalizedID)
+		}
+		filters[idx].Args = []collectionFilterArg{
+			{Name: "productIds", Value: encodeIDList(ids)},
+			{Name: "combineWithAnd", Value: "false"},
+		}
+		return filters
+	}
+
+	return append(filters, collectionFilter{
+		Code: filterCode,
+		Args: []collectionFilterArg{
+			{Name: "productIds", Value: encodeIDList([]string{normalizedID})},
+			{Name: "combineWithAnd", Value: "false"},
+		},
+	})
+}
+
+func removeProductCollectionFilter(filters []collectionFilter, productID string) []collectionFilter {
+	const filterCode = "product-id-filter"
+	normalizedID := strings.TrimSpace(productID)
+	if normalizedID == "" {
+		return filters
+	}
+
+	result := make([]collectionFilter, 0, len(filters))
+	for _, filter := range filters {
+		if !strings.EqualFold(strings.TrimSpace(filter.Code), filterCode) {
+			result = append(result, filter)
+			continue
+		}
+		ids := parseConfigArgIDList(filter.Args, "productIds")
+		next := make([]string, 0, len(ids))
+		for _, id := range ids {
+			if strings.EqualFold(strings.TrimSpace(id), normalizedID) {
+				continue
+			}
+			next = append(next, id)
+		}
+		if len(next) == 0 {
+			continue
+		}
+		filter.Args = []collectionFilterArg{
+			{Name: "productIds", Value: encodeIDList(next)},
+			{Name: "combineWithAnd", Value: "false"},
+		}
+		result = append(result, filter)
+	}
+	return result
+}
+
+func parseConfigArgIDList(args []collectionFilterArg, name string) []string {
+	target := strings.TrimSpace(name)
+	for _, arg := range args {
+		if !strings.EqualFold(strings.TrimSpace(arg.Name), target) {
+			continue
+		}
+		raw := strings.TrimSpace(arg.Value)
+		if raw == "" {
+			return nil
+		}
+		var items []string
+		if err := json.Unmarshal([]byte(raw), &items); err == nil {
+			return uniqueNonEmptyStrings(items)
+		}
+		return uniqueNonEmptyStrings(strings.Split(raw, ","))
+	}
+	return nil
+}
+
+func encodeCollectionFilters(filters []collectionFilter) []map[string]any {
+	encoded := make([]map[string]any, 0, len(filters))
+	for _, filter := range filters {
+		args := make([]map[string]any, 0, len(filter.Args))
+		for _, arg := range filter.Args {
+			args = append(args, map[string]any{
+				"name":  arg.Name,
+				"value": arg.Value,
+			})
+		}
+		encoded = append(encoded, map[string]any{
+			"code":      filter.Code,
+			"arguments": args,
+		})
+	}
+	return encoded
+}
+
+func encodeIDList(ids []string) string {
+	encoded, err := json.Marshal(uniqueNonEmptyStrings(ids))
+	if err != nil {
+		return "[]"
+	}
+	return string(encoded)
+}
+
+func uniqueNonEmptyStrings(items []string) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(items))
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		value := strings.TrimSpace(item)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func containsString(items []string, target string) bool {
+	for _, item := range items {
+		if strings.EqualFold(strings.TrimSpace(item), strings.TrimSpace(target)) {
+			return true
+		}
+	}
+	return false
+}
+
+func relationInputFieldName(field string) string {
+	value := strings.TrimSpace(field)
+	if value == "" {
+		return value
+	}
+	if strings.HasSuffix(value, "Id") {
+		return value
+	}
+	return value + "Id"
 }
 
 type graphQLError struct {

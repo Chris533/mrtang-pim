@@ -39,6 +39,7 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	registerAdminSlashRedirect(se, "/_/mrtang-admin/source/asset-jobs/", "/_/mrtang-admin/source/asset-jobs")
 	registerAdminSlashRedirect(se, "/_/mrtang-admin/source/logs/", "/_/mrtang-admin/source/logs")
 	registerAdminSlashRedirect(se, "/_/mrtang-admin/procurement/", "/_/mrtang-admin/procurement")
+	registerAdminSlashRedirect(se, "/_/mrtang-admin/backend-release/", "/_/mrtang-admin/backend-release")
 
 	se.Router.GET("/_/mrtang-admin/app.css", func(re *core.RequestEvent) error {
 		return serveAdminAsset(re, "static/app.css", "text/css; charset=utf-8")
@@ -75,7 +76,7 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		}
 		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 20*time.Second)
 		defer cancel()
-		return re.JSON(http.StatusOK, admin.BuildDashboardMiniappAPIData(loadCtx, cfg, miniappService))
+		return re.JSON(http.StatusOK, admin.BuildDashboardMiniappAPIData(loadCtx, re.App, cfg, service, miniappService))
 	})
 
 	se.Router.GET("/api/pim/admin/target-sync", func(re *core.RequestEvent) error {
@@ -109,6 +110,13 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 
 		dataset, err := miniappService.Dataset(loadCtx)
 		if err != nil {
+			summary, fallbackErr := service.TargetSyncStoredLiveSummary(re.App, strings.TrimSpace(cfg.MiniApp.SourceMode))
+			if fallbackErr == nil {
+				return re.JSON(http.StatusOK, admin.BuildTargetSyncLiveAPIData(
+					summary,
+					"加载源站实时摘要失败，已回退到已落库结果："+err.Error(),
+				))
+			}
 			return re.JSON(http.StatusOK, admin.BuildTargetSyncLiveAPIData(
 				pim.TargetSyncLiveSummary{SourceMode: strings.TrimSpace(cfg.MiniApp.SourceMode)},
 				"加载 miniapp dataset 失败："+err.Error(),
@@ -200,8 +208,8 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 
 		run, err := service.StartTargetSyncAsync(
 			re.App,
-			func(ctx context.Context) (*miniappmodel.Dataset, error) {
-				return miniappService.Dataset(ctx)
+			func(ctx context.Context, entityType string, scopeKey string) (*miniappmodel.Dataset, error) {
+				return miniappService.TargetSyncDataset(ctx, entityType, scopeKey)
 			},
 			strings.TrimSpace(re.Request.FormValue("entityType")),
 			strings.TrimSpace(re.Request.FormValue("scopeKey")),
@@ -248,6 +256,49 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		return re.JSON(http.StatusOK, map[string]any{
 			"ok":  true,
 			"run": run,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/target-sync/run/retry-failed-branches", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有抓取入库权限。", nil)
+		}
+		runID := strings.TrimSpace(re.Request.FormValue("runId"))
+		if runID == "" {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "缺少运行记录 ID。",
+			})
+		}
+		runs, warnings, err := service.RetryFailedTargetSyncBranches(
+			re.App,
+			func(ctx context.Context, entityType string, scopeKey string) (*miniappmodel.Dataset, error) {
+				return miniappService.TargetSyncDataset(ctx, entityType, scopeKey)
+			},
+			runID,
+			targetSyncActor(re),
+		)
+		if err != nil {
+			message := "重跑失败分支失败：" + err.Error()
+			if len(warnings) > 0 {
+				message += "；" + strings.Join(warnings, "；")
+			}
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":       false,
+				"message":  message,
+				"runs":     runs,
+				"warnings": warnings,
+			})
+		}
+		message := fmt.Sprintf("已启动 %d 个失败分支重跑任务。", len(runs))
+		if len(warnings) > 0 {
+			message += "；" + strings.Join(warnings, "；")
+		}
+		return re.JSON(http.StatusAccepted, map[string]any{
+			"ok":       true,
+			"message":  message,
+			"runs":     runs,
+			"warnings": warnings,
 		})
 	})
 
@@ -370,6 +421,44 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		})
 	})
 
+	se.Router.POST("/api/pim/admin/source/products/batch-status-filtered", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		status := strings.TrimSpace(re.Request.FormValue("status"))
+		filter := pim.SourceReviewFilter{
+			CategoryKey:   strings.TrimSpace(re.Request.FormValue("categoryKey")),
+			ProductStatus: strings.TrimSpace(re.Request.FormValue("productStatus")),
+			SyncState:     strings.TrimSpace(re.Request.FormValue("syncState")),
+			Query:         strings.TrimSpace(re.Request.FormValue("q")),
+		}
+		ids, err := service.SourceProductIDsForFilter(re.App, filter)
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "读取当前筛选商品失败：" + err.Error(),
+			})
+		}
+		if status == "" || len(ids) == 0 {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "当前筛选结果下没有可批量更新的商品。",
+			})
+		}
+		summary, err := service.BatchUpdateSourceProductReviewStatusWithAudit(re.Request.Context(), re.App, ids, status, sourceActionNote(re), sourceActionActor(re))
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "按当前筛选结果批量更新商品审核状态失败：" + err.Error(),
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": fmt.Sprintf("按当前筛选结果批量更新完成：成功 %d，失败 %d。", summary.Processed, summary.Failed),
+			"summary": summary,
+		})
+	})
+
 	se.Router.POST("/api/pim/admin/source/products/batch-promote", func(re *core.RequestEvent) error {
 		if !authorizedAdminModule(re, cfg, "source") {
 			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
@@ -391,6 +480,43 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		return re.JSON(http.StatusOK, map[string]any{
 			"ok":      true,
 			"message": fmt.Sprintf("批量桥接完成：成功 %d，失败 %d。", summary.Processed, summary.Failed),
+			"summary": summary,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/source/products/batch-promote-filtered", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		filter := pim.SourceReviewFilter{
+			CategoryKey:   strings.TrimSpace(re.Request.FormValue("categoryKey")),
+			ProductStatus: strings.TrimSpace(re.Request.FormValue("productStatus")),
+			SyncState:     strings.TrimSpace(re.Request.FormValue("syncState")),
+			Query:         strings.TrimSpace(re.Request.FormValue("q")),
+		}
+		ids, err := service.SourceProductIDsForFilter(re.App, filter)
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "读取当前筛选商品失败：" + err.Error(),
+			})
+		}
+		if len(ids) == 0 {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "当前筛选结果下没有可加入发布队列的商品。",
+			})
+		}
+		summary, err := service.BatchPromoteSourceProductsWithAudit(re.Request.Context(), re.App, ids, false, sourceActionActor(re), sourceActionNote(re))
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "按当前筛选结果批量加入发布队列失败：" + err.Error(),
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": fmt.Sprintf("按当前筛选结果批量加入发布队列完成：成功 %d，失败 %d。", summary.Processed, summary.Failed),
 			"summary": summary,
 		})
 	})
@@ -420,6 +546,43 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		})
 	})
 
+	se.Router.POST("/api/pim/admin/source/products/batch-promote-sync-filtered", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		filter := pim.SourceReviewFilter{
+			CategoryKey:   strings.TrimSpace(re.Request.FormValue("categoryKey")),
+			ProductStatus: strings.TrimSpace(re.Request.FormValue("productStatus")),
+			SyncState:     strings.TrimSpace(re.Request.FormValue("syncState")),
+			Query:         strings.TrimSpace(re.Request.FormValue("q")),
+		}
+		ids, err := service.SourceProductIDsForFilter(re.App, filter)
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "读取当前筛选商品失败：" + err.Error(),
+			})
+		}
+		if len(ids) == 0 {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "当前筛选结果下没有可发布的商品。",
+			})
+		}
+		summary, err := service.BatchPromoteSourceProductsWithAudit(re.Request.Context(), re.App, ids, true, sourceActionActor(re), sourceActionNote(re))
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "按当前筛选结果批量加入发布队列并发布失败：" + err.Error(),
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": fmt.Sprintf("按当前筛选结果批量加入发布队列并发布完成：成功 %d，失败 %d。", summary.Processed, summary.Failed),
+			"summary": summary,
+		})
+	})
+
 	se.Router.POST("/api/pim/admin/source/products/batch-retry-sync", func(re *core.RequestEvent) error {
 		if !authorizedAdminModule(re, cfg, "source") {
 			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
@@ -441,6 +604,43 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		return re.JSON(http.StatusOK, map[string]any{
 			"ok":      true,
 			"message": fmt.Sprintf("批量重试同步完成：成功 %d，失败 %d。", summary.Processed, summary.Failed),
+			"summary": summary,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/source/products/batch-retry-sync-filtered", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		filter := pim.SourceReviewFilter{
+			CategoryKey:   strings.TrimSpace(re.Request.FormValue("categoryKey")),
+			ProductStatus: strings.TrimSpace(re.Request.FormValue("productStatus")),
+			SyncState:     strings.TrimSpace(re.Request.FormValue("syncState")),
+			Query:         strings.TrimSpace(re.Request.FormValue("q")),
+		}
+		ids, err := service.SourceProductIDsForFilter(re.App, filter)
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "读取当前筛选商品失败：" + err.Error(),
+			})
+		}
+		if len(ids) == 0 {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "当前筛选结果下没有可重试发布的商品。",
+			})
+		}
+		summary, err := service.BatchRetrySourceProductSyncWithAudit(re.Request.Context(), re.App, ids, sourceActionActor(re), sourceActionNote(re))
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "按当前筛选结果批量重试发布失败：" + err.Error(),
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": fmt.Sprintf("按当前筛选结果批量重试发布完成：成功 %d，失败 %d。", summary.Processed, summary.Failed),
 			"summary": summary,
 		})
 	})
@@ -1139,6 +1339,98 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		))
 	})
 
+	se.Router.GET("/api/pim/admin/backend-release", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有发布准备权限。", nil)
+		}
+		summary, err := service.BackendReleaseSummary(re.Request.Context(), re.App, 12)
+		if err != nil {
+			return re.JSON(http.StatusOK, admin.BuildBackendReleaseAPIData(
+				pim.BackendReleaseSummary{},
+				strings.TrimSpace(re.Request.URL.Query().Get("message")),
+				"加载 backend 发布准备失败："+err.Error(),
+			))
+		}
+		return re.JSON(http.StatusOK, admin.BuildBackendReleaseAPIData(
+			summary,
+			strings.TrimSpace(re.Request.URL.Query().Get("message")),
+			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		))
+	})
+
+	se.Router.POST("/api/pim/admin/backend-release/category-mappings", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有发布准备权限。", nil)
+		}
+		if err := service.SaveBackendCategoryMapping(
+			re.Request.Context(),
+			re.App,
+			re.Request.FormValue("sourceKey"),
+			re.Request.FormValue("backendCollection"),
+			re.Request.FormValue("backendPath"),
+			re.Request.FormValue("note"),
+		); err != nil {
+			return re.BadRequestError("保存分类发布映射失败："+err.Error(), nil)
+		}
+		return re.JSON(http.StatusOK, map[string]any{"message": "分类发布映射已保存。"})
+	})
+
+	se.Router.POST("/api/pim/admin/backend-release/category-publish", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有发布准备权限。", nil)
+		}
+		item, err := service.PublishBackendCategory(
+			re.Request.Context(),
+			re.App,
+			re.Request.FormValue("sourceKey"),
+			re.Request.FormValue("backendCollection"),
+			re.Request.FormValue("backendPath"),
+			re.Request.FormValue("note"),
+		)
+		if err != nil {
+			return re.BadRequestError("创建 backend 分类失败："+err.Error(), nil)
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"message": "分类已创建到 backend。",
+			"item":    item,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/backend-release/category-publish-batch", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有发布准备权限。", nil)
+		}
+		sourceKeys := strings.Split(strings.TrimSpace(re.Request.FormValue("sourceKeys")), ",")
+		result, err := service.PublishBackendCategoriesBatch(
+			re.Request.Context(),
+			re.App,
+			sourceKeys,
+		)
+		if err != nil {
+			return re.BadRequestError("批量创建 backend 分类失败："+err.Error(), nil)
+		}
+		message := fmt.Sprintf("已完成 %d 个分类的 backend 创建，其中成功 %d，失败 %d。", result.Requested, result.Published, result.Failed)
+		return re.JSON(http.StatusOK, map[string]any{
+			"message": message,
+			"result":  result,
+		})
+	})
+
+	se.Router.GET("/api/pim/admin/backend-release/product-preview", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有发布准备权限。", nil)
+		}
+		preview, err := service.PreviewBackendReleasePayload(re.Request.Context(), re.App, strings.TrimSpace(re.Request.URL.Query().Get("id")))
+		if err != nil {
+			return re.JSON(http.StatusOK, admin.BuildBackendReleasePreviewAPIData(
+				pim.BackendReleasePayloadPreview{},
+				"",
+				"生成发布 payload 预览失败："+err.Error(),
+			))
+		}
+		return re.JSON(http.StatusOK, admin.BuildBackendReleasePreviewAPIData(preview, "", ""))
+	})
+
 	se.Router.GET("/_/mrtang-admin", func(re *core.RequestEvent) error {
 		if !authorizedAdminModule(re, cfg, "dashboard") {
 			return re.ForbiddenError("当前账号没有后台总览权限。", nil)
@@ -1284,6 +1576,20 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 			"源数据分类",
 			"分类树同步结果和已落库分类列表都在这里查看；页面先开壳，再异步加载。",
 			"/_/mrtang-admin/source/categories",
+			true,
+			authorizedAdminModule(re, cfg, "procurement"),
+		))
+	})
+
+	se.Router.GET("/_/mrtang-admin/backend-release", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无发布准备权限", "当前账号没有发布准备权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
+		}
+
+		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+			"发布准备",
+			"先看 Vendure 字段准备度、分类映射和商品 payload 预览，再决定何时正式同步。",
+			"/_/mrtang-admin/backend-release",
 			true,
 			authorizedAdminModule(re, cfg, "procurement"),
 		))
@@ -1558,8 +1864,8 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		}
 		run, err := service.StartTargetSyncAsync(
 			re.App,
-			func(ctx context.Context) (*miniappmodel.Dataset, error) {
-				return miniappService.Dataset(ctx)
+			func(ctx context.Context, entityType string, scopeKey string) (*miniappmodel.Dataset, error) {
+				return miniappService.TargetSyncDataset(ctx, entityType, scopeKey)
 			},
 			strings.TrimSpace(re.Request.FormValue("entityType")),
 			strings.TrimSpace(re.Request.FormValue("scopeKey")),

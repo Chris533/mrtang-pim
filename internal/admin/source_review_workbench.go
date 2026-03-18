@@ -149,10 +149,10 @@ func RenderSourceReviewWorkbenchHTML(summary pim.SourceReviewWorkbenchSummary, f
 
     <div class="stats">
       <div class="card"><div class="label">分类</div><div class="metric">{{.Summary.CategoryCount}}</div></div>
-      <div class="card"><div class="label">商品</div><div class="metric">{{.Summary.ProductCount}}</div><div class="small">{{.Summary.ImportedCount}} imported / {{.Summary.ApprovedCount}} approved / {{.Summary.PromotedCount}} promoted</div></div>
+      <div class="card"><div class="label">商品</div><div class="metric">{{.Summary.ProductCount}}</div><div class="small">{{.Summary.ImportedCount}} 待审核 / {{.Summary.ApprovedCount}} 待加入发布队列 / {{.Summary.PromotedCount}} 已加入发布队列</div></div>
       <div class="card"><div class="label">图片资产</div><div class="metric">{{.Summary.AssetCount}}</div><div class="small">{{.Summary.AssetPending}} pending / {{.Summary.AssetProcessed}} processed / {{.Summary.AssetFailed}} failed</div></div>
-      <div class="card"><div class="label">桥接与同步</div><div class="metric">{{.Summary.LinkedCount}}</div><div class="small">{{.Summary.SyncedCount}} synced / {{.Summary.SyncErrorCount}} error / {{.Summary.UnlinkedCount}} unlinked</div></div>
-      <div class="card"><div class="label">待处理</div><div class="metric">{{.Summary.ReadyToReviewCount}}</div><div class="small">{{.Summary.ReadyToPromoteCount}} 待 promote / {{.Summary.ReadyToSyncCount}} 待 sync</div></div>
+      <div class="card"><div class="label">发布队列与同步</div><div class="metric">{{.Summary.LinkedCount}}</div><div class="small">{{.Summary.SyncedCount}} 已同步 / {{.Summary.SyncErrorCount}} 同步失败 / {{.Summary.UnlinkedCount}} 未进入发布队列</div></div>
+      <div class="card"><div class="label">待处理</div><div class="metric">{{.Summary.ReadyToReviewCount}}</div><div class="small">{{.Summary.ReadyToPromoteCount}} 待加入发布队列 / {{.Summary.ReadyToSyncCount}} 待同步</div></div>
       <div class="card"><div class="label">异常</div><div class="metric">{{.Summary.AssetFailed}}</div><div class="small">{{.Summary.FailedLinkedCount}} linked sync error</div></div>
     </div>
 
@@ -210,7 +210,7 @@ func RenderSourceReviewWorkbenchHTML(summary pim.SourceReviewWorkbenchSummary, f
         </div>
         <div class="toolbar">
           <a class="small" href="/_/source-review-workbench?syncState=error">只看同步失败</a>
-          <a class="small" href="/_/source-review-workbench?productStatus=approved">只看待 promote</a>
+          <a class="small" href="/_/source-review-workbench?productStatus=approved">只看待加入发布队列</a>
           <a class="small" href="/_/source-review-workbench?assetStatus=failed">只看失败图片</a>
         </div>
       </div>
@@ -223,7 +223,7 @@ func RenderSourceReviewWorkbenchHTML(summary pim.SourceReviewWorkbenchSummary, f
             <option value="">all</option>
             <option value="imported" {{if eq .Filter.ProductStatus "imported"}}selected{{end}}>imported</option>
             <option value="approved" {{if eq .Filter.ProductStatus "approved"}}selected{{end}}>approved</option>
-            <option value="promoted" {{if eq .Filter.ProductStatus "promoted"}}selected{{end}}>promoted</option>
+            <option value="promoted" {{if eq .Filter.ProductStatus "promoted"}}selected{{end}}>已加入发布队列</option>
             <option value="rejected" {{if eq .Filter.ProductStatus "rejected"}}selected{{end}}>rejected</option>
           </select>
         </label>
@@ -259,13 +259,13 @@ func RenderSourceReviewWorkbenchHTML(summary pim.SourceReviewWorkbenchSummary, f
         <a class="small" href="/_/source-review-workbench?productStatus=imported">只看待审批</a>
         <a class="small" href="/_/source-review-workbench?assetStatus=pending">只看待处理图片</a>
         <a class="small" href="/_/source-review-workbench?productStatus=approved">只看已审批未推送</a>
-        <a class="small" href="/_/source-review-workbench?syncState=unlinked">只看未桥接</a>
+        <a class="small" href="/_/source-review-workbench?syncState=unlinked">只看未进入发布队列</a>
         <a class="small" href="/_/source-review-workbench?syncState=error">只看同步失败</a>
         <a class="small" href="/_/source-review-workbench?syncState=synced">只看已同步</a>
       </form>
       <div class="toolbar">
         <form method="post" action="/_/source-review-workbench/assets/process"><button type="submit">批量处理待处理图片</button></form>
-        <form method="post" action="/_/source-review-workbench/products/promote"><button type="submit">批量推送已审批商品</button></form>
+        <form method="post" action="/_/source-review-workbench/products/promote"><button type="submit">批量加入发布队列</button></form>
         <form method="post" action="/_/source-review-workbench/supplier-products/sync"><button type="submit">同步已批准商品到 Backend</button></form>
       </div>
     </div>
@@ -281,9 +281,9 @@ func RenderSourceReviewWorkbenchHTML(summary pim.SourceReviewWorkbenchSummary, f
             <input type="hidden" name="status" value="approved">
             <button type="submit" class="secondary">批量 Approve</button>
             <button type="submit" class="danger" formaction="/_/source-review-workbench/products/batch-status" onclick="this.form.status.value='rejected'">批量 Reject</button>
-            <button type="submit" formaction="/_/source-review-workbench/products/batch-promote">批量 Promote</button>
-            <button type="submit" formaction="/_/source-review-workbench/products/batch-promote-sync">批量 Promote &amp; Sync</button>
-            <button type="submit" class="warn" formaction="/_/source-review-workbench/products/batch-retry-sync">批量 Retry Sync</button>
+            <button type="submit" formaction="/_/source-review-workbench/products/batch-promote">批量加入发布队列</button>
+            <button type="submit" formaction="/_/source-review-workbench/products/batch-promote-sync">批量加入发布队列并发布</button>
+            <button type="submit" class="warn" formaction="/_/source-review-workbench/products/batch-retry-sync">批量重试发布</button>
           </div>
           <div class="table-wrap"><table>
           <thead><tr><th>商品</th><th>状态</th><th>规格</th><th>同步</th><th>图片</th><th>操作</th></tr></thead>
@@ -335,11 +335,11 @@ func RenderSourceReviewWorkbenchHTML(summary pim.SourceReviewWorkbenchSummary, f
                   </form>
                   <form method="post" action="/_/source-review-workbench/product/promote">
                     <input type="hidden" name="id" value="{{.ID}}">
-                    <button type="submit">Promote</button>
+                    <button type="submit">加入发布队列</button>
                   </form>
                   <form method="post" action="/_/source-review-workbench/product/promote-sync">
                     <input type="hidden" name="id" value="{{.ID}}">
-                    <button type="submit">Promote & Sync</button>
+                    <button type="submit">加入发布队列并发布</button>
                   </form>
                   {{if and .Bridge.Linked (eq .Bridge.SyncStatus "error")}}
                   <form method="post" action="/_/source-review-workbench/product/retry-sync">

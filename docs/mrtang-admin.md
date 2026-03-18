@@ -14,6 +14,10 @@
   - 源站抓取入库
   - 分类树、商品规格、图片资产的统一抓取入库入口
   - 默认使用无构建前端壳子异步加载基础摘要、raw 实时摘要、checkout 矩阵、最近写操作和当前运行进度；raw 超时只影响局部区块，可用 `?legacy=1` 临时回退旧服务端模板页
+- `/_/mrtang-admin/backend-release`
+  - 发布准备
+  - 查看 Vendure 字段准备度、直接创建 backend 分类、商品 payload 预览
+  - 默认使用无构建前端壳子异步加载数据
 - `/_/mrtang-admin/target-sync/run?id=...`：抓取运行详情
   - 抓取入库运行详情
   - 查看单次抓取入库到底改了什么，以及阶段日志和进度
@@ -23,7 +27,7 @@
   - 默认使用无构建前端壳子异步加载数据，可用 `?legacy=1` 临时回退旧服务端模板页
 - `/_/mrtang-admin/source/products`
   - 源数据商品
-  - 商品审核、选中项批量审核、桥接、桥接并同步、同步重试
+  - 商品审核、选中项批量审核、加入发布队列、加入发布队列并发布、重试发布
   - 默认使用无构建前端壳子异步加载列表，可用 `?legacy=1` 临时回退旧服务端模板页
 - `/_/mrtang-admin/source/products/detail?id=...`
   - 商品详情
@@ -65,9 +69,9 @@
 - `imported`
   - 待审核
 - `approved`
-  - 待桥接
+  - 待加入发布队列
 - `promoted`
-  - 已桥接
+  - 已加入发布队列
 - `rejected`
   - 已拒绝
 
@@ -93,10 +97,10 @@
 - `failed`
   - 原图下载失败
 
-桥接 / 同步状态：
+发布队列 / 同步状态：
 
 - `unlinked`
-  - 未桥接
+  - 未进入发布队列
 - `approved` / `ready`
   - 待同步
 - `synced`
@@ -109,7 +113,7 @@
 1. 先打开 `/_/mrtang-admin` 查看总览和高频待办
 2. 进入 `/_/mrtang-admin/target-sync` 执行分类、商品规格、图片抓取入库
 3. 再进入 `/_/mrtang-admin/source` 查看 source 模块摘要
-4. 到 `/_/mrtang-admin/source/products` 处理待审核、待桥接、同步失败商品
+4. 到 `/_/mrtang-admin/source/products` 处理待审核、待加入发布队列、同步失败商品
 5. 到 `/_/mrtang-admin/source/assets` 下载原图、处理失败图片和批量重试
 6. 到 `/_/mrtang-admin/source/asset-jobs` 查看批量任务进度和历史
 7. 到 `/_/mrtang-admin/source/logs` 追踪失败动作和最近操作
@@ -155,6 +159,7 @@
 但新的默认入口应当是：
 
 - `/_/mrtang-admin/target-sync`
+- `/_/mrtang-admin/backend-release`
 - `/_/mrtang-admin/source/products`
 - `/_/mrtang-admin/source/assets`
 - `/_/mrtang-admin/source/asset-jobs`

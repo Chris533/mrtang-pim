@@ -79,13 +79,17 @@ async function postForm(url, values) {
     error.status = response.status;
     throw error;
   }
-  return data || {};
+  return withExportedKeys(data || {});
 }
 
 function useResource(url, deps = []) {
   const [state, setState] = useState({ loading: true, error: "", data: null });
   useEffect(() => {
     let active = true;
+    if (!url) {
+      setState({ loading: false, error: "", data: null });
+      return () => { active = false; };
+    }
     setState({ loading: true, error: "", data: null });
     fetchJSON(url)
       .then((data) => active && setState({ loading: false, error: "", data }))
@@ -152,6 +156,43 @@ function syncStatusLabel(status) {
   if (normalized === "partial") return "部分成功";
   if (normalized === "failed") return "失败";
   return status || "-";
+}
+
+function targetSyncRunFailedBranches(run) {
+  const details = (run && run.Details) || [];
+  const entityType = String((run && (run.EntityType || run.entityType)) || "").toLowerCase();
+  const seen = new Set();
+  return details.filter((item) => {
+    const changeType = String(item.ChangeType || item.changeType || "").toLowerCase();
+    const targetType = String(item.TargetType || item.targetType || "").toLowerCase();
+    const targetKey = String(item.TargetKey || item.targetKey || "").trim();
+    if (changeType !== "failed" || targetType !== entityType || !targetKey || seen.has(targetKey)) return false;
+    seen.add(targetKey);
+    return true;
+  });
+}
+
+function retryFailedBranchesLabel(run) {
+  const entityType = String((run && (run.EntityType || run.entityType)) || "").toLowerCase();
+  const count = targetSyncRunFailedBranches(run).length;
+  if (entityType === "category_tree") return `重跑失败分类分支（${count}）`;
+  if (entityType === "products") return `重跑失败商品分支（${count}）`;
+  return `重跑失败分支（${count}）`;
+}
+
+function retryFailedBranchesConfirmMessage(run) {
+  const entityType = String((run && (run.EntityType || run.entityType)) || "").toLowerCase();
+  const count = targetSyncRunFailedBranches(run).length;
+  if (entityType === "category_tree") return `确认重跑 ${count} 个失败分类分支吗？`;
+  if (entityType === "products") return `确认重跑 ${count} 个失败商品分支吗？`;
+  return `确认重跑 ${count} 个失败分支吗？`;
+}
+
+function retryFailedBranchesStartedMessage(run, count) {
+  const entityType = String((run && (run.EntityType || run.entityType)) || "").toLowerCase();
+  if (entityType === "category_tree") return `已启动 ${count} 个失败分类分支重跑任务。`;
+  if (entityType === "products") return `已启动 ${count} 个失败商品分支重跑任务。`;
+  return `已启动 ${count} 个失败分支重跑任务。`;
 }
 
 function progressStageLabel(stage) {
@@ -252,6 +293,14 @@ function sourceAssetJobModeLabel(mode) {
   return "全量";
 }
 
+function backendCategoryStatusLabel(status) {
+  const normalized = (status || "").toLowerCase();
+  if (normalized === "published") return "已创建到 Backend";
+  if (normalized === "mapped") return "已保存待创建";
+  if (normalized === "error") return "创建失败";
+  return "待创建";
+}
+
 function sourceAssetJobSelectionCount(item) {
   return normalizeIDList((item && item.AssetIDs) || []).length;
 }
@@ -319,6 +368,7 @@ function AppLayout({ title, subtitle, currentPath, children }) {
     { href: "/_/mrtang-admin", label: "总览", visible: true },
     { href: "/_/mrtang-admin/target-sync", label: "抓取入库", visible: !!boot.canAccessSource },
     { href: "/_/mrtang-admin/source", label: "源数据", visible: !!boot.canAccessSource },
+    { href: "/_/mrtang-admin/backend-release", label: "发布准备", visible: !!boot.canAccessSource },
     { href: "/_/mrtang-admin/procurement", label: "采购", visible: !!boot.canAccessProcurement },
     { href: "/_/mrtang-admin/audit", label: "审计", visible: true },
   ].filter((item) => item.visible);
@@ -463,6 +513,7 @@ function DashboardPage() {
           <div class="small" style="margin-top:8px;"><code>${miniappErrorInfo.raw || miniappPayload.MiniappError}</code></div>
           <div class="action-row" style="margin-top:12px;"><button class="btn secondary" type="button" onClick=${() => setMiniappReloadKey((value) => value + 1)}>重试加载</button></div>
         </div>` : null}
+        ${miniapp.UsedStoredData ? html`<div class="flash ok" style="margin-top:14px;">当前覆盖摘要已自动回退到已落库分类/商品/图片结果。你现在看到的是已抓取归属，不依赖本次实时源站读取。</div>` : null}
         ${miniapp.RawAuthStatus && miniapp.RawAuthStatus.Enabled ? html`<div class=${`flash ${((miniapp.RawAuthStatus.Status || "").toLowerCase() === "failed" ? "error" : "ok")}`} style="margin-top:14px;">
           <div>${miniapp.RawAuthStatus.Message || "raw 登录续活状态未知。"}</div>
           <div class="small" style="margin-top:8px;">上次尝试：${miniapp.RawAuthStatus.LastAttemptAt || "-"} / 最近成功：${miniapp.RawAuthStatus.LastSuccessAt || "-"} / OpenID：${miniapp.RawAuthStatus.OpenID || "未配置"}</div>
@@ -487,12 +538,35 @@ function DashboardPage() {
         ${data.SourceError ? html`<div class="flash error" style="margin-top:14px;">${data.SourceError}</div>` : null}
         <div class="metric-grid section">
           <${MetricCard} eyebrow="Categories" value=${source.CategoryCount || 0} />
-          <${MetricCard} eyebrow="Products" value=${source.ProductCount || 0} detail=${`${source.ImportedCount || 0} imported / ${source.ApprovedCount || 0} approved / ${source.PromotedCount || 0} promoted`} />
+          <${MetricCard} eyebrow="商品" value=${source.ProductCount || 0} detail=${`${source.ImportedCount || 0} 待审核 / ${source.ApprovedCount || 0} 待加入发布队列 / ${source.PromotedCount || 0} 已加入发布队列`} />
           <${MetricCard} eyebrow="Assets" value=${source.AssetCount || 0} detail=${`${source.ProcessedAssetCount || 0} processed / ${source.FailedAssetCount || 0} failed`} />
           <${MetricCard} eyebrow="Bridge" value=${source.LinkedCount || 0} detail=${`${source.SyncedCount || 0} synced / ${source.SyncErrorCount || 0} error`} />
         </div>
       </div></section>
     </div>
+
+    <section class="section card"><div class="card-body">
+      <div class="card-kicker">Backend Readiness</div>
+      <h2 class="card-title">Backend 发布准备度</h2>
+      <div class="inline-pills">
+        <${StatusBadge} label=${data.BackendReadiness && data.BackendReadiness.Ready ? "可联调" : "待补字段"} currentTone=${data.BackendReadiness && data.BackendReadiness.Ready ? "success" : "warning"} />
+        <span class="pill">Variant 字段: <code>${(data.BackendReadiness && data.BackendReadiness.VariantFieldConfigured) || 0}/${(data.BackendReadiness && data.BackendReadiness.VariantFieldTotal) || 0}</code></span>
+        <span class="pill">Product 字段: <code>${(data.BackendReadiness && data.BackendReadiness.ProductFieldConfigured) || 0}/${(data.BackendReadiness && data.BackendReadiness.ProductFieldTotal) || 0}</code></span>
+        <span class="pill">分类映射: <code>${(data.BackendReadiness && data.BackendReadiness.MappedCategoryCount) || 0}</code></span>
+      </div>
+      <div class="metric-grid section">
+        <${MetricCard} eyebrow="分类映射" value=${(data.BackendReadiness && data.BackendReadiness.MappedCategoryCount) || 0} detail=${`${(data.BackendReadiness && data.BackendReadiness.PublishedCategoryCount) || 0} published / ${(data.BackendReadiness && data.BackendReadiness.PendingCategoryCount) || 0} pending`} />
+        <${MetricCard} eyebrow="待发布商品" value=${(data.BackendReadiness && data.BackendReadiness.PromotedProductCount) || 0} detail=${`${(data.BackendReadiness && data.BackendReadiness.SyncedProductCount) || 0} 已同步`} />
+      </div>
+      ${data.BackendReadiness && data.BackendReadiness.MissingFields && data.BackendReadiness.MissingFields.length
+        ? html`<div class="flash warning" style="margin-top:14px;">
+            <div><strong>Vendure custom fields 仍未配置完整</strong></div>
+            <div class="small" style="margin-top:8px;">缺失：${data.BackendReadiness.MissingFields.join("、")}</div>
+            <div class="small" style="margin-top:8px;">先按文档配置字段，再做正式联调同步更稳。</div>
+          </div>`
+        : html`<div class="flash ok" style="margin-top:14px;">Vendure 发布所需的最小 custom fields 已配置，可进入小批量联调。</div>`}
+      <div class="small" style="margin-top:12px;">文档参考：<code>docs/backend-miniapp-plan.md</code> / <code>docs/backend-release-contract.md</code></div>
+    </div></section>
 
     <section class="section card"><div class="card-body">
       <div class="card-kicker">入口与动作</div>
@@ -525,6 +599,306 @@ function DashboardPage() {
       </div></section>
     </section>
   `;
+}
+
+function BackendReleasePage() {
+  const [reloadKey, setReloadKey] = useState(0);
+  const [actionState, setActionState] = useState({ busy: "", message: "", error: "" });
+  const [previewID, setPreviewID] = useState("");
+  const resource = useResource("/api/pim/admin/backend-release", [reloadKey]);
+  const previewResource = useResource(previewID ? buildURL("/api/pim/admin/backend-release/product-preview", { id: previewID }) : "", [previewID]);
+
+  if (resource.loading) return html`<${LoadingSection} label="发布准备" />`;
+  if (resource.error) return html`<${ErrorSection} error=${resource.error} />`;
+
+  const payload = resource.data || {};
+  const summary = payload.summary || {};
+  const categories = summary.Categories || [];
+  const branches = summary.Branches || [];
+  const products = summary.Products || [];
+  const suggestedCategories = summary.SuggestedCategories || [];
+  const recommendedProducts = summary.RecommendedProducts || [];
+  const suggestionMap = useMemo(() => {
+    const next = {};
+    suggestedCategories.forEach((item) => {
+      const key = item.SourceKey || item.sourceKey || "";
+      if (!key || next[key]) return;
+      next[key] = item;
+    });
+    return next;
+  }, [suggestedCategories]);
+  const visibleCategories = useMemo(() => {
+    return [...categories].sort((left, right) => {
+      const leftHasSuggestion = !!suggestionMap[left.SourceKey || left.sourceKey || ""];
+      const rightHasSuggestion = !!suggestionMap[right.SourceKey || right.sourceKey || ""];
+      if (leftHasSuggestion !== rightHasSuggestion) {
+        return leftHasSuggestion ? -1 : 1;
+      }
+      return String(left.SourcePath || left.sourcePath || "").localeCompare(String(right.SourcePath || right.sourcePath || ""), "zh-CN");
+    });
+  }, [categories, suggestionMap]);
+  const suggestedKeys = useMemo(() => suggestedCategories.map((item) => item.SourceKey || item.sourceKey || "").filter(Boolean), [suggestedCategories]);
+  const failedCategoryKeys = useMemo(() => visibleCategories
+    .filter((item) => String(item.PublishStatus || item.publishStatus || "").toLowerCase() === "error")
+    .map((item) => item.SourceKey || item.sourceKey || "")
+    .filter(Boolean), [visibleCategories]);
+  const pendingRootKeys = useMemo(() => branches
+    .filter((item) => Number(item.PendingCount || item.pendingCount || 0) > 0)
+    .map((item) => item.RootKey || item.rootKey || "")
+    .filter(Boolean), [branches]);
+
+  useEffect(() => {
+    if (previewID) return;
+    const first = recommendedProducts[0] || products[0];
+    if (first && first.ID) {
+      setPreviewID(first.ID);
+    }
+  }, [previewID, recommendedProducts, products]);
+
+  async function saveMapping(item, form) {
+    const key = item.SourceKey || item.sourceKey || "";
+    if (!key) return;
+    const backendCollection = String(form.backendCollection || "").trim();
+    const backendPath = String(form.backendPath || "").trim();
+    if (!backendCollection && !backendPath) {
+      setActionState({
+        busy: "",
+        message: "",
+        error: "请至少填写 backend collection 或 backend path；空值保存后状态仍会保持 pending。",
+      });
+      return;
+    }
+    setActionState({ busy: `mapping:${key}`, message: "", error: "" });
+    try {
+      const result = await postForm("/api/pim/admin/backend-release/category-mappings", {
+        sourceKey: key,
+        backendCollection,
+        backendPath,
+        note: form.note || "",
+      });
+      setActionState({
+        busy: "",
+        message: result.message || `分类映射已保存：${backendCollection || "-"} / ${backendPath || "-"}`,
+        error: "",
+      });
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      setReloadKey((value) => value + 1);
+    } catch (error) {
+      setActionState({ busy: "", message: "", error: error.message || "保存分类发布映射失败" });
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
+
+  async function publishCategory(item, form, useSuggestion) {
+    const key = item.SourceKey || item.sourceKey || "";
+    if (!key) return;
+    const suggestion = suggestionMap[key] || {};
+    const backendCollection = String(useSuggestion ? (suggestion.SuggestedCollection || suggestion.suggestedCollection || "") : (form.backendCollection || "")).trim();
+    const backendPath = String(useSuggestion ? (suggestion.SuggestedBackendPath || suggestion.suggestedBackendPath || "") : (form.backendPath || "")).trim();
+    if (!backendCollection && !backendPath) {
+      setActionState({
+        busy: "",
+        message: "",
+        error: "请先填写 backend collection 或 backend path，或者直接使用按建议创建。",
+      });
+      return;
+    }
+    const actionKey = `publish:${key}`;
+    setActionState({ busy: actionKey, message: "", error: "" });
+    try {
+      const result = await postForm("/api/pim/admin/backend-release/category-publish", {
+        sourceKey: key,
+        backendCollection,
+        backendPath,
+        note: form.note || "",
+      });
+      setActionState({
+        busy: "",
+        message: result.message || `分类已创建到 Backend：${backendCollection || "-"} / ${backendPath || "-"}`,
+        error: "",
+      });
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      setReloadKey((value) => value + 1);
+    } catch (error) {
+      setActionState({ busy: "", message: "", error: error.message || "创建 backend 分类失败" });
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
+
+  async function publishBatch(sourceKeys, label) {
+    const keys = Array.from(new Set((sourceKeys || []).filter(Boolean)));
+    if (!keys.length) {
+      setActionState({ busy: "", message: "", error: `当前没有可执行“${label}”的分类。` });
+      return;
+    }
+    if (!window.confirm(`确认批量执行“${label}”吗？共 ${keys.length} 个分类。`)) return;
+    setActionState({ busy: `batch:${label}`, message: "", error: "" });
+    try {
+      const result = await postForm("/api/pim/admin/backend-release/category-publish-batch", {
+        sourceKeys: keys.join(","),
+      });
+      const batch = result.result || {};
+      const errorSummary = (batch.Errors || []).slice(0, 3).join("；");
+      setActionState({
+        busy: "",
+        message: result.message || `${label}已完成。`,
+        error: errorSummary,
+      });
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      setReloadKey((value) => value + 1);
+    } catch (error) {
+      setActionState({ busy: "", message: "", error: error.message || `${label}失败` });
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
+
+  return html`
+    <section class="section split-grid">
+      <section class="card"><div class="card-body">
+        <div class="card-kicker">Backend 发布</div>
+        <h2 class="card-title">分类创建与商品发布准备</h2>
+        <${ActionNotice} state=${actionState} />
+        <div class="metric-grid section">
+          <${MetricCard} eyebrow="分类创建" value=${summary.PublishedCount || 0} detail=${`顶级分支已创建 ${(summary.PublishedRootCount || 0)} / 待创建 ${(summary.PendingCategoryCount || 0)} / 失败 ${(summary.ErrorCategoryCount || 0)}`} />
+          <${MetricCard} eyebrow="商品联调" value=${summary.ProductCount || 0} detail=${`待同步 ${(summary.ReadyProductCount || 0)} / 已同步 ${(summary.SyncedProductCount || 0)}`} />
+          <${MetricCard} eyebrow="商品同步错误" value=${summary.ErrorProductCount || 0} />
+        </div>
+        <div class="flash warning" style="margin-top:14px;">
+          <div><strong>推荐顺序</strong></div>
+          <div class="small" style="margin-top:8px;">先配置 Vendure 字段，再直接创建 backend 分类，最后挑 1 到 3 个商品做 payload 预览和试同步。</div>
+        </div>
+        <div class="action-row" style="margin-top:14px;">
+          <button class="btn secondary" type="button" disabled=${actionState.busy === "batch:按建议批量创建" || !suggestedKeys.length} onClick=${() => publishBatch(suggestedKeys, "按建议批量创建")}>
+            ${actionState.busy === "batch:按建议批量创建" ? "创建中..." : `按建议批量创建（${suggestedKeys.length}）`}
+          </button>
+          <button class="btn secondary" type="button" disabled=${actionState.busy === "batch:重试失败分类" || !failedCategoryKeys.length} onClick=${() => publishBatch(failedCategoryKeys, "重试失败分类")}>
+            ${actionState.busy === "batch:重试失败分类" ? "重试中..." : `重试失败分类（${failedCategoryKeys.length}）`}
+          </button>
+          <button class="btn secondary" type="button" disabled=${actionState.busy === "batch:创建全部待创建顶级分类" || !pendingRootKeys.length} onClick=${() => publishBatch(pendingRootKeys, "创建全部待创建顶级分类")}>
+            ${actionState.busy === "batch:创建全部待创建顶级分类" ? "创建中..." : `创建全部待创建顶级分类（${pendingRootKeys.length}）`}
+          </button>
+        </div>
+      </div></section>
+
+      <section class="card"><div class="card-body">
+        <div class="card-kicker">文档</div>
+        <h2 class="card-title">联调参考</h2>
+        <div class="small">字段映射与发布模型：<code>docs/backend-release-contract.md</code></div>
+        <div class="small" style="margin-top:8px;">Vendure 字段配置：<code>docs/vendure-field-setup.md</code></div>
+        <div class="small" style="margin-top:8px;">整体发布前规划：<code>docs/backend-miniapp-plan.md</code></div>
+        <div class="small" style="margin-top:8px;">Backend 分类模型：<code>../mrtang-backend/docs/category-release-model.md</code></div>
+      </div></section>
+    </section>
+
+    <section class="section split-grid">
+      <section class="table-card"><div class="table-card"><div class="card-body">
+        <div class="card-kicker">顶级分支创建概览</div>
+        <h2 class="card-title">为什么 backend 里可能只看到一个顶级分类</h2>
+        <div class="small">当前批量创建会递归补齐父子层级，所以一次可能创建很多分类，但它们可能都属于同一个顶级分支。</div>
+        <div class="table-wrap section"><table><thead><tr><th>顶级分支</th><th>总数</th><th>已创建</th><th>待创建</th><th>失败</th></tr></thead><tbody>
+          ${branches.length ? branches.map((item) => html`<tr>
+            <td><strong>${item.Label || item.label || "-"}</strong><div class="small"><code>${item.RootKey || item.rootKey || "-"}</code></div></td>
+            <td>${item.TotalCount || item.totalCount || 0}</td>
+            <td>${item.PublishedCount || item.publishedCount || 0}</td>
+            <td>${item.PendingCount || item.pendingCount || 0}</td>
+            <td>${item.ErrorCount || item.errorCount || 0}</td>
+          </tr>`) : html`<tr><td colspan="5" class="small">当前没有顶级分支摘要。</td></tr>`}
+        </tbody></table></div>
+      </div></div></section>
+
+      <section class="table-card"><div class="table-card"><div class="card-body">
+        <div class="card-kicker">最小分类创建样例</div>
+        <h2 class="card-title">建议先创建这些 Backend 分类</h2>
+        <div class="small">更推荐直接“按建议创建”或“创建到 Backend”，而不是只保存本地映射。</div>
+        <div class="small" style="margin-top:8px;">下方分类列表会优先展示有建议路径的分类行，便于你直接创建。</div>
+        <div class="table-wrap section"><table><thead><tr><th>源分类</th><th>建议 collection</th><th>建议 path</th><th>说明</th></tr></thead><tbody>
+          ${suggestedCategories.length ? suggestedCategories.map((item) => html`<tr>
+            <td><strong>${item.Label || "-"}</strong><div class="small">${item.SourcePath || "-"}</div></td>
+            <td><code>${item.SuggestedCollection || "-"}</code></td>
+            <td><code>${item.SuggestedBackendPath || "-"}</code></td>
+            <td class="small">${item.Reason || "-"}</td>
+          </tr>`) : html`<tr><td colspan="4" class="small">当前没有新的分类映射建议。</td></tr>`}
+        </tbody></table></div>
+      </div></div></section>
+
+      <section class="table-card"><div class="table-card"><div class="card-body">
+        <div class="card-kicker">联调候选商品</div>
+        <h2 class="card-title">建议先试这 1 到 3 个商品</h2>
+        <div class="table-wrap section"><table><thead><tr><th>商品</th><th>特征</th><th>状态</th><th>预览</th></tr></thead><tbody>
+          ${recommendedProducts.length ? recommendedProducts.map((item) => html`<tr>
+            <td><strong>${item.Title || "-"}</strong><div class="small">${item.SupplierCode || "-"} / ${item.SKU || "-"}</div></td>
+            <td><div class="small">${item.Reason || "基础联调样例"}</div><div class="small">Audience: ${item.TargetAudience || "ALL"} / Rate: ${item.ConversionRate || 1}</div></td>
+            <td><${StatusBadge} label=${item.SyncStatus || "-"} currentTone=${tone(item.SyncStatus)} /></td>
+            <td><button class="btn secondary" type="button" disabled=${!item.ReadyForPreview} onClick=${() => setPreviewID(item.ID || "")}>预览 payload</button></td>
+          </tr>`) : html`<tr><td colspan="4" class="small">当前没有推荐联调商品。</td></tr>`}
+        </tbody></table></div>
+      </div></div></section>
+    </section>
+
+    <section class="section card"><div class="card-body">
+      <div class="card-kicker">Backend 分类创建</div>
+      <h2 class="card-title">source category -> backend collection</h2>
+      <div class="table-wrap section"><table><thead><tr><th>源分类</th><th>backend collection</th><th>backend path</th><th>状态</th><th>操作</th></tr></thead><tbody>
+        ${visibleCategories.length ? visibleCategories.map((item) => html`<${BackendCategoryMappingRow} key=${item.SourceKey || item.sourceKey} item=${item} suggestion=${suggestionMap[item.SourceKey || item.sourceKey || ""]} onSave=${saveMapping} onPublish=${publishCategory} busy=${actionState.busy} />`) : html`<tr><td colspan="5" class="small">还没有分类映射数据。</td></tr>`}
+      </tbody></table></div>
+    </div></section>
+
+    <section class="section split-grid">
+      <section class="table-card"><div class="table-card"><div class="card-body">
+        <div class="card-kicker">待联调商品</div>
+        <h2 class="card-title">最近 supplier_products</h2>
+        <div class="table-wrap section"><table><thead><tr><th>商品</th><th>分类</th><th>字段</th><th>状态</th><th>预览</th></tr></thead><tbody>
+          ${products.length ? products.map((item) => html`<tr>
+            <td><strong>${item.Title || "-"}</strong><div class="small">${item.SupplierCode || "-"} / ${item.SKU || "-"}</div></td>
+            <td>${item.NormalizedCategory || "-"}</td>
+            <td><div class="small">Audience: ${item.TargetAudience || "ALL"}</div><div class="small">Rate: ${item.ConversionRate || 1}</div><div class="small">${item.HasProcessedImage ? "已有处理图" : "仅原图"}</div></td>
+            <td><${StatusBadge} label=${item.SyncStatus || "-"} currentTone=${tone(item.SyncStatus)} /></td>
+            <td><button class="btn secondary" type="button" disabled=${!item.ReadyForPreview} onClick=${() => setPreviewID(item.ID || "")}>预览 payload</button></td>
+          </tr>`) : html`<tr><td colspan="5" class="small">当前还没有可联调商品。</td></tr>`}
+        </tbody></table></div>
+      </div></div></section>
+
+      <section class="card"><div class="card-body">
+        <div class="card-kicker">Payload Preview</div>
+        <h2 class="card-title">Vendure 同步预览</h2>
+        ${!previewID ? html`<div class="small">从左侧选一个商品，查看将要发送给 Vendure 的 payload。</div>` : null}
+        ${previewID && previewResource.loading ? html`<${LoadingSection} label="payload 预览" />` : null}
+        ${previewID && previewResource.error ? html`<div class="flash error">${previewResource.error}</div>` : null}
+        ${previewID && previewResource.data && previewResource.data.preview && previewResource.data.preview.Payload ? html`
+          <pre class="json-block">${JSON.stringify(previewResource.data.preview.Payload, null, 2)}</pre>
+        ` : null}
+      </div></section>
+    </section>
+  `;
+}
+
+function BackendCategoryMappingRow({ item, suggestion, onSave, onPublish, busy }) {
+  const [backendCollection, setBackendCollection] = useState(item.BackendCollection || item.backendCollection || "");
+  const [backendPath, setBackendPath] = useState(item.BackendPath || item.backendPath || "");
+  const [note, setNote] = useState(item.Note || item.note || "");
+  const key = item.SourceKey || item.sourceKey || "";
+  const hasMapping = !!String(backendCollection || "").trim() || !!String(backendPath || "").trim();
+  const hasSuggestion = !!suggestion;
+  return html`<tr>
+    <td><strong>${item.Label || item.label || "-"}</strong><div class="small">${item.SourcePath || item.sourcePath || "-"}</div></td>
+    <td><input class="input" value=${backendCollection} onInput=${(event) => setBackendCollection(event.target.value)} placeholder="collections/meat/chicken" /></td>
+    <td><input class="input" value=${backendPath} onInput=${(event) => setBackendPath(event.target.value)} placeholder="鸡产品/鸡副/鸡块" /></td>
+    <td>
+      <${StatusBadge} label=${backendCategoryStatusLabel(item.PublishStatus || item.publishStatus || "pending")} currentTone=${tone(item.PublishStatus || item.publishStatus)} />
+      ${(item.LastError || item.lastError) ? html`<div class="small">${item.LastError || item.lastError}</div>` : null}
+      ${item.BackendCollectionID || item.backendCollectionId ? html`<div class="small">backend id: <code>${item.BackendCollectionID || item.backendCollectionId}</code></div>` : null}
+      ${item.PublishedAt || item.publishedAt ? html`<div class="small">最近创建：${item.PublishedAt || item.publishedAt}</div>` : null}
+      ${!hasMapping && hasSuggestion ? html`<div class="small">当前未填写自定义路径，可直接按建议创建。</div>` : null}
+      ${!hasMapping && !hasSuggestion ? html`<div class="small">当前未填写 backend 映射，请手工输入后创建。</div>` : null}
+    </td>
+    <td>
+      <div class="action-row">
+        ${suggestion ? html`<button class="btn secondary" type="button" disabled=${busy === `publish:${key}`} onClick=${() => onPublish(item, { backendCollection, backendPath, note }, true)}>${busy === `publish:${key}` ? "创建中..." : "按建议创建"}</button>` : null}
+        <button class="btn secondary" type="button" disabled=${busy === `publish:${key}` || (!hasMapping && !hasSuggestion)} onClick=${() => onPublish(item, { backendCollection, backendPath, note }, false)}>${busy === `publish:${key}` ? "创建中..." : (String(item.PublishStatus || item.publishStatus || "").toLowerCase() === "published" ? "重新同步到 Backend" : "创建到 Backend")}</button>
+        <button class="btn secondary" type="button" disabled=${busy === `mapping:${key}` || !hasMapping} onClick=${() => onSave(item, { backendCollection, backendPath, note })}>${busy === `mapping:${key}` ? "保存中..." : "仅保存本地路径"}</button>
+      </div>
+    </td>
+  </tr>`;
 }
 
 function confirmSubmit(message, event) {
@@ -622,13 +996,13 @@ function TargetSyncPage() {
     const updated = run.updatedCount || 0;
     const unchanged = run.unchangedCount || 0;
     if (entityType === "category_tree") {
-      return `分类抓取入库完成：新增 ${created}，更新 ${updated}，未变化 ${unchanged}。`;
+      return `按当前源站结果抓分类完成：新增 ${created}，更新 ${updated}，未变化 ${unchanged}。`;
     }
     if (entityType === "products") {
-      return `商品规格抓取入库完成：新增 ${created}，更新 ${updated}，未变化 ${unchanged}。`;
+      return `按当前源站结果抓商品规格完成：新增 ${created}，更新 ${updated}，未变化 ${unchanged}。`;
     }
     if (entityType === "assets") {
-      return `图片抓取入库完成：新增 ${created}，更新 ${updated}，未变化 ${unchanged}。`;
+      return `按当前源站结果抓图片完成：新增 ${created}，更新 ${updated}，未变化 ${unchanged}。`;
     }
     return result.message || "抓取入库执行完成。";
   }
@@ -651,8 +1025,53 @@ function TargetSyncPage() {
       });
       setReloadKey((value) => value + 1);
     } catch (error) {
+      const payloadRun = error && error.payload && error.payload.run;
+      if (payloadRun && payloadRun.ID) {
+        setActiveRun(payloadRun);
+        setActiveRunId(payloadRun.ID);
+        setActiveRunError("");
+        setActionState({
+          busy: "",
+          message: "已有同类抓取任务在执行中，已切换到当前任务进度。",
+          error: "",
+          href: buildURL("/_/mrtang-admin/target-sync/run", { id: payloadRun.ID }),
+          hrefLabel: "查看运行详情",
+        });
+        setReloadKey((value) => value + 1);
+        return;
+      }
       setActionState({ busy: "", message: "", error: error.message || "执行抓取入库失败", href: "", hrefLabel: "" });
       setReloadKey((value) => value + 1);
+    }
+  }
+
+  async function retryFailedBranches(run) {
+    const runId = run && run.ID;
+    const failedBranches = targetSyncRunFailedBranches(run);
+    if (!runId || !failedBranches.length) {
+      setActionState({ busy: "", message: "", error: "当前运行记录没有可重跑的失败分支。", href: "", hrefLabel: "" });
+      return;
+    }
+    if (!window.confirm(retryFailedBranchesConfirmMessage(run))) return;
+    setActionState({ busy: `retry-failed:${runId}`, message: "", error: "", href: "", hrefLabel: "" });
+    try {
+      const result = await postForm("/api/pim/admin/target-sync/run/retry-failed-branches", { runId });
+      const runs = result.runs || [];
+      const firstRun = runs[0] || null;
+      setActionState({
+        busy: "",
+        message: result.message || retryFailedBranchesStartedMessage(run, runs.length),
+        error: "",
+        href: firstRun && firstRun.ID ? buildURL("/_/mrtang-admin/target-sync/run", { id: firstRun.ID }) : "",
+        hrefLabel: firstRun && firstRun.ID ? "查看首个重跑任务" : "",
+      });
+      if (firstRun && firstRun.ID) {
+        setActiveRun(firstRun);
+        setActiveRunId(firstRun.ID);
+      }
+      setReloadKey((value) => value + 1);
+    } catch (error) {
+      setActionState({ busy: "", message: "", error: error.message || "重跑失败分支失败", href: "", hrefLabel: "" });
     }
   }
 
@@ -671,16 +1090,17 @@ function TargetSyncPage() {
     <section class="section split-grid">
       <section class="card"><div class="card-body">
         <div class="card-kicker">抓取入库</div>
-        <h2 class="card-title">分类树、商品规格与图片抓取入库</h2>
+        <h2 class="card-title">先抓分类快照，再按快照抓商品规格与图片</h2>
         ${payload.flashError ? html`<div class="flash error" style="margin-top:14px;">${payload.flashError}</div>` : null}
         ${payload.flashMessage ? html`<div class="flash ok" style="margin-top:14px;">${payload.flashMessage}</div>` : null}
         <${ActionNotice} state=${actionState} />
         <div class="action-row">
-          <button class="btn secondary" type="button" disabled=${actionState.busy === "ensure:category_tree:"} onClick=${() => ensureJob("category_tree", "", "全量")}>${actionState.busy === "ensure:category_tree:" ? "保存中..." : "保存全量分类抓取任务"}</button>
-          <button class="btn" type="button" disabled=${actionState.busy === "run:category_tree:"} onClick=${() => runJob("category_tree", "", "全量", "确认立即执行全量分类抓取入库吗？")}>${actionState.busy === "run:category_tree:" ? "启动中..." : "立即执行分类抓取入库"}</button>
-          <button class="btn secondary" type="button" disabled=${actionState.busy === "run:products:"} onClick=${() => runJob("products", "", "全量", "确认立即执行全量商品规格抓取入库吗？")}>${actionState.busy === "run:products:" ? "启动中..." : "立即执行商品规格抓取入库"}</button>
-          <button class="btn secondary" type="button" disabled=${actionState.busy === "run:assets:"} onClick=${() => runJob("assets", "", "全量", "确认立即执行全量图片抓取入库吗？")}>${actionState.busy === "run:assets:" ? "启动中..." : "立即执行图片抓取入库"}</button>
+          <button class="btn secondary" type="button" disabled=${actionState.busy === "ensure:category_tree:"} onClick=${() => ensureJob("category_tree", "", "分类快照")}>${actionState.busy === "ensure:category_tree:" ? "保存中..." : "保存分类快照任务"}</button>
+          <button class="btn" type="button" disabled=${actionState.busy === "run:category_tree:"} onClick=${() => runJob("category_tree", "", "分类快照", "确认立即抓取分类树及分类商品快照吗？")}>${actionState.busy === "run:category_tree:" ? "启动中..." : "抓分类快照"}</button>
+          <button class="btn secondary" type="button" disabled=${actionState.busy === "run:products:"} onClick=${() => runJob("products", "", "分类快照商品", "确认立即基于已保存分类快照抓取商品规格吗？若没有快照，将回退到实时源站。")}>${actionState.busy === "run:products:" ? "启动中..." : "按分类快照抓商品规格"}</button>
+          <button class="btn secondary" type="button" disabled=${actionState.busy === "run:assets:"} onClick=${() => runJob("assets", "", "商品图片", "确认立即抓取图片入库吗？图片仍基于当前商品结果生成。")}>${actionState.busy === "run:assets:" ? "启动中..." : "抓图片"}</button>
         </div>
+        <div class="small" style="margin-top:10px;">默认流程现在是：先抓分类树和分类商品快照，再按已保存快照抓商品规格。只有没有快照时，商品抓取才会回退到实时源站。</div>
         <div class="inline-pills section">
           <${StatusBadge} label=${sourceModeLabel(effectiveSourceMode)} currentTone=${tone(effectiveSourceMode)} />
           <span class="pill">sourceURL: <code>${payload.sourceURL || "-"}</code></span>
@@ -694,6 +1114,7 @@ function TargetSyncPage() {
         <div class="metric-grid section">
           <${MetricCard} eyebrow="抓取任务" value=${summary.JobCount || 0} />
           <${MetricCard} eyebrow="运行记录" value=${summary.RunCount || 0} />
+          <${MetricCard} eyebrow="分类商品快照" value=${summary.SourceCategorySectionCount || 0} detail="已保存的分类 -> 商品归属快照" />
           <${MetricCard} eyebrow="顶级分类" value=${liveResource.loading ? "..." : (liveSummary.TopLevelCount || 0)} />
           <${MetricCard} eyebrow="分类节点" value=${liveResource.loading ? "..." : (liveSummary.ExpectedNodeCount || 0)} />
           <${MetricCard} eyebrow="目标商品" value=${liveResource.loading ? "..." : (liveSummary.ExpectedProductCount || 0)} detail=${liveResource.loading ? "正在加载 raw 实时摘要" : `${liveSummary.ExpectedMultiUnitCount || 0} 个多单位`} />
@@ -705,6 +1126,7 @@ function TargetSyncPage() {
           <div class="small" style="margin-top:8px;"><code>${liveErrorInfo.raw || liveError}</code></div>
           <div class="action-row" style="margin-top:12px;"><button class="btn secondary" type="button" onClick=${() => setLiveReloadKey((value) => value + 1)}>重试范围摘要</button></div>
         </div>` : null}
+        ${liveSummary.UsedStoredData ? html`<div class="flash ok" style="margin-top:14px;">当前范围摘要已自动回退到已落库分类/商品/图片结果。若分类商品快照已存在，商品归属会优先复用已保存快照，不必每次重新实时读取全部分类商品列表。</div>` : null}
       </div></section>
 
       <section class="card"><div class="card-body">
@@ -722,6 +1144,11 @@ function TargetSyncPage() {
             <div style="margin-top:10px; height:10px; border-radius:999px; background:rgba(255,255,255,.08); overflow:hidden;">
               <div style=${`height:100%; width:${progressPercent}%; background:linear-gradient(90deg,#5ee6ff 0%, #6ef2b4 100%); transition:width .25s ease;`}></div>
             </div>
+            ${targetSyncRunFailedBranches(activeRun).length ? html`<div class="action-row" style="margin-top:12px;">
+              <button class="btn secondary" type="button" disabled=${actionState.busy === `retry-failed:${activeRun.ID}`} onClick=${() => retryFailedBranches(activeRun)}>
+                ${actionState.busy === `retry-failed:${activeRun.ID}` ? "启动中..." : retryFailedBranchesLabel(activeRun)}
+              </button>
+            </div>` : null}
           </div>
           ${activeRunError ? html`<div class="flash error" style="margin-top:14px;">${activeRunError}</div>` : null}
           <div class="table-wrap section"><table><thead><tr><th>时间</th><th>阶段</th><th>级别</th><th>日志</th></tr></thead><tbody>
@@ -740,7 +1167,7 @@ function TargetSyncPage() {
           <a class="action-card" href="/_/mrtang-admin/source/products"><div class="card-kicker">已入库商品</div><div class="metric-value">${summary.SourceProductCount || 0}</div><div class="card-desc">查看抓取保存下来的商品、规格和审核状态。</div></a>
           <a class="action-card" href="/_/mrtang-admin/source/assets"><div class="card-kicker">已入库图片</div><div class="metric-value">${summary.SourceAssetCount || 0}</div><div class="card-desc">查看抓取保存下来的封面、轮播和详情图。</div></a>
           <a class="action-card" href="/_/mrtang-admin/source/products?productStatus=imported"><div class="card-kicker">待审核商品</div><div class="metric-value">${summary.SourceImportedCount || 0}</div><div class="card-desc">商品和规格变化后自动回到 imported。</div></a>
-          <a class="action-card" href="/_/mrtang-admin/source/products?productStatus=approved"><div class="card-kicker">待桥接商品</div><div class="metric-value">${summary.SourceApprovedCount || 0}</div><div class="card-desc">审核通过后继续桥接到 supplier_products。</div></a>
+          <a class="action-card" href="/_/mrtang-admin/source/products?productStatus=approved"><div class="card-kicker">待加入发布队列商品</div><div class="metric-value">${summary.SourceApprovedCount || 0}</div><div class="card-desc">审核通过后加入发布队列，再进入 supplier_products 和 backend 发布链。</div></a>
           <a class="action-card" href="/_/mrtang-admin/source/assets?assetStatus=pending"><div class="card-kicker">待处理图片</div><div class="metric-value">${summary.SourceAssetPendingCount || 0}</div><div class="card-desc">图片变化后自动重置为 pending。</div></a>
           <a class="action-card" href="/_/mrtang-admin/source/assets?assetStatus=failed"><div class="card-kicker">失败图片</div><div class="metric-value">${summary.SourceAssetFailedCount || 0}</div><div class="card-desc">在图片模块继续重试或人工处理。</div></a>
         </div>
@@ -756,6 +1183,7 @@ function TargetSyncPage() {
           <div class="small" style="margin-top:8px;"><code>${liveErrorInfo.raw || liveError}</code></div>
           <div class="action-row" style="margin-top:12px;"><button class="btn secondary" type="button" onClick=${() => setLiveReloadKey((value) => value + 1)}>重试范围摘要</button></div>
         </div>` : null}
+        ${liveSummary.UsedStoredData ? html`<div class="flash ok" style="margin-top:14px;">当前表格已回退到已落库结果统计；可以继续查看分类归属和数量，等源站恢复后再做实时抓取。</div>` : null}
         <div class="table-wrap section"><table><thead><tr><th>分类</th><th>节点</th><th>商品</th><th>图片</th><th>动作</th></tr></thead><tbody>
           ${scopeOptions.length ? scopeOptions.filter((item) => item.Key).map((item) => html`<tr>
             <td><strong>${item.Label || "-"}</strong><div class="small">${item.Key || "-"}</div></td>
@@ -764,9 +1192,9 @@ function TargetSyncPage() {
             <td>${item.AssetCount || 0}</td>
             <td>
               <div class="action-row">
-                <button class="btn secondary" type="button" disabled=${actionState.busy === `ensure:category_tree:${item.Key}`} onClick=${() => ensureJob("category_tree", item.Key, item.Label || item.Key)}>保存分类任务</button>
-                <button class="btn secondary" type="button" disabled=${actionState.busy === `run:category_tree:${item.Key}`} onClick=${() => runJob("category_tree", item.Key, item.Label || item.Key, `确认执行 ${item.Label || item.Key} 的分类抓取入库吗？`)}>抓分类</button>
-                <button class="btn secondary" type="button" disabled=${actionState.busy === `run:products:${item.Key}`} onClick=${() => runJob("products", item.Key, item.Label || item.Key, `确认执行 ${item.Label || item.Key} 的商品规格抓取入库吗？`)}>抓商品</button>
+                <button class="btn secondary" type="button" disabled=${actionState.busy === `ensure:category_tree:${item.Key}`} onClick=${() => ensureJob("category_tree", item.Key, item.Label || item.Key)}>保存分类快照任务</button>
+                <button class="btn secondary" type="button" disabled=${actionState.busy === `run:category_tree:${item.Key}`} onClick=${() => runJob("category_tree", item.Key, item.Label || item.Key, `确认执行 ${item.Label || item.Key} 的分类树与分类商品快照抓取吗？`)}>抓分类快照</button>
+                <button class="btn secondary" type="button" disabled=${actionState.busy === `run:products:${item.Key}`} onClick=${() => runJob("products", item.Key, item.Label || item.Key, `确认基于 ${item.Label || item.Key} 已保存分类快照抓取商品规格吗？若没有快照，将回退到实时源站。`)}>按快照抓商品</button>
                 <button class="btn secondary" type="button" disabled=${actionState.busy === `run:assets:${item.Key}`} onClick=${() => runJob("assets", item.Key, item.Label || item.Key, `确认执行 ${item.Label || item.Key} 的图片抓取入库吗？`)}>抓图片</button>
               </div>
             </td>
@@ -812,7 +1240,14 @@ function TargetSyncPage() {
             <td><${StatusBadge} label=${syncStatusLabel(run.Status)} currentTone=${tone(run.Status)} /></td>
             <td>${run.ScopeLabel || "-"}</td>
             <td class="small">${done} / ${total || "-"}</td>
-            <td class="small">新增 ${run.CreatedCount || 0} / 更新 ${run.UpdatedCount || 0} / 未变 ${run.UnchangedCount || 0}</td>
+            <td class="small">
+              新增 ${run.CreatedCount || 0} / 更新 ${run.UpdatedCount || 0} / 未变 ${run.UnchangedCount || 0}
+              ${targetSyncRunFailedBranches(run).length ? html`<div class="action-row" style="margin-top:8px;">
+                <button class="btn secondary" type="button" disabled=${actionState.busy === `retry-failed:${run.ID}`} onClick=${() => retryFailedBranches(run)}>
+                  ${actionState.busy === `retry-failed:${run.ID}` ? "启动中..." : retryFailedBranchesLabel(run)}
+                </button>
+              </div>` : null}
+            </td>
             <td class="small">${run.LastProgressAt || run.FinishedAt || run.StartedAt || "-"}</td>
           </tr>`;
         }) : html`<tr><td colspan="6" class="small">当前还没有抓取入库运行记录。</td></tr>`}
@@ -822,6 +1257,7 @@ function TargetSyncPage() {
 }
 
 function routePath(pathname) {
+  if ((pathname || "").startsWith("/_/mrtang-admin/backend-release")) return "backend-release";
   if ((pathname || "").startsWith("/_/mrtang-admin/source/categories")) return "source-categories";
   if ((pathname || "").startsWith("/_/mrtang-admin/source/products/detail")) return "source-product-detail";
   if ((pathname || "").startsWith("/_/mrtang-admin/source/products")) return "source-products";
@@ -844,6 +1280,7 @@ function routePath(pathname) {
   if (pathname === "/_/mrtang-admin/procurement") return "procurement";
   if (pathname === "/_/mrtang-admin/procurement/detail") return "procurement-detail";
   if (pathname === "/_/mrtang-admin/target-sync") return "target-sync";
+  if (pathname === "/_/mrtang-admin/backend-release") return "backend-release";
   return "dashboard";
 }
 
@@ -871,9 +1308,9 @@ function SourceModulePage() {
         ${payload.flashError ? html`<div class="flash error" style="margin-top:14px;">${payload.flashError}</div>` : null}
         ${payload.flashMessage ? html`<div class="flash ok" style="margin-top:14px;">${payload.flashMessage}</div>` : null}
         <div class="metric-grid section">
-          <${MetricCard} eyebrow="商品总数" value=${summary.ProductCount || 0} detail=${`${summary.ImportedCount || 0} 待审核 / ${summary.ApprovedCount || 0} 待桥接`} />
+          <${MetricCard} eyebrow="商品总数" value=${summary.ProductCount || 0} detail=${`${summary.ImportedCount || 0} 待审核 / ${summary.ApprovedCount || 0} 待加入发布队列`} />
           <${MetricCard} eyebrow="图片总数" value=${summary.AssetCount || 0} detail=${`${summary.AssetPending || 0} 待处理 / ${summary.AssetFailed || 0} 失败`} />
-          <${MetricCard} eyebrow="已桥接" value=${summary.LinkedCount || 0} detail=${`${summary.SyncedCount || 0} 已同步 / ${summary.SyncErrorCount || 0} 同步失败`} />
+          <${MetricCard} eyebrow="已加入发布队列" value=${summary.LinkedCount || 0} detail=${`${summary.SyncedCount || 0} 已同步 / ${summary.SyncErrorCount || 0} 同步失败`} />
           <${MetricCard} eyebrow="分类" value=${summary.CategoryCount || 0} />
         </div>
       </div></section>
@@ -886,7 +1323,7 @@ function SourceModulePage() {
           <a class="action-card" href="/_/mrtang-admin/source/products?syncState=error"><div class="card-kicker">商品</div><div class="card-title">同步失败商品</div><div class="card-desc">查看 linked sync error 并继续重试。</div></a>
           <a class="action-card" href="/_/mrtang-admin/source/assets?assetStatus=pending"><div class="card-kicker">图片</div><div class="card-title">待处理图片</div><div class="card-desc">进入图片页执行批量处理。</div></a>
           <a class="action-card" href="/_/mrtang-admin/source/asset-jobs"><div class="card-kicker">任务</div><div class="card-title">图片任务历史</div><div class="card-desc">查看原图下载和图片处理的历史任务、失败与重试。</div></a>
-          <a class="action-card" href="/_/mrtang-admin/source/logs"><div class="card-kicker">日志</div><div class="card-title">源数据日志</div><div class="card-desc">查看最近审核、桥接和图片处理动作。</div></a>
+          <a class="action-card" href="/_/mrtang-admin/source/logs"><div class="card-kicker">日志</div><div class="card-title">源数据日志</div><div class="card-desc">查看最近审核、加入发布队列和图片处理动作。</div></a>
         </div>
       </div></section>
     </section>
@@ -954,6 +1391,7 @@ function SourceCategoriesPage() {
         <span class="pill">顶级分类 <code>${summary.TopLevelCount || 0}</code></span>
         <span class="pill">叶子分类 <code>${summary.LeafCount || 0}</code></span>
         <span class="pill">带图分类 <code>${summary.WithImageCount || 0}</code></span>
+        <span class="pill">商品数按观察到分类链统计</span>
       </div>
     </div></section>
 
@@ -1000,9 +1438,17 @@ function SourceProductsPage() {
   const summary = payload.summary || {};
   const filter = payload.filter || {};
   const products = summary.Products || [];
+  const currentProductPage = Math.max(1, Number(summary.ProductPage || filter.ProductPage || 1));
+  const productPages = Math.max(1, Number(summary.ProductPages || 1));
   const visibleIDs = products.map((item) => item.ID || "").filter(Boolean);
   const selectedVisibleIDs = normalizeIDList(selectedIDs).filter((id) => visibleIDs.includes(id));
   const allVisibleSelected = products.length > 0 && selectedVisibleIDs.length === visibleIDs.length;
+  const filteredActionPayload = {
+    categoryKey: filter.CategoryKey || "",
+    productStatus: filter.ProductStatus || "",
+    syncState: filter.SyncState || "",
+    q: filter.Query || "",
+  };
 
   useEffect(() => {
     setSelectedIDs((current) => normalizeIDList(current).filter((id) => visibleIDs.includes(id)));
@@ -1026,6 +1472,20 @@ function SourceProductsPage() {
     setActionState({ busy: busyKey, message: "", error: "" });
     try {
       const result = await postForm(url, { ...values, productIds: selectedVisibleIDs.join(",") });
+      setActionState({ busy: "", message: result.message || successMessage, error: "" });
+      setReloadKey((value) => value + 1);
+      setSelectedIDs([]);
+    } catch (error) {
+      setActionState({ busy: "", message: "", error: error.message || successMessage || "批量操作失败" });
+    }
+  }
+
+  async function filteredProductAction(url, values, confirmMessage, busyKey, successMessage) {
+    if (!(summary.ProductCount || 0)) return;
+    if (confirmMessage && !window.confirm(confirmMessage)) return;
+    setActionState({ busy: busyKey, message: "", error: "" });
+    try {
+      const result = await postForm(url, { ...filteredActionPayload, ...values });
       setActionState({ busy: "", message: result.message || successMessage, error: "" });
       setReloadKey((value) => value + 1);
       setSelectedIDs([]);
@@ -1063,13 +1523,13 @@ function SourceProductsPage() {
         <select name="productStatus" defaultValue=${filter.ProductStatus || ""}>
           <option value="">全部审核状态</option>
           <option value="imported">待审核</option>
-          <option value="approved">待桥接</option>
-          <option value="promoted">已桥接</option>
+          <option value="approved">待加入发布队列</option>
+          <option value="promoted">已加入发布队列</option>
           <option value="rejected">已拒绝</option>
         </select>
         <select name="syncState" defaultValue=${filter.SyncState || ""}>
           <option value="">全部同步状态</option>
-          <option value="unlinked">未桥接</option>
+          <option value="unlinked">未进入发布队列</option>
           <option value="error">同步失败</option>
           <option value="synced">已同步</option>
         </select>
@@ -1087,8 +1547,9 @@ function SourceProductsPage() {
         ${filter.CategoryKey ? html`<span class="pill">分类 <code>${filter.CategoryKey}</code></span>` : null}
         <span class="pill">总数 <code>${summary.ProductCount || 0}</code></span>
         <span class="pill">待审核 <code>${summary.ImportedCount || 0}</code></span>
-        <span class="pill">待桥接 <code>${summary.ApprovedCount || 0}</code></span>
+        <span class="pill">待加入发布队列 <code>${summary.ApprovedCount || 0}</code></span>
         <span class="pill">同步失败 <code>${summary.SyncErrorCount || 0}</code></span>
+        <span class="pill">当前筛选 <code>${summary.ProductCount || 0}</code></span>
         ${selectedVisibleIDs.length ? html`<span class="pill">当前选中 <code>${selectedVisibleIDs.length}</code></span>` : null}
       </div>
     </div></section>
@@ -1097,32 +1558,59 @@ function SourceProductsPage() {
       <div class="card-kicker">列表</div>
       <h2 class="card-title">商品批次</h2>
       <div class="action-row" style="margin-bottom:12px;">
+        <button class="btn secondary" type="button" disabled=${!(summary.ProductCount || 0) || actionState.busy === "filtered-approve"} onClick=${() => filteredProductAction("/api/pim/admin/source/products/batch-status-filtered", { status: "approved" }, `确认将当前筛选结果 ${summary.ProductCount || 0} 个商品标记为通过吗？`, "filtered-approve", "按当前筛选结果批量通过已完成。")}>${actionState.busy === "filtered-approve" ? "处理中..." : "按当前筛选结果批量通过"}</button>
+        <button class="btn secondary" type="button" disabled=${!(summary.ProductCount || 0) || actionState.busy === "filtered-reject"} onClick=${() => filteredProductAction("/api/pim/admin/source/products/batch-status-filtered", { status: "rejected" }, `确认拒绝当前筛选结果 ${summary.ProductCount || 0} 个商品吗？`, "filtered-reject", "按当前筛选结果批量拒绝已完成。")}>${actionState.busy === "filtered-reject" ? "处理中..." : "按当前筛选结果批量拒绝"}</button>
+        <button class="btn secondary" type="button" disabled=${!(summary.ProductCount || 0) || actionState.busy === "filtered-promote"} onClick=${() => filteredProductAction("/api/pim/admin/source/products/batch-promote-filtered", {}, `确认将当前筛选结果 ${summary.ProductCount || 0} 个商品加入发布队列吗？`, "filtered-promote", "按当前筛选结果批量加入发布队列已完成。")}>${actionState.busy === "filtered-promote" ? "处理中..." : "按当前筛选结果加入发布队列"}</button>
+        <button class="btn secondary" type="button" disabled=${!(summary.ProductCount || 0) || actionState.busy === "filtered-promote-sync"} onClick=${() => filteredProductAction("/api/pim/admin/source/products/batch-promote-sync-filtered", {}, `确认将当前筛选结果 ${summary.ProductCount || 0} 个商品加入发布队列并发布到 Backend 吗？`, "filtered-promote-sync", "按当前筛选结果批量发布已完成。")}>${actionState.busy === "filtered-promote-sync" ? "处理中..." : "按当前筛选结果加入发布队列并发布"}</button>
+        <button class="btn secondary" type="button" disabled=${!(summary.ProductCount || 0) || actionState.busy === "filtered-retry-sync"} onClick=${() => filteredProductAction("/api/pim/admin/source/products/batch-retry-sync-filtered", {}, `确认重试当前筛选结果 ${summary.ProductCount || 0} 个商品发布到 Backend 吗？`, "filtered-retry-sync", "按当前筛选结果批量重试发布已完成。")}>${actionState.busy === "filtered-retry-sync" ? "处理中..." : "按当前筛选结果重试发布"}</button>
+      </div>
+      <div class="action-row" style="margin-bottom:12px;">
         <button class="btn secondary" type="button" disabled=${!selectedVisibleIDs.length || actionState.busy === "batch-approve"} onClick=${() => batchProductAction("/api/pim/admin/source/products/batch-status", { status: "approved" }, `确认将选中的 ${selectedVisibleIDs.length} 个商品标记为通过吗？`, "batch-approve", "批量更新商品审核状态已完成。")}>${actionState.busy === "batch-approve" ? "处理中..." : "选中项批量通过"}</button>
         <button class="btn secondary" type="button" disabled=${!selectedVisibleIDs.length || actionState.busy === "batch-reject"} onClick=${() => batchProductAction("/api/pim/admin/source/products/batch-status", { status: "rejected" }, `确认拒绝选中的 ${selectedVisibleIDs.length} 个商品吗？`, "batch-reject", "批量更新商品审核状态已完成。")}>${actionState.busy === "batch-reject" ? "处理中..." : "选中项批量拒绝"}</button>
-        <button class="btn secondary" type="button" disabled=${!selectedVisibleIDs.length || actionState.busy === "batch-promote"} onClick=${() => batchProductAction("/api/pim/admin/source/products/batch-promote", {}, `确认桥接选中的 ${selectedVisibleIDs.length} 个商品吗？`, "batch-promote", "批量桥接已完成。")}>${actionState.busy === "batch-promote" ? "处理中..." : "选中项批量桥接"}</button>
-        <button class="btn secondary" type="button" disabled=${!selectedVisibleIDs.length || actionState.busy === "batch-promote-sync"} onClick=${() => batchProductAction("/api/pim/admin/source/products/batch-promote-sync", {}, `确认桥接并同步选中的 ${selectedVisibleIDs.length} 个商品吗？`, "batch-promote-sync", "批量桥接并同步已完成。")}>${actionState.busy === "batch-promote-sync" ? "处理中..." : "选中项批量桥接并同步"}</button>
-        <button class="btn secondary" type="button" disabled=${!selectedVisibleIDs.length || actionState.busy === "batch-retry-sync"} onClick=${() => batchProductAction("/api/pim/admin/source/products/batch-retry-sync", {}, `确认重试选中的 ${selectedVisibleIDs.length} 个商品同步吗？`, "batch-retry-sync", "批量重试同步已完成。")}>${actionState.busy === "batch-retry-sync" ? "处理中..." : "选中项批量重试同步"}</button>
+        <button class="btn secondary" type="button" disabled=${!selectedVisibleIDs.length || actionState.busy === "batch-promote"} onClick=${() => batchProductAction("/api/pim/admin/source/products/batch-promote", {}, `确认将选中的 ${selectedVisibleIDs.length} 个商品加入发布队列吗？`, "batch-promote", "批量加入发布队列已完成。")}>${actionState.busy === "batch-promote" ? "处理中..." : "选中项批量加入发布队列"}</button>
+        <button class="btn secondary" type="button" disabled=${!selectedVisibleIDs.length || actionState.busy === "batch-promote-sync"} onClick=${() => batchProductAction("/api/pim/admin/source/products/batch-promote-sync", {}, `确认将选中的 ${selectedVisibleIDs.length} 个商品加入发布队列并发布到 Backend 吗？`, "batch-promote-sync", "批量加入发布队列并发布已完成。")}>${actionState.busy === "batch-promote-sync" ? "处理中..." : "选中项批量加入发布队列并发布"}</button>
+        <button class="btn secondary" type="button" disabled=${!selectedVisibleIDs.length || actionState.busy === "batch-retry-sync"} onClick=${() => batchProductAction("/api/pim/admin/source/products/batch-retry-sync", {}, `确认重试选中的 ${selectedVisibleIDs.length} 个商品发布到 Backend 吗？`, "batch-retry-sync", "批量重试发布已完成。")}>${actionState.busy === "batch-retry-sync" ? "处理中..." : "选中项批量重试发布"}</button>
         ${selectedVisibleIDs.length ? html`<button class="btn secondary" type="button" onClick=${() => setSelectedIDs([])}>清空选择</button>` : null}
       </div>
-      <div class="table-wrap section"><table><thead><tr><th><input type="checkbox" checked=${allVisibleSelected} onChange=${toggleSelectAll} /></th><th>商品</th><th>分类 / 单位</th><th>审核</th><th>桥接</th><th>动作</th></tr></thead><tbody>
+      <div class="table-wrap section"><table><thead><tr><th><input type="checkbox" checked=${allVisibleSelected} onChange=${toggleSelectAll} /></th><th>商品</th><th>发布分类 / 观察到分类</th><th>审核</th><th>发布队列</th><th>动作</th></tr></thead><tbody>
         ${products.length ? products.map((item) => html`
           <tr>
             <td><input type="checkbox" checked=${selectedVisibleIDs.includes(item.ID || "")} onChange=${() => toggleSelected(item.ID || "")} /></td>
             <td><strong>${item.Name || "-"}</strong><div class="small">${item.ProductID || "-"}</div></td>
-            <td class="small">${item.CategoryPath || "-"}<br />${item.UnitCount || 0} 个单位 / ${item.HasMultiUnit ? "多单位" : "单单位"}</td>
+            <td class="small">
+              <div><strong>发布分类：</strong>${item.CategoryPath || "-"}</div>
+              <div style="margin-top:4px;"><strong>观察到分类：</strong>${(item.ObservedCategoryPaths && item.ObservedCategoryPaths.length) ? item.ObservedCategoryPaths.join("；") : "-"}</div>
+              <div style="margin-top:4px;">${item.UnitCount || 0} 个单位 / ${item.HasMultiUnit ? "多单位" : "单单位"}</div>
+            </td>
             <td><${StatusBadge} label=${item.ReviewStatus || "-"} currentTone=${tone(item.ReviewStatus)} /></td>
             <td><${StatusBadge} label=${(item.Bridge && item.Bridge.SyncStatus) || (item.Bridge && item.Bridge.Linked ? "linked" : "unlinked")} currentTone=${tone((item.Bridge && item.Bridge.SyncStatus) || (item.Bridge && item.Bridge.Linked ? "warning" : "error"))} /></td>
             <td>
               <div class="action-row">
                 <a class="btn secondary" href=${`/_/mrtang-admin/source/products/detail?id=${encodeURIComponent(item.ID || "")}&returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`}>详情</a>
                 <button class="btn secondary" type="button" disabled=${actionState.busy === `approve:${item.ID || ""}`} onClick=${() => productAction("/api/pim/admin/source/products/status", { id: item.ID || "", status: "approved" }, "确认将这个商品标记为通过吗？", `approve:${item.ID || ""}`, "商品审核状态已更新。")}>${actionState.busy === `approve:${item.ID || ""}` ? "处理中..." : "通过"}</button>
-                <button class="btn secondary" type="button" disabled=${actionState.busy === `promote:${item.ID || ""}`} onClick=${() => productAction("/api/pim/admin/source/products/promote", { id: item.ID || "" }, "确认桥接这个商品吗？", `promote:${item.ID || ""}`, "商品已桥接到同步链。")}>${actionState.busy === `promote:${item.ID || ""}` ? "处理中..." : "桥接"}</button>
-                ${(item.Bridge && (item.Bridge.SyncStatus || "").toLowerCase() === "error") ? html`<button class="btn secondary" type="button" disabled=${actionState.busy === `retry:${item.ID || ""}`} onClick=${() => productAction("/api/pim/admin/source/products/retry-sync", { id: item.ID || "" }, "确认重试这个商品的同步吗？", `retry:${item.ID || ""}`, "已触发商品同步重试。")}>${actionState.busy === `retry:${item.ID || ""}` ? "处理中..." : "重试同步"}</button>` : null}
+                <button class="btn secondary" type="button" disabled=${actionState.busy === `promote:${item.ID || ""}`} onClick=${() => productAction("/api/pim/admin/source/products/promote", { id: item.ID || "" }, "确认将这个商品加入发布队列吗？", `promote:${item.ID || ""}`, "商品已加入发布队列。")}>${actionState.busy === `promote:${item.ID || ""}` ? "处理中..." : "加入发布队列"}</button>
+                ${(item.Bridge && (item.Bridge.SyncStatus || "").toLowerCase() === "error") ? html`<button class="btn secondary" type="button" disabled=${actionState.busy === `retry:${item.ID || ""}`} onClick=${() => productAction("/api/pim/admin/source/products/retry-sync", { id: item.ID || "" }, "确认重试这个商品发布到 Backend 吗？", `retry:${item.ID || ""}`, "已触发商品发布重试。")}>${actionState.busy === `retry:${item.ID || ""}` ? "处理中..." : "重试发布"}</button>` : null}
               </div>
             </td>
           </tr>
         `) : html`<tr><td colspan="6" class="small">当前筛选下没有商品。</td></tr>`}
       </tbody></table></div>
+      <div class="action-row" style="align-items:center; justify-content:space-between;">
+        <div class="small">第 ${currentProductPage} / ${productPages} 页，共 ${summary.ProductCount || 0} 条当前筛选结果。跨页全选请使用“按当前筛选结果...”按钮。</div>
+        <${Pagination}
+          basePath="/_/mrtang-admin/source/products"
+          pageParam="productPage"
+          currentPage=${currentProductPage}
+          totalPages=${productPages}
+          params=${{
+            productStatus: filter.ProductStatus || "",
+            syncState: filter.SyncState || "",
+            categoryKey: filter.CategoryKey || "",
+            q: filter.Query || "",
+            pageSize: filter.PageSize || 24,
+          }}
+        />
+      </div>
     </div></div></section>
   `;
 }
@@ -1935,7 +2423,11 @@ function SourceProductDetailPage() {
           <${StatusBadge} label=${detail.ReviewStatus || "-"} currentTone=${tone(detail.ReviewStatus)} />
           <span class="pill">sourceType: <code>${detail.SourceType || "-"}</code></span>
         </div>
-        <div class="small" style="margin-top:12px;">${detail.CategoryPath || "-"}</div>
+        <div class="small" style="margin-top:12px;"><strong>发布分类：</strong>${detail.CategoryPath || "-"}</div>
+        <div class="small" style="margin-top:8px;"><strong>观察到分类路径</strong></div>
+        <pre>${detail.ObservedCategoryPaths || "-"}</pre>
+        <div class="small" style="margin-top:8px;"><strong>观察到分类键</strong></div>
+        <pre>${detail.ObservedCategoryKeys || "-"}</pre>
         <div class="action-row">
           <a class="btn secondary" href=${backHref}>返回上一页</a>
           <input type="text" value=${approveNote} onInput=${(event) => setApproveNote(event.currentTarget.value)} placeholder="审核备注" />
@@ -1945,8 +2437,8 @@ function SourceProductDetailPage() {
         </div>
       </div></section>
       <section class="card"><div class="card-body">
-        <div class="card-kicker">桥接状态</div>
-        <h2 class="card-title">同步链状态</h2>
+        <div class="card-kicker">发布队列状态</div>
+        <h2 class="card-title">发布链状态</h2>
         <div class="inline-pills">
           <${StatusBadge} label=${(detail.Bridge && detail.Bridge.SyncStatus) || (detail.Bridge && detail.Bridge.Linked ? "linked" : "unlinked")} currentTone=${tone((detail.Bridge && detail.Bridge.SyncStatus) || (detail.Bridge && detail.Bridge.Linked ? "warning" : "error"))} />
           <span class="pill">supplierRecord: <code>${(detail.Bridge && detail.Bridge.SupplierRecordID) || "-"}</code></span>
@@ -1954,9 +2446,9 @@ function SourceProductDetailPage() {
         </div>
         ${(detail.Bridge && detail.Bridge.LastSyncError) ? html`<div class="flash error" style="margin-top:14px;">${detail.Bridge.LastSyncError}</div>` : null}
         <div class="action-row" style="margin-top:12px;">
-          <button class="btn secondary" type="button" disabled=${actionState.busy === "promote"} onClick=${() => detailAction("/api/pim/admin/source/products/promote", { id: detail.ID || "" }, "确认桥接这个商品吗？", "promote", "商品已桥接到同步链。")}>${actionState.busy === "promote" ? "处理中..." : "桥接"}</button>
-          <button class="btn secondary" type="button" disabled=${actionState.busy === "promote-sync"} onClick=${() => detailAction("/api/pim/admin/source/products/promote-sync", { id: detail.ID || "" }, "确认桥接并同步这个商品吗？", "promote-sync", "商品已桥接并同步到后端。")}>${actionState.busy === "promote-sync" ? "处理中..." : "桥接并同步"}</button>
-          <button class="btn secondary" type="button" disabled=${actionState.busy === "retry-sync"} onClick=${() => detailAction("/api/pim/admin/source/products/retry-sync", { id: detail.ID || "" }, "确认重试这个商品的同步吗？", "retry-sync", "已触发商品同步重试。")}>${actionState.busy === "retry-sync" ? "处理中..." : "重试同步"}</button>
+          <button class="btn secondary" type="button" disabled=${actionState.busy === "promote"} onClick=${() => detailAction("/api/pim/admin/source/products/promote", { id: detail.ID || "" }, "确认将这个商品加入发布队列吗？", "promote", "商品已加入发布队列。")}>${actionState.busy === "promote" ? "处理中..." : "加入发布队列"}</button>
+          <button class="btn secondary" type="button" disabled=${actionState.busy === "promote-sync"} onClick=${() => detailAction("/api/pim/admin/source/products/promote-sync", { id: detail.ID || "" }, "确认将这个商品加入发布队列并发布到 Backend 吗？", "promote-sync", "商品已加入发布队列并发布到 Backend。")}>${actionState.busy === "promote-sync" ? "处理中..." : "加入发布队列并发布"}</button>
+          <button class="btn secondary" type="button" disabled=${actionState.busy === "retry-sync"} onClick=${() => detailAction("/api/pim/admin/source/products/retry-sync", { id: detail.ID || "" }, "确认重试这个商品发布到 Backend 吗？", "retry-sync", "已触发商品发布重试。")}>${actionState.busy === "retry-sync" ? "处理中..." : "重试发布到 Backend"}</button>
         </div>
       </div></section>
     </section>
@@ -2134,15 +2626,17 @@ function App() {
   const currentRoute = routePath(currentPath);
   return html`
     <${AppLayout}
-      title=${currentRoute === "target-sync" ? "抓取入库" : currentRoute === "source" ? "源数据" : currentRoute === "source-categories" ? "源数据分类" : currentRoute === "source-products" ? "源数据商品" : currentRoute === "source-product-detail" ? "商品详情" : currentRoute === "source-assets" ? "源数据图片" : currentRoute === "source-asset-detail" ? "图片详情" : currentRoute === "source-asset-jobs" ? "图片任务" : currentRoute === "source-asset-job-detail" ? "图片任务详情" : currentRoute === "procurement" ? "采购" : currentRoute === "procurement-detail" ? "采购详情" : "总览"}
+      title=${currentRoute === "backend-release" ? "发布准备" : currentRoute === "target-sync" ? "抓取入库" : currentRoute === "source" ? "源数据" : currentRoute === "source-categories" ? "源数据分类" : currentRoute === "source-products" ? "源数据商品" : currentRoute === "source-product-detail" ? "商品详情" : currentRoute === "source-assets" ? "源数据图片" : currentRoute === "source-asset-detail" ? "图片详情" : currentRoute === "source-asset-jobs" ? "图片任务" : currentRoute === "source-asset-job-detail" ? "图片任务详情" : currentRoute === "procurement" ? "采购" : currentRoute === "procurement-detail" ? "采购详情" : "总览"}
       subtitle=${currentRoute === "target-sync"
-        ? "先开页面，再异步拉抓取摘要、来源矩阵和最近写操作；raw 慢时也只影响局部。"
+        ? "先开页面，再异步拉抓取摘要、来源矩阵和最近写操作；“当前源站结果”只代表本次实际读到的数据。"
+        : currentRoute === "backend-release"
+          ? "先看 Vendure 字段准备度、分类映射和商品 payload 预览，再决定何时正式同步。"
         : currentRoute === "source"
           ? "先看 source 模块概览，再分流到商品、图片和日志；数据异步加载，不阻塞整页。"
           : currentRoute === "source-categories"
             ? "分类树抓取入库结果和已落库分类都在这里查看；页面先开壳，再异步加载。"
           : currentRoute === "source-products"
-            ? "商品审核、桥接、同步重试改成前端异步列表；现有动作端点继续复用。"
+            ? "商品审核、加入发布队列、发布重试改成前端异步列表；现有动作端点继续复用。"
             : currentRoute === "source-product-detail"
               ? "详情页也切到前端异步渲染，动作端点继续复用现有 POST 路由。"
             : currentRoute === "source-assets"
@@ -2162,6 +2656,8 @@ function App() {
     >
       ${currentRoute === "target-sync"
         ? html`<${TargetSyncPage} />`
+        : currentRoute === "backend-release"
+          ? html`<${BackendReleasePage} />`
         : currentRoute === "source"
           ? html`<${SourceModulePage} />`
         : currentRoute === "source-categories"

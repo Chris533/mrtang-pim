@@ -225,7 +225,7 @@ func renderMrtangAdminHTML(pageData mrtangAdminPageData) string {
       {{else}}
       <div class="metric-grid">
         <div class="stat"><div class="eyebrow">Categories</div><div class="metric">{{.SourceCapture.CategoryCount}}</div></div>
-        <div class="stat"><div class="eyebrow">Products</div><div class="metric">{{.SourceCapture.ProductCount}}</div><div class="desc">{{.SourceCapture.ImportedCount}} imported / {{.SourceCapture.ApprovedCount}} approved / {{.SourceCapture.PromotedCount}} promoted</div></div>
+        <div class="stat"><div class="eyebrow">商品</div><div class="metric">{{.SourceCapture.ProductCount}}</div><div class="desc">{{.SourceCapture.ImportedCount}} 待审核 / {{.SourceCapture.ApprovedCount}} 待加入发布队列 / {{.SourceCapture.PromotedCount}} 已加入发布队列</div></div>
         <div class="stat"><div class="eyebrow">Assets</div><div class="metric">{{.SourceCapture.AssetCount}}</div><div class="desc">{{.SourceCapture.ProcessedAssetCount}} processed / {{.SourceCapture.FailedAssetCount}} failed</div></div>
         <div class="stat"><div class="eyebrow">Bridge</div><div class="metric">{{.SourceCapture.LinkedCount}}</div><div class="desc">{{.SourceCapture.SyncedCount}} synced / {{.SourceCapture.SyncErrorCount}} error</div></div>
       </div>
@@ -266,7 +266,7 @@ func renderMrtangAdminHTML(pageData mrtangAdminPageData) string {
         <form method="post" action="/_/mrtang-admin/source/import"><input type="hidden" name="scope" value="products"><button type="submit" class="link-card" style="width:100%; text-align:left; cursor:pointer;"><div class="eyebrow">Import</div><div class="title">仅刷新商品与规格</div><div class="desc">更新商品、规格、多单位价格到 <code>source_products</code>。</div></button></form>
         <form method="post" action="/_/mrtang-admin/source/import"><input type="hidden" name="scope" value="assets"><button type="submit" class="link-card" style="width:100%; text-align:left; cursor:pointer;"><div class="eyebrow">Import</div><div class="title">仅刷新图片资产</div><div class="desc">更新封面、轮播、详情图到 <code>source_assets</code>。</div></button></form>
         <form method="post" action="/_/mrtang-admin/source/assets/process-pending"><button type="submit" class="link-card" style="width:100%; text-align:left; cursor:pointer;"><div class="eyebrow">AI Assets</div><div class="title">批量处理待处理图片</div><div class="desc">对 <code>source_assets</code> 中 pending/failed 的图片执行 AI 处理。</div></button></form>
-        <form method="post" action="/_/mrtang-admin/source/products/promote-approved"><button type="submit" class="link-card" style="width:100%; text-align:left; cursor:pointer;"><div class="eyebrow">Approve Bridge</div><div class="title">推送已审批商品到同步链</div><div class="desc">把 <code>source_products.review_status=approved</code> 的商品桥接到 <code>supplier_products</code>。</div></button></form>
+        <form method="post" action="/_/mrtang-admin/source/products/promote-approved"><button type="submit" class="link-card" style="width:100%; text-align:left; cursor:pointer;"><div class="eyebrow">加入发布队列</div><div class="title">推送已审批商品进入发布链</div><div class="desc">把 <code>source_products.review_status=approved</code> 的商品加入发布队列，写入 <code>supplier_products</code>。</div></button></form>
         <form method="post" action="/_/mrtang-admin/supplier-products/sync"><button type="submit" class="link-card" style="width:100%; text-align:left; cursor:pointer;"><div class="eyebrow">Sync</div><div class="title">同步已批准商品到 Backend</div><div class="desc">触发现有 <code>supplier_products -> synced</code> 同步流程。</div></button></form>
       </div>
       <div class="grid">

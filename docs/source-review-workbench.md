@@ -28,7 +28,7 @@
 - 承接 `target-sync` 抓取入库后的变更结果
 - 在 `source_products` 中审核商品
 - 在 `source_assets` 中处理图片
-- 把已审核商品桥接到 `supplier_products`
+- 把已审核商品加入发布队列，写入 `supplier_products`
 - 触发同步到 backend / Vendure
 
 这条链路不负责：
@@ -61,11 +61,11 @@
 - `imported`
   已导入，待人工审核
 - `approved`
-  已审核通过，待桥接到 `supplier_products`
+  已审核通过，待加入发布队列并写入 `supplier_products`
 - `promoted`
-  已桥接到 `supplier_products`
+  已加入发布队列，并已写入 `supplier_products`
 - `rejected`
-  人工拒绝，不进入同步链
+  人工拒绝，不进入发布链
 
 推荐流转：
 
@@ -156,7 +156,7 @@
 4. 审核通过后执行 `Approve`
 5. 对待处理或失败图片优先在 `/_/mrtang-admin/source/assets` 执行 `Process` 或 `批量重处理失败图片`
 6. 如果需要先把原图固定保存到本地，再在 `/_/mrtang-admin/source/assets` 执行 `下载原图` 或 `批量下载待下载原图`
-7. 对确认可上线的商品执行 `Promote` 或 `Promote & Sync`
+7. 对确认可上线的商品执行“加入发布队列”或“加入发布队列并发布”
 8. 回到列表确认 bridge / sync 状态
 
 ## 列表页能力
@@ -170,8 +170,8 @@
 - 批量操作
   - `选中项批量通过`
   - `选中项批量拒绝`
-  - `选中项批量桥接`
-  - `选中项批量桥接并同步`
+  - `选中项批量加入发布队列`
+  - `选中项批量加入发布队列并发布`
   - `选中项批量重试同步`
 - 分页
 - 失败同步重试
@@ -239,8 +239,8 @@
 
 - `Approve`
 - `Reject`
-- `Promote`
-- `Promote & Sync`
+- `加入发布队列`
+- `加入发布队列并发布`
 - `Retry Sync`
 
 ### 图片详情
@@ -277,14 +277,14 @@
 
 - `重新执行`
 
-## 和正式同步链的关系
+## 和正式发布链的关系
 
 `source_products` 是审核前台。
 
 真正进入 backend / Vendure 的仍然是 `supplier_products`：
 
 1. `source_products` 审核通过
-2. `Promote` 写入或更新 `supplier_products`
+2. “加入发布队列”会写入或更新 `supplier_products`
 3. `supplier_products` 进入既有同步流程
 4. 同步结果回写到 source workbench 的 bridge / sync 展示区
 
@@ -294,7 +294,7 @@
 
 1. `/_/mrtang-admin` 能导入 source 数据
 2. `/_/mrtang-admin/source`、`products`、`assets`、`asset-jobs`、`logs` 能正常打开
-3. products 页批量 `Approve / Promote / Retry Sync` 不报错
+3. products 页批量“通过 / 加入发布队列 / 重试发布”不报错
 4. assets 页批量 `Process / Reprocess` 不报错
 5. 商品详情和图片详情页可打开
 6. `go test ./...` 通过

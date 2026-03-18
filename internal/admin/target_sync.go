@@ -62,22 +62,22 @@ func RenderTargetSyncHTML(cfg config.Config, summary pim.TargetSyncSummary, flas
           <form method="post" action="/_/mrtang-admin/target-sync/jobs/ensure">
             <input type="hidden" name="entityType" value="category_tree">
             <input type="hidden" name="scopeKey" value="">
-            <button type="submit" style="width:100%; text-align:left;">登记全量分类任务</button>
+            <button type="submit" style="width:100%; text-align:left;">保存当前源站分类抓取任务</button>
           </form>
-          <form method="post" action="/_/mrtang-admin/target-sync/jobs/run" data-confirm="确认执行全量分类抓取入库吗？">
+          <form method="post" action="/_/mrtang-admin/target-sync/jobs/run" data-confirm="确认按当前源站结果抓取分类入库吗？">
             <input type="hidden" name="entityType" value="category_tree">
             <input type="hidden" name="scopeKey" value="">
-            <button type="submit" style="width:100%; text-align:left;">执行全量分类抓取入库</button>
+            <button type="submit" style="width:100%; text-align:left;">按当前源站结果抓分类</button>
           </form>
-          <form method="post" action="/_/mrtang-admin/target-sync/jobs/run" data-confirm="确认执行全量商品规格抓取入库吗？">
+          <form method="post" action="/_/mrtang-admin/target-sync/jobs/run" data-confirm="确认按当前源站结果抓取商品规格入库吗？">
             <input type="hidden" name="entityType" value="products">
             <input type="hidden" name="scopeKey" value="">
-            <button type="submit" style="width:100%; text-align:left;">执行全量商品规格抓取入库</button>
+            <button type="submit" style="width:100%; text-align:left;">按当前源站结果抓商品规格</button>
           </form>
-          <form method="post" action="/_/mrtang-admin/target-sync/jobs/run" data-confirm="确认执行全量图片抓取入库吗？">
+          <form method="post" action="/_/mrtang-admin/target-sync/jobs/run" data-confirm="确认按当前源站结果抓取图片入库吗？">
             <input type="hidden" name="entityType" value="assets">
             <input type="hidden" name="scopeKey" value="">
-            <button type="submit" style="width:100%; text-align:left;">执行全量图片抓取入库</button>
+            <button type="submit" style="width:100%; text-align:left;">按当前源站结果抓图片</button>
           </form>
         </div>
       </div>
@@ -123,9 +123,9 @@ func RenderTargetSyncHTML(cfg config.Config, summary pim.TargetSyncSummary, flas
             <div class="small" style="margin-top:8px;">新增或变更后的商品与规格会自动回到 imported。</div>
           </a>
           <a class="action" href="/_/mrtang-admin/source/products?productStatus=approved">
-            <div class="eyebrow">待桥接商品</div>
+            <div class="eyebrow">待加入发布队列商品</div>
             <div style="font-size:24px; font-weight:800; margin-top:8px;">{{.Summary.SourceApprovedCount}}</div>
-            <div class="small" style="margin-top:8px;">审核通过后继续桥接到 supplier_products。</div>
+            <div class="small" style="margin-top:8px;">审核通过后加入发布队列，再进入 supplier_products 和 backend 发布链。</div>
           </a>
           <a class="action" href="/_/mrtang-admin/source/assets?assetStatus=pending">
             <div class="eyebrow">待处理图片</div>

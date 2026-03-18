@@ -6,3 +6,4 @@ docs/rr/
 cmd/pim/__debug_bin*.exe
 .adminapp-vendor/
 adminapp_vendor/
+.gocache/

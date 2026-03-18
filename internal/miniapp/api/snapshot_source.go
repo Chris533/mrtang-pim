@@ -76,6 +76,10 @@ func (s *SnapshotSource) FetchDataset(ctx context.Context) (*model.Dataset, erro
 	return &data, nil
 }
 
+func (s *SnapshotSource) FetchTargetSyncDataset(ctx context.Context, entityType string, scopeKey string) (*model.Dataset, error) {
+	return s.FetchDataset(ctx)
+}
+
 func (s *SnapshotSource) loadHomepageSnapshot() (model.Dataset, error) {
 	info, err := os.Stat(s.homepagePath)
 	if err != nil {

@@ -105,7 +105,7 @@ func RenderSourceModuleHTML(summary pim.SourceReviewWorkbenchSummary, flashMessa
     <section class="hero">
       <div class="card">
         <div class="eyebrow">源数据模块</div>
-        <h2>目标分类、商品、图片的审核、桥接与发布入口</h2>
+        <h2>目标分类、商品、图片的审核、加入发布队列与发布入口</h2>
         <p class="lead">这个模块只承担 source 相关的管理职责。首页看板负责总览，这里负责 source 维度的待办、异常、最近动作和模块分流。</p>
       </div>
       <div class="card">
@@ -121,17 +121,17 @@ func RenderSourceModuleHTML(summary pim.SourceReviewWorkbenchSummary, flashMessa
           </a>
           <a class="link-card" href="/_/mrtang-admin/source/products?syncState=error">
             <div class="title">同步失败</div>
-            <div class="desc">{{.Summary.SyncErrorCount}} 条已桥接商品需要重试同步</div>
+            <div class="desc">{{.Summary.SyncErrorCount}} 条已加入发布队列商品需要重试发布</div>
           </a>
         </div>
       </div>
     </section>
 
     <section class="metrics" style="margin-top:14px;">
-      <div class="stat"><div class="eyebrow">商品</div><div class="metric">{{.Summary.ProductCount}}</div><div class="small">{{.Summary.ImportedCount}} 待审核 / {{.Summary.ApprovedCount}} 待桥接 / {{.Summary.PromotedCount}} 已桥接</div></div>
+      <div class="stat"><div class="eyebrow">商品</div><div class="metric">{{.Summary.ProductCount}}</div><div class="small">{{.Summary.ImportedCount}} 待审核 / {{.Summary.ApprovedCount}} 待加入发布队列 / {{.Summary.PromotedCount}} 已加入发布队列</div></div>
       <div class="stat"><div class="eyebrow">图片</div><div class="metric">{{.Summary.AssetCount}}</div><div class="small">{{.Summary.AssetPending}} 待处理 / {{.Summary.AssetProcessed}} 已处理 / {{.Summary.AssetFailed}} 失败</div></div>
-      <div class="stat"><div class="eyebrow">桥接</div><div class="metric">{{.Summary.LinkedCount}}</div><div class="small">{{.Summary.UnlinkedCount}} 未桥接 / {{.Summary.SyncedCount}} 已同步</div></div>
-      <div class="stat"><div class="eyebrow">同步异常</div><div class="metric">{{.Summary.SyncErrorCount}}</div><div class="small">{{.Summary.FailedLinkedCount}} 条桥接记录同步失败</div></div>
+      <div class="stat"><div class="eyebrow">发布队列</div><div class="metric">{{.Summary.LinkedCount}}</div><div class="small">{{.Summary.UnlinkedCount}} 未进入发布队列 / {{.Summary.SyncedCount}} 已同步</div></div>
+      <div class="stat"><div class="eyebrow">同步异常</div><div class="metric">{{.Summary.SyncErrorCount}}</div><div class="small">{{.Summary.FailedLinkedCount}} 条已入队记录同步失败</div></div>
       <div class="stat"><div class="eyebrow">待推进</div><div class="metric">{{.Summary.ReadyToPromoteCount}}</div><div class="small">{{.Summary.ReadyToReviewCount}} 待审核 / {{.Summary.ReadyToSyncCount}} 待同步</div></div>
     </section>
 
@@ -139,7 +139,7 @@ func RenderSourceModuleHTML(summary pim.SourceReviewWorkbenchSummary, flashMessa
       <a class="link-card" href="/_/mrtang-admin/source/products">
         <div class="eyebrow">商品</div>
         <div class="title">商品管理页</div>
-        <div class="desc">筛选、分页、批量通过、桥接、桥接并同步、重试同步。</div>
+        <div class="desc">筛选、分页、批量通过、加入发布队列、发布到 Backend、重试发布。</div>
       </a>
       <a class="link-card" href="/_/mrtang-admin/source/assets?assetStatus=pending">
         <div class="eyebrow">图片</div>
@@ -187,7 +187,7 @@ func RenderSourceModuleHTML(summary pim.SourceReviewWorkbenchSummary, flashMessa
         <div class="list">
           <div class="list-item">
             <div><strong>待审批商品</strong> <span class="badge warning">{{.Summary.ReadyToReviewCount}}</span></div>
-            <div class="small">优先处理待审核商品，避免源数据到供应链的桥接积压。</div>
+            <div class="small">优先处理待审核商品，避免源数据进入发布队列前积压。</div>
           </div>
           <div class="list-item">
             <div><strong>失败图片</strong> <span class="badge danger">{{.Summary.AssetFailed}}</span></div>
@@ -195,7 +195,7 @@ func RenderSourceModuleHTML(summary pim.SourceReviewWorkbenchSummary, flashMessa
           </div>
           <div class="list-item">
             <div><strong>同步失败</strong> <span class="badge danger">{{.Summary.SyncErrorCount}}</span></div>
-            <div class="small">已桥接商品同步失败时，优先去商品页重试同步。</div>
+            <div class="small">已加入发布队列商品同步失败时，优先去商品页重试发布。</div>
           </div>
         </div>
       </div>

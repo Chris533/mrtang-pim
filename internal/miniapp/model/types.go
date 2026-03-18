@@ -190,6 +190,7 @@ type CategoryNode struct {
 	Label       string         `json:"label"`
 	ImageURL    string         `json:"imageUrl,omitempty"`
 	PathName    string         `json:"pathName,omitempty"`
+	PathCode    string         `json:"pathCode,omitempty"`
 	Depth       int            `json:"depth"`
 	Sort        int            `json:"sort"`
 	HasChildren bool           `json:"hasChildren"`
@@ -201,6 +202,8 @@ type CategorySection struct {
 	Title        string            `json:"title"`
 	CategoryKey  string            `json:"categoryKey"`
 	CategoryPath string            `json:"categoryPath"`
+	SubjectPath  string            `json:"subjectPath,omitempty"`
+	CategoryKeys []string          `json:"categoryKeys,omitempty"`
 	RequestBody  map[string]any    `json:"requestBody"`
 	Products     []HomepageProduct `json:"products"`
 }
@@ -235,16 +238,21 @@ type ProductCoverageSummary struct {
 }
 
 type ProductPage struct {
-	ID             string          `json:"id"`
-	SpuID          string          `json:"spuId"`
-	SkuID          string          `json:"skuId"`
-	SourceType     string          `json:"sourceType"`
-	SourceSections []string        `json:"sourceSections,omitempty"`
-	Summary        HomepageProduct `json:"summary"`
-	Detail         ProductDetail   `json:"detail"`
-	Pricing        ProductPricing  `json:"pricing"`
-	Package        ProductPackage  `json:"package"`
-	Context        ProductContext  `json:"context"`
+	ID                    string          `json:"id"`
+	SpuID                 string          `json:"spuId"`
+	SkuID                 string          `json:"skuId"`
+	SourceType            string          `json:"sourceType"`
+	SourceSections        []string        `json:"sourceSections,omitempty"`
+	CategoryKey           string          `json:"categoryKey,omitempty"`
+	CategoryPath          string          `json:"categoryPath,omitempty"`
+	CategoryKeys          []string        `json:"categoryKeys,omitempty"`
+	ObservedCategoryKeys  []string        `json:"observedCategoryKeys,omitempty"`
+	ObservedCategoryPaths []string        `json:"observedCategoryPaths,omitempty"`
+	Summary               HomepageProduct `json:"summary"`
+	Detail                ProductDetail   `json:"detail"`
+	Pricing               ProductPricing  `json:"pricing"`
+	Package               ProductPackage  `json:"package"`
+	Context               ProductContext  `json:"context"`
 }
 
 type ProductDetail struct {

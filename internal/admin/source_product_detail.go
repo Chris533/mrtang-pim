@@ -21,7 +21,7 @@ func RenderSourceProductDetailHTML(detail pim.SourceProductDetail) string {
 		BackHref:   "/_/source-review-workbench",
 		ActionBase: "/_/source-review-workbench/product",
 		ReturnTo:   "/_/source-review-workbench",
-	}, "源数据商品详情", "完整商品详情、规格、多单位和桥接状态。")
+	}, "源数据商品详情", "完整商品详情、规格、多单位和发布队列状态。")
 }
 
 func RenderSourceProductDetailPageHTML(detail pim.SourceProductDetail, backHref string, actionBase string, returnTo string) string {
@@ -79,7 +79,7 @@ func renderSourceProductDetailHTML(pageData sourceProductDetailPageData, subtitl
           <p class="small">{{.Detail.CategoryPath}}</p>
           {{if .Detail.ReviewedAt}}<p class="small">审核信息: {{actorLabel .Detail.ReviewedByName .Detail.ReviewedByMail}} / {{.Detail.ReviewedAt}}</p>{{end}}
           {{if .Detail.ReviewNote}}<p class="small">审核备注: {{.Detail.ReviewNote}}</p>{{end}}
-          <p class="small">bridge: {{if .Detail.Bridge.Linked}}<span class="status">{{syncLabel .Detail.Bridge.SyncStatus .Detail.Bridge.Linked}}</span> {{.Detail.Bridge.SupplierRecordID}}{{else}}未桥接{{end}}</p>
+          <p class="small">发布队列: {{if .Detail.Bridge.Linked}}<span class="status">{{syncLabel .Detail.Bridge.SyncStatus .Detail.Bridge.Linked}}</span> {{.Detail.Bridge.SupplierRecordID}}{{else}}未进入发布队列{{end}}</p>
           {{if .Detail.Bridge.VendureProductID}}<p class="small">vendure: {{.Detail.Bridge.VendureProductID}} / {{.Detail.Bridge.VendureVariantID}}</p>{{end}}
           {{if .Detail.Bridge.LastSyncError}}<p class="small">last error: {{.Detail.Bridge.LastSyncError}}</p>{{end}}
           <p class="small"><a href="{{.BackHref}}">返回上一页</a></p>
@@ -98,24 +98,24 @@ func renderSourceProductDetailHTML(pageData sourceProductDetailPageData, subtitl
               <input class="note-input" type="text" name="note" placeholder="驳回原因">
               <button class="danger" type="submit">拒绝</button>
             </form>
-            <form method="post" action="{{.ActionBase}}/promote" class="inline-note" data-confirm="确认桥接这个商品吗？">
+            <form method="post" action="{{.ActionBase}}/promote" class="inline-note" data-confirm="确认将这个商品加入发布队列吗？">
               <input type="hidden" name="id" value="{{.Detail.ID}}">
               <input type="hidden" name="returnTo" value="{{.ReturnTo}}">
-              <input class="note-input" type="text" name="note" placeholder="桥接备注">
-              <button type="submit">桥接</button>
+              <input class="note-input" type="text" name="note" placeholder="入队备注">
+              <button type="submit">加入发布队列</button>
             </form>
-            <form method="post" action="{{.ActionBase}}/promote-sync" class="inline-note" data-confirm="确认桥接并同步这个商品吗？">
+            <form method="post" action="{{.ActionBase}}/promote-sync" class="inline-note" data-confirm="确认将这个商品加入发布队列并发布到 Backend 吗？">
               <input type="hidden" name="id" value="{{.Detail.ID}}">
               <input type="hidden" name="returnTo" value="{{.ReturnTo}}">
               <input class="note-input" type="text" name="note" placeholder="同步备注">
-              <button type="submit">桥接并同步</button>
+              <button type="submit">加入发布队列并发布</button>
             </form>
             {{if and .Detail.Bridge.Linked (eq .Detail.Bridge.SyncStatus "error")}}
-            <form method="post" action="{{.ActionBase}}/retry-sync" class="inline-note" data-confirm="确认重试这个商品的同步吗？">
+            <form method="post" action="{{.ActionBase}}/retry-sync" class="inline-note" data-confirm="确认重试这个商品发布到 Backend 吗？">
               <input type="hidden" name="id" value="{{.Detail.ID}}">
               <input type="hidden" name="returnTo" value="{{.ReturnTo}}">
               <input class="note-input" type="text" name="note" placeholder="重试备注">
-              <button class="warn" type="submit">重试同步</button>
+              <button class="warn" type="submit">重试发布</button>
             </form>
             {{end}}
           </div>

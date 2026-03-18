@@ -31,6 +31,13 @@ func (s *Service) Dataset(ctx context.Context) (*model.Dataset, error) {
 	return s.source.FetchDataset(ctx)
 }
 
+func (s *Service) TargetSyncDataset(ctx context.Context, entityType string, scopeKey string) (*model.Dataset, error) {
+	if syncSource, ok := s.source.(api.TargetSyncSource); ok {
+		return syncSource.FetchTargetSyncDataset(ctx, entityType, scopeKey)
+	}
+	return s.Dataset(ctx)
+}
+
 func (s *Service) RawAuthStatus() model.RawAuthStatus {
 	if statusSource, ok := s.source.(api.StatusSource); ok {
 		return statusSource.RawAuthStatus()

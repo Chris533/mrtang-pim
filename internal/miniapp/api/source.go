@@ -10,6 +10,10 @@ type Source interface {
 	FetchDataset(ctx context.Context) (*model.Dataset, error)
 }
 
+type TargetSyncSource interface {
+	FetchTargetSyncDataset(ctx context.Context, entityType string, scopeKey string) (*model.Dataset, error)
+}
+
 type StatusSource interface {
 	RawAuthStatus() model.RawAuthStatus
 }

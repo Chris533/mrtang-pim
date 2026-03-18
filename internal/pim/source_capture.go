@@ -17,10 +17,11 @@ import (
 )
 
 const (
-	CollectionSourceCategories = "source_categories"
-	CollectionSourceProducts   = "source_products"
-	CollectionSourceAssets     = "source_assets"
-	CollectionSourceActionLogs = "source_action_logs"
+	CollectionSourceCategories       = "source_categories"
+	CollectionSourceCategorySections = "source_category_sections"
+	CollectionSourceProducts         = "source_products"
+	CollectionSourceAssets           = "source_assets"
+	CollectionSourceActionLogs       = "source_action_logs"
 )
 
 type SourceImportSummary struct {
@@ -55,20 +56,22 @@ type SourceBatchSummary struct {
 }
 
 type SourceReviewProduct struct {
-	ID             string             `json:"id"`
-	ProductID      string             `json:"productId"`
-	Name           string             `json:"name"`
-	PreviewURL     string             `json:"previewUrl"`
-	CategoryPath   string             `json:"categoryPath"`
-	ReviewStatus   string             `json:"reviewStatus"`
-	SourceType     string             `json:"sourceType"`
-	UnitCount      int                `json:"unitCount"`
-	HasMultiUnit   bool               `json:"hasMultiUnit"`
-	DefaultPrice   float64            `json:"defaultPrice"`
-	AssetCount     int                `json:"assetCount"`
-	ProcessedCount int                `json:"processedCount"`
-	FailedCount    int                `json:"failedCount"`
-	Bridge         SourceBridgeStatus `json:"bridge"`
+	ID                    string             `json:"id"`
+	ProductID             string             `json:"productId"`
+	Name                  string             `json:"name"`
+	PreviewURL            string             `json:"previewUrl"`
+	CategoryPath          string             `json:"categoryPath"`
+	ObservedCategoryPaths []string           `json:"observedCategoryPaths"`
+	ObservedCategoryKeys  []string           `json:"observedCategoryKeys"`
+	ReviewStatus          string             `json:"reviewStatus"`
+	SourceType            string             `json:"sourceType"`
+	UnitCount             int                `json:"unitCount"`
+	HasMultiUnit          bool               `json:"hasMultiUnit"`
+	DefaultPrice          float64            `json:"defaultPrice"`
+	AssetCount            int                `json:"assetCount"`
+	ProcessedCount        int                `json:"processedCount"`
+	FailedCount           int                `json:"failedCount"`
+	Bridge                SourceBridgeStatus `json:"bridge"`
 }
 
 type SourceReviewAsset struct {
@@ -236,27 +239,29 @@ type SourceActionActor struct {
 }
 
 type SourceProductDetail struct {
-	ID             string             `json:"id"`
-	ProductID      string             `json:"productId"`
-	Name           string             `json:"name"`
-	PreviewURL     string             `json:"previewUrl"`
-	ReviewStatus   string             `json:"reviewStatus"`
-	ReviewNote     string             `json:"reviewNote"`
-	ReviewedByName string             `json:"reviewedByName"`
-	ReviewedByMail string             `json:"reviewedByMail"`
-	ReviewedAt     string             `json:"reviewedAt"`
-	CategoryPath   string             `json:"categoryPath"`
-	SourceType     string             `json:"sourceType"`
-	SummaryJSON    string             `json:"summaryJson"`
-	DetailJSON     string             `json:"detailJson"`
-	PricingJSON    string             `json:"pricingJson"`
-	PackageJSON    string             `json:"packageJson"`
-	ContextJSON    string             `json:"contextJson"`
-	UnitOptions    string             `json:"unitOptionsJson"`
-	OrderUnits     string             `json:"orderUnitsJson"`
-	SourceSections string             `json:"sourceSectionsJson"`
-	Bridge         SourceBridgeStatus `json:"bridge"`
-	RecentActions  []SourceActionLog  `json:"recentActions"`
+	ID                    string             `json:"id"`
+	ProductID             string             `json:"productId"`
+	Name                  string             `json:"name"`
+	PreviewURL            string             `json:"previewUrl"`
+	ReviewStatus          string             `json:"reviewStatus"`
+	ReviewNote            string             `json:"reviewNote"`
+	ReviewedByName        string             `json:"reviewedByName"`
+	ReviewedByMail        string             `json:"reviewedByMail"`
+	ReviewedAt            string             `json:"reviewedAt"`
+	CategoryPath          string             `json:"categoryPath"`
+	ObservedCategoryPaths string             `json:"observedCategoryPathsJson"`
+	ObservedCategoryKeys  string             `json:"observedCategoryKeysJson"`
+	SourceType            string             `json:"sourceType"`
+	SummaryJSON           string             `json:"summaryJson"`
+	DetailJSON            string             `json:"detailJson"`
+	PricingJSON           string             `json:"pricingJson"`
+	PackageJSON           string             `json:"packageJson"`
+	ContextJSON           string             `json:"contextJson"`
+	UnitOptions           string             `json:"unitOptionsJson"`
+	OrderUnits            string             `json:"orderUnitsJson"`
+	SourceSections        string             `json:"sourceSectionsJson"`
+	Bridge                SourceBridgeStatus `json:"bridge"`
+	RecentActions         []SourceActionLog  `json:"recentActions"`
 }
 
 type SourceAssetDetail struct {
@@ -304,15 +309,12 @@ func (s *Service) ImportMiniappSource(ctx context.Context, app core.App, dataset
 
 	if summary.Scope == "all" || summary.Scope == "products" || summary.Scope == "assets" {
 		sections := buildCategorySectionLookup(dataset.CategoryPage.Sections)
+		_, parentByKey := buildCategoryTreeMeta(dataset.CategoryPage.Tree)
 		for _, product := range dataset.ProductPage.Products {
-			categoryKey := firstCategoryKey(product.SourceSections, sections)
-			categoryPath := ""
-			if section, ok := sections[categoryKey]; ok {
-				categoryPath = strings.TrimSpace(section.CategoryPath)
-			}
+			categoryKey, categoryPath, categoryKeys, observedCategoryKeys, observedCategoryPaths := productCategoryInfo(product, sections, parentByKey)
 
 			if summary.Scope == "all" || summary.Scope == "products" {
-				if created, err := s.upsertSourceProduct(ctx, app, product, categoryKey, categoryPath); err != nil {
+				if created, err := s.upsertSourceProduct(ctx, app, product, categoryKey, categoryPath, categoryKeys, observedCategoryKeys, observedCategoryPaths); err != nil {
 					return summary, err
 				} else if created {
 					summary.ProductsCreated++
@@ -371,7 +373,7 @@ func (s *Service) importCategoryNodes(_ context.Context, app core.App, nodes []m
 	return nil
 }
 
-func (s *Service) upsertSourceProduct(_ context.Context, app core.App, product miniappmodel.ProductPage, categoryKey string, categoryPath string) (bool, error) {
+func (s *Service) upsertSourceProduct(_ context.Context, app core.App, product miniappmodel.ProductPage, categoryKey string, categoryPath string, categoryKeys []string, observedCategoryKeys []string, observedCategoryPaths []string) (bool, error) {
 	return upsertByFilter(app, CollectionSourceProducts, "product_id = {:product_id}", dbx.Params{"product_id": product.ID}, func(record *core.Record, created bool) error {
 		before := sourceProductSignature(record)
 		record.Set("product_id", product.ID)
@@ -385,6 +387,8 @@ func (s *Service) upsertSourceProduct(_ context.Context, app core.App, product m
 		record.Set("base_unit_id", product.Detail.BaseUnitID)
 		record.Set("category_key", categoryKey)
 		record.Set("category_path", categoryPath)
+		record.Set("leaf_category_key", categoryKey)
+		record.Set("leaf_category_path", categoryPath)
 		record.Set("source_type", product.SourceType)
 		if created && strings.TrimSpace(record.GetString("review_status")) == "" {
 			record.Set("review_status", "imported")
@@ -396,6 +400,15 @@ func (s *Service) upsertSourceProduct(_ context.Context, app core.App, product m
 		record.Set("stock_text", product.Pricing.DefaultStockText)
 		record.Set("asset_count", countProductAssets(product))
 		if err := setJSON(record, "source_sections", product.SourceSections); err != nil {
+			return err
+		}
+		if err := setJSON(record, "category_keys_json", normalizeSourceCategoryKeys(categoryKeys, categoryKey)); err != nil {
+			return err
+		}
+		if err := setJSON(record, "observed_category_keys_json", normalizeSourceCategoryKeys(observedCategoryKeys, categoryKey)); err != nil {
+			return err
+		}
+		if err := setJSON(record, "observed_category_paths_json", normalizeSourceCategoryPaths(observedCategoryPaths, categoryPath)); err != nil {
 			return err
 		}
 		if err := setJSON(record, "tags_json", product.Summary.Tags); err != nil {
@@ -537,6 +550,109 @@ func buildCategorySectionLookup(sections []miniappmodel.CategorySection) map[str
 	return lookup
 }
 
+func upsertSourceCategorySectionSnapshot(app core.App, section miniappmodel.CategorySection, sourceMode string) (bool, bool, error) {
+	var changed bool
+	created, err := upsertByFilter(app, CollectionSourceCategorySections, "category_key = {:category_key}", dbx.Params{"category_key": section.CategoryKey}, func(record *core.Record, created bool) error {
+		before := sourceCategorySectionSignature(record)
+		topLevelKey := ""
+		if len(section.CategoryKeys) > 0 {
+			topLevelKey = strings.TrimSpace(section.CategoryKeys[0])
+		}
+		topLevelLabel := strings.TrimSpace(section.Title)
+		if section.CategoryPath != "" {
+			topLevelLabel = strings.TrimSpace(strings.Split(section.CategoryPath, " / ")[0])
+		}
+		record.Set("category_key", section.CategoryKey)
+		record.Set("label", section.Title)
+		record.Set("category_path", section.CategoryPath)
+		record.Set("subject_path", section.SubjectPath)
+		record.Set("top_level_key", topLevelKey)
+		record.Set("top_level_label", topLevelLabel)
+		record.Set("product_count", len(section.Products))
+		record.Set("source_mode", strings.TrimSpace(sourceMode))
+		if err := setJSON(record, "category_keys_json", normalizeSourceCategoryKeys(section.CategoryKeys, section.CategoryKey)); err != nil {
+			return err
+		}
+		if err := setJSON(record, "product_ids_json", sectionProductIDs(section.Products)); err != nil {
+			return err
+		}
+		if err := setJSON(record, "product_spu_ids_json", sectionProductSpuIDs(section.Products)); err != nil {
+			return err
+		}
+		if err := setJSON(record, "product_sku_ids_json", sectionProductSkuIDs(section.Products)); err != nil {
+			return err
+		}
+		if err := setJSON(record, "source_payload", section); err != nil {
+			return err
+		}
+		changed = before != sourceCategorySectionSignature(record)
+		if created {
+			changed = false
+		}
+		return nil
+	})
+	return created, changed, err
+}
+
+func sourceCategorySectionSignature(record *core.Record) string {
+	if record == nil {
+		return ""
+	}
+	return strings.Join([]string{
+		record.GetString("label"),
+		record.GetString("category_path"),
+		record.GetString("subject_path"),
+		record.GetString("top_level_key"),
+		record.GetString("top_level_label"),
+		record.GetString("source_mode"),
+		record.GetString("category_keys_json"),
+		record.GetString("product_ids_json"),
+		record.GetString("product_spu_ids_json"),
+		record.GetString("product_sku_ids_json"),
+		record.GetString("source_payload"),
+		fmt.Sprintf("%d", record.GetInt("product_count")),
+	}, "|")
+}
+
+func sectionProductIDs(products []miniappmodel.HomepageProduct) []string {
+	ids := make([]string, 0, len(products))
+	for _, product := range products {
+		id := strings.TrimSpace(product.ProductID)
+		if id == "" {
+			id = strings.TrimSpace(product.SpuID) + "_" + strings.TrimSpace(product.SkuID)
+		}
+		if strings.TrimSpace(id) == "" {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return appendUniqueSourceStrings(nil, ids...)
+}
+
+func sectionProductSpuIDs(products []miniappmodel.HomepageProduct) []string {
+	ids := make([]string, 0, len(products))
+	for _, product := range products {
+		id := strings.TrimSpace(product.SpuID)
+		if id == "" {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return appendUniqueSourceStrings(nil, ids...)
+}
+
+func sectionProductSkuIDs(products []miniappmodel.HomepageProduct) []string {
+	ids := make([]string, 0, len(products))
+	for _, product := range products {
+		id := strings.TrimSpace(product.SkuID)
+		if id == "" {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return appendUniqueSourceStrings(nil, ids...)
+}
+
 func firstCategoryKey(sourceSections []string, lookup map[string]miniappmodel.CategorySection) string {
 	for _, sectionID := range sourceSections {
 		if _, ok := lookup[sectionID]; ok {
@@ -544,6 +660,285 @@ func firstCategoryKey(sourceSections []string, lookup map[string]miniappmodel.Ca
 		}
 	}
 	return ""
+}
+
+func productCategoryInfo(product miniappmodel.ProductPage, sections map[string]miniappmodel.CategorySection, parentByKey map[string]string) (string, string, []string, []string, []string) {
+	categoryKey := strings.TrimSpace(product.CategoryKey)
+	categoryPath := strings.TrimSpace(product.CategoryPath)
+	categoryKeys := normalizeSourceCategoryKeys(product.CategoryKeys, categoryKey)
+	observedCategoryKeys := normalizeSourceCategoryKeys(product.ObservedCategoryKeys, categoryKey)
+	observedCategoryPaths := normalizeSourceCategoryPaths(product.ObservedCategoryPaths, categoryPath)
+
+	if categoryKey == "" {
+		categoryKey = firstCategoryKey(product.SourceSections, sections)
+	}
+	if section, ok := sections[categoryKey]; ok {
+		if categoryPath == "" {
+			categoryPath = strings.TrimSpace(section.CategoryPath)
+		}
+		if len(categoryKeys) == 0 {
+			categoryKeys = normalizeSourceCategoryKeys(section.CategoryKeys, categoryKey)
+		}
+		observedCategoryKeys = normalizeSourceCategoryKeys(observedCategoryKeys, categoryKey)
+		observedCategoryPaths = normalizeSourceCategoryPaths(observedCategoryPaths, categoryPath)
+	}
+	if len(observedCategoryKeys) == 0 {
+		observedCategoryKeys = normalizeSourceCategoryKeys(categoryKeys, categoryKey)
+	}
+	if len(observedCategoryPaths) == 0 && categoryPath != "" {
+		observedCategoryPaths = []string{categoryPath}
+	}
+	expandedKeys := make([]string, 0, len(observedCategoryKeys)*2)
+	for _, observedKey := range observedCategoryKeys {
+		expandedKeys = append(expandedKeys, categoryLineageKeys(observedKey, parentByKey)...)
+	}
+	if len(expandedKeys) == 0 {
+		expandedKeys = categoryLineageKeys(categoryKey, parentByKey)
+	}
+	return categoryKey, categoryPath, normalizeSourceCategoryKeys(expandedKeys, categoryKey), normalizeSourceCategoryKeys(observedCategoryKeys, categoryKey), normalizeSourceCategoryPaths(observedCategoryPaths, categoryPath)
+}
+
+func categoryLineageKeys(categoryKey string, parentByKey map[string]string) []string {
+	keys := make([]string, 0, 4)
+	current := strings.TrimSpace(categoryKey)
+	visited := map[string]struct{}{}
+	for current != "" {
+		if _, ok := visited[current]; ok {
+			break
+		}
+		visited[current] = struct{}{}
+		keys = append(keys, current)
+		current = strings.TrimSpace(parentByKey[current])
+	}
+	return normalizeSourceCategoryKeys(keys, categoryKey)
+}
+
+func normalizeSourceCategoryKeys(keys []string, primary string) []string {
+	result := make([]string, 0, len(keys)+1)
+	seen := make(map[string]struct{}, len(keys)+1)
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	add(primary)
+	for _, key := range keys {
+		add(key)
+	}
+	return result
+}
+
+func normalizeSourceCategoryPaths(paths []string, primary string) []string {
+	result := make([]string, 0, len(paths)+1)
+	seen := make(map[string]struct{}, len(paths)+1)
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	add(primary)
+	for _, path := range paths {
+		add(path)
+	}
+	return result
+}
+
+func appendUniqueSourceStrings(values []string, additions ...string) []string {
+	seen := make(map[string]struct{}, len(values)+len(additions))
+	result := make([]string, 0, len(values)+len(additions))
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	for _, value := range values {
+		add(value)
+	}
+	for _, value := range additions {
+		add(value)
+	}
+	return result
+}
+
+func sourceProductCategoryKeys(record *core.Record) []string {
+	if record == nil {
+		return nil
+	}
+	var keys []string
+	decodeTargetSyncJSONField(record.GetString("category_keys_json"), &keys)
+	return normalizeSourceCategoryKeys(keys, record.GetString("category_key"))
+}
+
+func sourceProductObservedCategoryKeys(record *core.Record) []string {
+	if record == nil {
+		return nil
+	}
+	var keys []string
+	decodeTargetSyncJSONField(record.GetString("observed_category_keys_json"), &keys)
+	return normalizeSourceCategoryKeys(keys, record.GetString("category_key"))
+}
+
+func sourceProductObservedCategoryPaths(record *core.Record) []string {
+	if record == nil {
+		return nil
+	}
+	var paths []string
+	decodeTargetSyncJSONField(record.GetString("observed_category_paths_json"), &paths)
+	return normalizeSourceCategoryPaths(paths, record.GetString("category_path"))
+}
+
+func sourceCategorySectionFromRecord(record *core.Record) (miniappmodel.CategorySection, bool) {
+	if record == nil {
+		return miniappmodel.CategorySection{}, false
+	}
+	section := miniappmodel.CategorySection{
+		ID:           strings.TrimSpace(record.GetString("category_key")),
+		Title:        strings.TrimSpace(record.GetString("label")),
+		CategoryKey:  strings.TrimSpace(record.GetString("category_key")),
+		CategoryPath: strings.TrimSpace(record.GetString("category_path")),
+		SubjectPath:  strings.TrimSpace(record.GetString("subject_path")),
+	}
+	if section.CategoryKey == "" {
+		return miniappmodel.CategorySection{}, false
+	}
+	decodeTargetSyncJSONField(record.GetString("category_keys_json"), &section.CategoryKeys)
+	decodeTargetSyncJSONField(record.GetString("source_payload"), &section)
+	if section.ID == "" {
+		section.ID = section.CategoryKey
+	}
+	if section.Title == "" {
+		section.Title = strings.TrimSpace(record.GetString("label"))
+	}
+	if section.CategoryKey == "" {
+		section.CategoryKey = strings.TrimSpace(record.GetString("category_key"))
+	}
+	if section.CategoryPath == "" {
+		section.CategoryPath = strings.TrimSpace(record.GetString("category_path"))
+	}
+	if section.SubjectPath == "" {
+		section.SubjectPath = strings.TrimSpace(record.GetString("subject_path"))
+	}
+	section.CategoryKeys = normalizeSourceCategoryKeys(section.CategoryKeys, section.CategoryKey)
+	return section, true
+}
+
+func sourceCategorySectionApplies(record *core.Record, scopeKey string) bool {
+	scopeKey = strings.TrimSpace(scopeKey)
+	if scopeKey == "" {
+		return true
+	}
+	if strings.TrimSpace(record.GetString("category_key")) == scopeKey {
+		return true
+	}
+	if strings.TrimSpace(record.GetString("top_level_key")) == scopeKey {
+		return true
+	}
+	var keys []string
+	decodeTargetSyncJSONField(record.GetString("category_keys_json"), &keys)
+	return slices.Contains(normalizeSourceCategoryKeys(keys, record.GetString("category_key")), scopeKey)
+}
+
+func sourceCategorySectionProductIDs(record *core.Record) []string {
+	if record == nil {
+		return nil
+	}
+	var ids []string
+	decodeTargetSyncJSONField(record.GetString("product_ids_json"), &ids)
+	return appendUniqueSourceStrings(nil, ids...)
+}
+
+func sourceCategoryTreeFromRecords(records []*core.Record) []miniappmodel.CategoryNode {
+	type nodeEntry struct {
+		node      miniappmodel.CategoryNode
+		parentKey string
+	}
+	entries := make(map[string]*nodeEntry, len(records))
+	for _, record := range records {
+		key := strings.TrimSpace(record.GetString("source_key"))
+		if key == "" {
+			continue
+		}
+		entries[key] = &nodeEntry{
+			node: miniappmodel.CategoryNode{
+				Key:         key,
+				Label:       strings.TrimSpace(record.GetString("label")),
+				ImageURL:    strings.TrimSpace(record.GetString("image_url")),
+				PathName:    strings.TrimSpace(record.GetString("path_name")),
+				Depth:       record.GetInt("depth"),
+				Sort:        record.GetInt("sort"),
+				HasChildren: record.GetBool("has_children"),
+			},
+			parentKey: strings.TrimSpace(record.GetString("parent_key")),
+		}
+	}
+
+	childKeys := make(map[string][]string)
+	rootKeys := make([]string, 0)
+	for key, entry := range entries {
+		if entry.parentKey == "" || entries[entry.parentKey] == nil {
+			rootKeys = append(rootKeys, key)
+			continue
+		}
+		childKeys[entry.parentKey] = append(childKeys[entry.parentKey], key)
+	}
+
+	sortNodeKeys := func(keys []string) {
+		slices.SortStableFunc(keys, func(a string, b string) int {
+			left := entries[a]
+			right := entries[b]
+			if left == nil || right == nil {
+				return strings.Compare(a, b)
+			}
+			if left.node.Sort != right.node.Sort {
+				return left.node.Sort - right.node.Sort
+			}
+			return strings.Compare(left.node.Label, right.node.Label)
+		})
+	}
+
+	var build func(key string) miniappmodel.CategoryNode
+	build = func(key string) miniappmodel.CategoryNode {
+		entry := entries[key]
+		if entry == nil {
+			return miniappmodel.CategoryNode{}
+		}
+		node := entry.node
+		children := append([]string(nil), childKeys[key]...)
+		sortNodeKeys(children)
+		if len(children) > 0 {
+			node.Children = make([]miniappmodel.CategoryNode, 0, len(children))
+			for _, childKey := range children {
+				node.Children = append(node.Children, build(childKey))
+			}
+			node.HasChildren = len(node.Children) > 0
+		}
+		return node
+	}
+
+	sortNodeKeys(rootKeys)
+	nodes := make([]miniappmodel.CategoryNode, 0, len(rootKeys))
+	for _, key := range rootKeys {
+		nodes = append(nodes, build(key))
+	}
+	return nodes
 }
 
 func normalizedSourceScope(scope string) string {
@@ -1697,8 +2092,13 @@ func (s *Service) promoteSourceProductRecord(ctx context.Context, app core.App, 
 
 	productID := strings.TrimSpace(sourceRecord.GetString("product_id"))
 	title := strings.TrimSpace(sourceRecord.GetString("name"))
-	categoryPath := strings.TrimSpace(sourceRecord.GetString("category_path"))
+	releaseCategoryKey := strings.TrimSpace(sourceRecord.GetString("category_key"))
+	releaseCategoryPath := strings.TrimSpace(sourceRecord.GetString("category_path"))
+	observedCategoryKeys := sourceProductObservedCategoryKeys(sourceRecord)
+	observedCategoryPaths := sourceProductObservedCategoryPaths(sourceRecord)
 	rawImageURL := strings.TrimSpace(sourceRecord.GetString("cover_url"))
+	conversionRate := sourceProductConversionRate(sourceRecord)
+	targetAudience := sourceProductTargetAudience(sourceRecord)
 	processedFile, processedSource, err := s.bestProcessedSourceAssetFile(app, productID)
 	if err != nil {
 		return false, err
@@ -1718,20 +2118,32 @@ func (s *Service) promoteSourceProductRecord(ctx context.Context, app core.App, 
 		record.Set("normalized_title", title)
 		record.Set("raw_description", sourceDescription(sourceRecord))
 		record.Set("marketing_description", sourceDescription(sourceRecord))
-		record.Set("raw_category", categoryPath)
-		record.Set("normalized_category", categoryPath)
+		record.Set("raw_category", releaseCategoryPath)
+		record.Set("normalized_category", releaseCategoryPath)
 		record.Set("raw_image_url", bestAssetURL)
+		record.Set("source_product_id", productID)
+		record.Set("source_type", sourceRecord.GetString("source_type"))
+		record.Set("conversion_rate", conversionRate)
+		record.Set("target_audience", targetAudience)
 		record.Set("cost_price", 0)
 		record.Set("b_price", sourceRecord.GetFloat("default_price"))
 		record.Set("c_price", sourceRecord.GetFloat("default_price"))
 		record.Set("currency_code", "CNY")
 		record.Set("supplier_updated_at", time.Now().Format(time.RFC3339))
 		if err := setJSON(record, "supplier_payload", map[string]any{
-			"source_product_id": productID,
-			"sales_unit":        defaultString(sourceRecord.GetString("default_unit"), "件"),
-			"category_key":      sourceRecord.GetString("category_key"),
-			"unit_options":      decodeRawJSON(sourceRecord.GetString("unit_options_json")),
-			"order_units":       decodeRawJSON(sourceRecord.GetString("order_units_json")),
+			"source_product_id":       productID,
+			"source_type":             sourceRecord.GetString("source_type"),
+			"sales_unit":              defaultString(sourceRecord.GetString("default_unit"), "件"),
+			"conversion_rate":         conversionRate,
+			"target_audience":         targetAudience,
+			"release_category_key":    releaseCategoryKey,
+			"release_category_path":   releaseCategoryPath,
+			"category_key":            releaseCategoryKey,
+			"category_keys":           sourceProductCategoryKeys(sourceRecord),
+			"observed_category_keys":  observedCategoryKeys,
+			"observed_category_paths": observedCategoryPaths,
+			"unit_options":            decodeRawJSON(sourceRecord.GetString("unit_options_json")),
+			"order_units":             decodeRawJSON(sourceRecord.GetString("order_units_json")),
 		}); err != nil {
 			return err
 		}
@@ -1758,6 +2170,26 @@ func (s *Service) promoteSourceProductRecord(ctx context.Context, app core.App, 
 	}
 
 	return true, nil
+}
+
+func sourceProductConversionRate(sourceRecord *core.Record) float64 {
+	unitOptions := make([]miniappmodel.UnitOption, 0)
+	if err := json.Unmarshal([]byte(sourceRecord.GetString("unit_options_json")), &unitOptions); err == nil {
+		defaultUnit := strings.TrimSpace(sourceRecord.GetString("default_unit"))
+		for _, option := range unitOptions {
+			if option.IsDefault && option.Rate > 0 {
+				return option.Rate
+			}
+			if defaultUnit != "" && strings.TrimSpace(option.UnitName) == defaultUnit && option.Rate > 0 {
+				return option.Rate
+			}
+		}
+	}
+	return 1
+}
+
+func sourceProductTargetAudience(_ *core.Record) string {
+	return "ALL"
 }
 
 func (s *Service) bestSourceAssetURL(app core.App, productID string) (string, error) {
@@ -2004,7 +2436,7 @@ func matchesSourceSyncState(state string, bridge SourceBridgeStatus) bool {
 }
 
 func matchesSourceProductFilter(filter SourceReviewFilter, record *core.Record) bool {
-	if filter.CategoryKey != "" && !strings.EqualFold(strings.TrimSpace(record.GetString("category_key")), filter.CategoryKey) {
+	if filter.CategoryKey != "" && !slices.Contains(sourceProductCategoryKeys(record), strings.TrimSpace(filter.CategoryKey)) {
 		return false
 	}
 	if filter.ProductStatus != "" && !strings.EqualFold(strings.TrimSpace(record.GetString("review_status")), filter.ProductStatus) {
@@ -2204,20 +2636,22 @@ func (s *Service) SourceReviewWorkbench(ctx context.Context, app core.App, produ
 			continue
 		}
 		filteredProducts = append(filteredProducts, SourceReviewProduct{
-			ID:             record.Id,
-			ProductID:      record.GetString("product_id"),
-			Name:           record.GetString("name"),
-			PreviewURL:     s.sourceProductPreviewURL(app, record),
-			CategoryPath:   record.GetString("category_path"),
-			ReviewStatus:   record.GetString("review_status"),
-			SourceType:     record.GetString("source_type"),
-			UnitCount:      record.GetInt("unit_count"),
-			HasMultiUnit:   record.GetBool("has_multi_unit"),
-			DefaultPrice:   record.GetFloat("default_price"),
-			AssetCount:     record.GetInt("asset_count"),
-			ProcessedCount: stat.processed,
-			FailedCount:    stat.failed,
-			Bridge:         bridge,
+			ID:                    record.Id,
+			ProductID:             record.GetString("product_id"),
+			Name:                  record.GetString("name"),
+			PreviewURL:            s.sourceProductPreviewURL(app, record),
+			CategoryPath:          record.GetString("category_path"),
+			ObservedCategoryPaths: sourceProductObservedCategoryPaths(record),
+			ObservedCategoryKeys:  sourceProductObservedCategoryKeys(record),
+			ReviewStatus:          record.GetString("review_status"),
+			SourceType:            record.GetString("source_type"),
+			UnitCount:             record.GetInt("unit_count"),
+			HasMultiUnit:          record.GetBool("has_multi_unit"),
+			DefaultPrice:          record.GetFloat("default_price"),
+			AssetCount:            record.GetInt("asset_count"),
+			ProcessedCount:        stat.processed,
+			FailedCount:           stat.failed,
+			Bridge:                bridge,
 		})
 	}
 	summary.ProductPage = filter.ProductPage
@@ -2255,6 +2689,33 @@ func (s *Service) SourceReviewWorkbench(ctx context.Context, app core.App, produ
 	return summary, nil
 }
 
+func (s *Service) SourceProductIDsForFilter(app core.App, filter SourceReviewFilter) ([]string, error) {
+	filter = normalizeSourceReviewFilter(filter)
+
+	allProducts, err := app.FindAllRecords(CollectionSourceProducts)
+	if err != nil {
+		return nil, err
+	}
+	supplierRecords, err := app.FindAllRecords(CollectionSupplierProducts)
+	if err != nil {
+		return nil, err
+	}
+
+	supplierBySKU := buildSupplierProductLookup(s.cfg.Supplier.Code, supplierRecords)
+	ids := make([]string, 0, len(allProducts))
+	for _, record := range allProducts {
+		bridge := supplierBridgeStatusForRecord(supplierBySKU[record.GetString("sku_id")])
+		if !matchesSourceProductFilter(filter, record) {
+			continue
+		}
+		if !matchesSourceSyncState(filter.SyncState, bridge) {
+			continue
+		}
+		ids = append(ids, record.Id)
+	}
+	return normalizeSourceIDSlice(ids), nil
+}
+
 func normalizeSourceCategoryFilter(filter SourceCategoryFilter) SourceCategoryFilter {
 	if filter.Page <= 0 {
 		filter.Page = 1
@@ -2287,11 +2748,9 @@ func (s *Service) SourceCategories(_ context.Context, app core.App, filter Sourc
 
 	productCountByCategory := make(map[string]int, len(products))
 	for _, record := range products {
-		key := strings.TrimSpace(record.GetString("category_key"))
-		if key == "" {
-			continue
+		for _, key := range sourceProductCategoryKeys(record) {
+			productCountByCategory[key]++
 		}
-		productCountByCategory[key]++
 	}
 
 	items := make([]SourceCategoryItem, 0, len(categories))
@@ -2584,27 +3043,29 @@ func (s *Service) SourceProductDetail(ctx context.Context, app core.App, recordI
 	recentActions, _ := s.listRecentSourceActionsForTarget(app, "product", record.Id, 8)
 
 	return SourceProductDetail{
-		ID:             record.Id,
-		ProductID:      record.GetString("product_id"),
-		Name:           record.GetString("name"),
-		PreviewURL:     s.sourceProductPreviewURL(app, record),
-		ReviewStatus:   record.GetString("review_status"),
-		ReviewNote:     record.GetString("review_note"),
-		ReviewedByName: record.GetString("reviewed_by_name"),
-		ReviewedByMail: record.GetString("reviewed_by_email"),
-		ReviewedAt:     record.GetString("reviewed_at"),
-		CategoryPath:   record.GetString("category_path"),
-		SourceType:     record.GetString("source_type"),
-		SummaryJSON:    prettyJSONString(record.GetString("summary_json")),
-		DetailJSON:     prettyJSONString(record.GetString("detail_json")),
-		PricingJSON:    prettyJSONString(record.GetString("pricing_json")),
-		PackageJSON:    prettyJSONString(record.GetString("package_json")),
-		ContextJSON:    prettyJSONString(record.GetString("context_json")),
-		UnitOptions:    prettyJSONString(record.GetString("unit_options_json")),
-		OrderUnits:     prettyJSONString(record.GetString("order_units_json")),
-		SourceSections: prettyJSONString(record.GetString("source_sections")),
-		Bridge:         supplierBridgeStatusForRecord(supplierRecord),
-		RecentActions:  recentActions,
+		ID:                    record.Id,
+		ProductID:             record.GetString("product_id"),
+		Name:                  record.GetString("name"),
+		PreviewURL:            s.sourceProductPreviewURL(app, record),
+		ReviewStatus:          record.GetString("review_status"),
+		ReviewNote:            record.GetString("review_note"),
+		ReviewedByName:        record.GetString("reviewed_by_name"),
+		ReviewedByMail:        record.GetString("reviewed_by_email"),
+		ReviewedAt:            record.GetString("reviewed_at"),
+		CategoryPath:          record.GetString("category_path"),
+		ObservedCategoryPaths: prettyJSONString(record.GetString("observed_category_paths_json")),
+		ObservedCategoryKeys:  prettyJSONString(record.GetString("observed_category_keys_json")),
+		SourceType:            record.GetString("source_type"),
+		SummaryJSON:           prettyJSONString(record.GetString("summary_json")),
+		DetailJSON:            prettyJSONString(record.GetString("detail_json")),
+		PricingJSON:           prettyJSONString(record.GetString("pricing_json")),
+		PackageJSON:           prettyJSONString(record.GetString("package_json")),
+		ContextJSON:           prettyJSONString(record.GetString("context_json")),
+		UnitOptions:           prettyJSONString(record.GetString("unit_options_json")),
+		OrderUnits:            prettyJSONString(record.GetString("order_units_json")),
+		SourceSections:        prettyJSONString(record.GetString("source_sections")),
+		Bridge:                supplierBridgeStatusForRecord(supplierRecord),
+		RecentActions:         recentActions,
 	}, nil
 }
 

@@ -42,19 +42,24 @@ type RawSourceConfig struct {
 }
 
 type RawSource struct {
-	cfg           RawSourceConfig
-	client        *http.Client
-	fallback      Source
-	workerLimit   int
-	retryMax      int
-	requestMu     sync.Mutex
-	lastRequestAt time.Time
-	warmupMu      sync.Mutex
-	warmupStatus  model.RawAuthStatus
-	warmupMinTTL  time.Duration
-	warmupMaxTTL  time.Duration
-	nextWarmupAt  time.Time
-	rng           *rand.Rand
+	cfg                  RawSourceConfig
+	client               *http.Client
+	fallback             Source
+	workerLimit          int
+	retryMax             int
+	requestMu            sync.Mutex
+	lastRequestAt        time.Time
+	warmupMu             sync.Mutex
+	warmupStatus         model.RawAuthStatus
+	warmupMinTTL         time.Duration
+	warmupMaxTTL         time.Duration
+	nextWarmupAt         time.Time
+	rng                  *rand.Rand
+	categoryTreeMu       sync.RWMutex
+	categoryTreeCache    []model.CategoryNode
+	categoryTreeCachedAt time.Time
+	categorySectionMu    sync.RWMutex
+	categorySectionCache map[string]model.CategorySection
 }
 
 func NewRawSource(cfg RawSourceConfig, fallback Source) *RawSource {
@@ -87,12 +92,13 @@ func NewRawSource(cfg RawSourceConfig, fallback Source) *RawSource {
 		client: &http.Client{
 			Timeout: timeout,
 		},
-		fallback:     fallback,
-		workerLimit:  workerLimit,
-		retryMax:     retryMax,
-		warmupMinTTL: warmupMinTTL,
-		warmupMaxTTL: warmupMaxTTL,
-		rng:          rand.New(rand.NewSource(time.Now().UnixNano())),
+		fallback:             fallback,
+		workerLimit:          workerLimit,
+		retryMax:             retryMax,
+		warmupMinTTL:         warmupMinTTL,
+		warmupMaxTTL:         warmupMaxTTL,
+		rng:                  rand.New(rand.NewSource(time.Now().UnixNano())),
+		categorySectionCache: make(map[string]model.CategorySection),
 		warmupStatus: model.RawAuthStatus{
 			Enabled: strings.TrimSpace(cfg.AuthorizedAccountID) != "",
 			Status:  "idle",
@@ -127,12 +133,12 @@ func (s *RawSource) FetchDataset(ctx context.Context) (*model.Dataset, error) {
 	}
 
 	dataset := *base
-	nodes, err := s.fetchCategoryTree(ctx, dataset.Homepage.Settings.GoodsCategorySetting)
+	nodes, err := s.fetchCategoryTreeWithFallback(ctx, dataset.Homepage.Settings.GoodsCategorySetting, true)
 	if err != nil {
 		return nil, err
 	}
 
-	sections, products, categoryNotes, err := s.fetchCategoryProducts(ctx, nodes)
+	sections, products, categoryNotes, err := s.fetchCategoryProducts(ctx, nodes, s.sectionTimeout())
 	if err != nil {
 		return nil, err
 	}
@@ -165,6 +171,56 @@ func (s *RawSource) FetchDataset(ctx context.Context) (*model.Dataset, error) {
 		)
 	}
 
+	return &dataset, nil
+}
+
+func (s *RawSource) FetchTargetSyncDataset(ctx context.Context, entityType string, scopeKey string) (*model.Dataset, error) {
+	entityType = strings.ToLower(strings.TrimSpace(entityType))
+
+	if err := s.ensureWarmup(ctx, false); err != nil {
+		return nil, err
+	}
+
+	if s.fallback == nil {
+		return nil, fmt.Errorf("miniapp raw source fallback is nil")
+	}
+
+	base, err := s.fallback.FetchDataset(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load raw source fallback dataset: %w", err)
+	}
+
+	nodes, err := s.fetchCategoryTreeWithFallback(ctx, base.Homepage.Settings.GoodsCategorySetting, true)
+	if err != nil {
+		return nil, err
+	}
+
+	dataset := *base
+	dataset.Meta.Source = "raw"
+	dataset.CategoryPage.Tree = nodes
+	dataset.CategoryPage.Sections = nil
+	dataset.ProductPage.Products = nil
+
+	if entityType == "category_tree" {
+		return &dataset, nil
+	}
+
+	scopedNodes := nodes
+	if key := strings.TrimSpace(scopeKey); key != "" {
+		node := findCategoryNode(nodes, key)
+		if node == nil {
+			return nil, fmt.Errorf("category scope not found: %s", key)
+		}
+		scopedNodes = []model.CategoryNode{*node}
+	}
+
+	sections, products, notes, err := s.fetchCategoryProducts(ctx, scopedNodes, s.targetSyncSectionTimeout())
+	if err != nil {
+		return nil, err
+	}
+	dataset.CategoryPage.Sections = sections
+	dataset.ProductPage.Products = products
+	dataset.Meta.Notes = append(dataset.Meta.Notes, notes...)
 	return &dataset, nil
 }
 
@@ -575,7 +631,7 @@ func (s *RawSource) fetchCategoryTree(ctx context.Context, setting model.GoodsCa
 	}
 
 	var envelope rawEnvelope[[]rawCategoryNode]
-	if err := s.requestJSON(ctx, http.MethodGet, rawCategoryTreePath, params, nil, &envelope); err != nil {
+	if err := s.requestJSONWithTimeout(ctx, s.categoryTreeTimeout(), http.MethodGet, rawCategoryTreePath, params, nil, &envelope); err != nil {
 		return nil, fmt.Errorf("fetch raw category tree: %w", err)
 	}
 
@@ -586,18 +642,91 @@ func (s *RawSource) fetchCategoryTree(ctx context.Context, setting model.GoodsCa
 	return nodes, nil
 }
 
-func (s *RawSource) fetchCategoryProducts(ctx context.Context, topLevelNodes []model.CategoryNode) ([]model.CategorySection, []model.ProductPage, []string, error) {
-	sections := make([]model.CategorySection, 0, len(topLevelNodes))
+func (s *RawSource) fetchCategoryTreeWithFallback(ctx context.Context, setting model.GoodsCategorySetting, allowCached bool) ([]model.CategoryNode, error) {
+	nodes, err := s.fetchCategoryTree(ctx, setting)
+	if err == nil {
+		s.setCategoryTreeCache(nodes)
+		return nodes, nil
+	}
+	if allowCached {
+		if cached, ok := s.cachedCategoryTree(); ok {
+			return cached, nil
+		}
+	}
+	return nil, err
+}
+
+func (s *RawSource) setCategoryTreeCache(nodes []model.CategoryNode) {
+	s.categoryTreeMu.Lock()
+	defer s.categoryTreeMu.Unlock()
+	s.categoryTreeCache = cloneCategoryNodes(nodes)
+	s.categoryTreeCachedAt = time.Now()
+}
+
+func (s *RawSource) cachedCategoryTree() ([]model.CategoryNode, bool) {
+	s.categoryTreeMu.RLock()
+	defer s.categoryTreeMu.RUnlock()
+	if len(s.categoryTreeCache) == 0 {
+		return nil, false
+	}
+	return cloneCategoryNodes(s.categoryTreeCache), true
+}
+
+func cloneCategoryNodes(nodes []model.CategoryNode) []model.CategoryNode {
+	if len(nodes) == 0 {
+		return nil
+	}
+	cloned := make([]model.CategoryNode, 0, len(nodes))
+	for _, node := range nodes {
+		item := node
+		item.Children = cloneCategoryNodes(node.Children)
+		cloned = append(cloned, item)
+	}
+	return cloned
+}
+
+func (s *RawSource) categoryTreeTimeout() time.Duration {
+	timeout := s.cfg.Timeout
+	if timeout <= 0 {
+		timeout = 20 * time.Second
+	}
+	timeout = timeout * 2
+	if timeout < 45*time.Second {
+		timeout = 45 * time.Second
+	}
+	if timeout > 90*time.Second {
+		timeout = 90 * time.Second
+	}
+	return timeout
+}
+
+func (s *RawSource) fetchCategoryProducts(ctx context.Context, topLevelNodes []model.CategoryNode, perSectionTimeout time.Duration) ([]model.CategorySection, []model.ProductPage, []string, error) {
+	requestNodes := flattenCategoryRequestNodes(topLevelNodes)
+	pathByKey, _ := buildCategoryTreeMeta(topLevelNodes)
+	lineageByKey := buildCategoryLineageKeys(topLevelNodes)
+
+	sections := make([]model.CategorySection, 0, len(requestNodes))
 	productMap := make(map[string]model.ProductPage)
 	notes := make([]string, 0)
 
-	for _, node := range topLevelNodes {
-		sectionCtx, cancel := context.WithTimeout(ctx, s.sectionTimeout())
-		section, err := s.fetchTopLevelSection(sectionCtx, node)
+	for _, node := range requestNodes {
+		timeout := perSectionTimeout
+		if timeout <= 0 {
+			timeout = s.sectionTimeout()
+		}
+		sectionCtx, cancel := context.WithTimeout(ctx, timeout)
+		section, err := s.fetchCategorySection(sectionCtx, node, pathByKey[node.Key], lineageByKey[node.Key])
 		cancel()
 		if err != nil {
-			notes = append(notes, fmt.Sprintf("raw 分类商品跳过 %s（%s）：%v", strings.TrimSpace(node.Label), strings.TrimSpace(node.Key), err))
-			continue
+			if cached, ok := s.cachedCategorySection(node.Key); ok {
+				section = cached
+				notes = append(notes, fmt.Sprintf("raw 分类商品回退 %s（%s）：实时请求失败，已使用最近成功结果：%v", strings.TrimSpace(node.Label), strings.TrimSpace(node.Key), err))
+			} else {
+				notes = append(notes, fmt.Sprintf("raw 分类商品跳过 %s（%s）：%v", strings.TrimSpace(node.Label), strings.TrimSpace(node.Key), err))
+				continue
+			}
+		} else {
+			s.setCategorySectionCache(node.Key, section)
 		}
 		sections = append(sections, section)
 
@@ -608,9 +737,20 @@ func (s *RawSource) fetchCategoryProducts(ctx context.Context, topLevelNodes []m
 				productMap[productID] = buildRawProductSkeleton(item, section)
 				continue
 			}
-			existing.SourceSections = appendUniqueStrings(existing.SourceSections, section.CategoryKey)
+			existing = mergeObservedCategorySection(existing, section)
 			productMap[productID] = existing
 		}
+	}
+
+	if len(sections) == 0 && len(requestNodes) > 0 {
+		if len(notes) > 0 {
+			limit := len(notes)
+			if limit > 3 {
+				limit = 3
+			}
+			return nil, nil, notes, fmt.Errorf("分类分支没有成功抓到商品列表：%s", strings.Join(notes[:limit], "；"))
+		}
+		return nil, nil, notes, fmt.Errorf("分类分支没有成功抓到商品列表")
 	}
 
 	products := make([]model.ProductPage, 0, len(productMap))
@@ -625,6 +765,41 @@ func (s *RawSource) fetchCategoryProducts(ctx context.Context, topLevelNodes []m
 	return sections, products, notes, nil
 }
 
+func (s *RawSource) setCategorySectionCache(key string, section model.CategorySection) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return
+	}
+	s.categorySectionMu.Lock()
+	defer s.categorySectionMu.Unlock()
+	s.categorySectionCache[key] = cloneCategorySection(section)
+}
+
+func (s *RawSource) cachedCategorySection(key string) (model.CategorySection, bool) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return model.CategorySection{}, false
+	}
+	s.categorySectionMu.RLock()
+	defer s.categorySectionMu.RUnlock()
+	section, ok := s.categorySectionCache[key]
+	if !ok {
+		return model.CategorySection{}, false
+	}
+	return cloneCategorySection(section), true
+}
+
+func cloneCategorySection(section model.CategorySection) model.CategorySection {
+	cloned := section
+	if len(section.CategoryKeys) > 0 {
+		cloned.CategoryKeys = append([]string(nil), section.CategoryKeys...)
+	}
+	if len(section.Products) > 0 {
+		cloned.Products = append([]model.HomepageProduct(nil), section.Products...)
+	}
+	return cloned
+}
+
 func (s *RawSource) sectionTimeout() time.Duration {
 	timeout := s.cfg.Timeout / 3
 	if timeout <= 0 {
@@ -635,6 +810,21 @@ func (s *RawSource) sectionTimeout() time.Duration {
 	}
 	if timeout > 12*time.Second {
 		timeout = 12 * time.Second
+	}
+	return timeout
+}
+
+func (s *RawSource) targetSyncSectionTimeout() time.Duration {
+	timeout := s.cfg.Timeout
+	if timeout <= 0 {
+		timeout = 20 * time.Second
+	}
+	timeout = timeout + 10*time.Second
+	if timeout < 20*time.Second {
+		timeout = 20 * time.Second
+	}
+	if timeout > 45*time.Second {
+		timeout = 45 * time.Second
 	}
 	return timeout
 }
@@ -675,14 +865,15 @@ func (s *RawSource) enrichRawProducts(ctx context.Context, products []model.Prod
 	return enriched
 }
 
-func (s *RawSource) fetchTopLevelSection(ctx context.Context, node model.CategoryNode) (model.CategorySection, error) {
+func (s *RawSource) fetchCategorySection(ctx context.Context, node model.CategoryNode, categoryPath string, categoryKeys []string) (model.CategorySection, error) {
+	subjectPath := firstNonEmptyRaw(strings.TrimSpace(node.PathCode), strings.TrimSpace(node.Key))
 	requestBody := map[string]any{
 		"checkList":       []any{},
 		"includeTagIds":   []any{},
 		"includeBrandIds": []any{},
 		"sort":            -1,
 		"keywords":        "",
-		"subjectPath":     node.Key,
+		"subjectPath":     subjectPath,
 		"pageNum":         1,
 		"pageSize":        100,
 		"type":            153,
@@ -721,7 +912,9 @@ func (s *RawSource) fetchTopLevelSection(ctx context.Context, node model.Categor
 		ID:           node.Key,
 		Title:        node.Label,
 		CategoryKey:  node.Key,
-		CategoryPath: firstNonEmptyRaw(node.PathName, node.Label),
+		CategoryPath: firstNonEmptyRaw(strings.TrimSpace(categoryPath), node.PathName, node.Label),
+		SubjectPath:  subjectPath,
+		CategoryKeys: appendUniqueStrings(nil, categoryKeys...),
 		RequestBody:  cloneAnyMap(requestBody),
 		Products:     products,
 	}, nil
@@ -764,6 +957,10 @@ func (s *RawSource) fetchPriceStock(ctx context.Context, listData rawGoodsListDa
 }
 
 func (s *RawSource) requestJSON(ctx context.Context, method string, path string, query map[string]any, body any, target any) error {
+	return s.requestJSONWithTimeout(ctx, 0, method, path, query, body, target)
+}
+
+func (s *RawSource) requestJSONWithTimeout(ctx context.Context, requestTimeout time.Duration, method string, path string, query map[string]any, body any, target any) error {
 	fullURL, err := url.Parse(strings.TrimRight(strings.TrimSpace(s.cfg.BaseURL), "/") + path)
 	if err != nil {
 		return err
@@ -816,7 +1013,11 @@ func (s *RawSource) requestJSON(ctx context.Context, method string, path string,
 			req.Header.Set("Referer", s.cfg.Referer)
 		}
 
-		resp, err := s.client.Do(req)
+		httpClient := s.client
+		if requestTimeout > 0 && requestTimeout != s.client.Timeout {
+			httpClient = &http.Client{Timeout: requestTimeout}
+		}
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("request raw source %s %s: %w", method, path, err)
 			if attempt+1 < attempts && s.shouldRetryStatus(0) {
@@ -933,6 +1134,7 @@ type rawCategoryNode struct {
 	CategoryName      string            `json:"categoryName"`
 	CategoryPic       string            `json:"categoryPic"`
 	PathName          string            `json:"pathName"`
+	PathCode          string            `json:"pathCode"`
 	Sort              int               `json:"sort"`
 	HaveChild         bool              `json:"haveChild"`
 	Deep              int               `json:"deep"`
@@ -1192,11 +1394,78 @@ func convertRawCategoryNode(item rawCategoryNode) model.CategoryNode {
 		Label:       item.CategoryName,
 		ImageURL:    item.CategoryPic,
 		PathName:    item.PathName,
+		PathCode:    item.PathCode,
 		Depth:       defaultInt(item.Deep, len(strings.Split(strings.TrimSpace(item.PathName), "/"))),
 		Sort:        item.Sort,
 		HasChildren: item.HaveChild || len(children) > 0,
 		Children:    children,
 	}
+}
+
+func flattenCategoryRequestNodes(nodes []model.CategoryNode) []model.CategoryNode {
+	items := make([]model.CategoryNode, 0)
+	var walk func([]model.CategoryNode)
+	walk = func(list []model.CategoryNode) {
+		for _, node := range list {
+			items = append(items, node)
+			walk(node.Children)
+		}
+	}
+	walk(nodes)
+	return items
+}
+
+func findCategoryNode(nodes []model.CategoryNode, key string) *model.CategoryNode {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil
+	}
+	for idx := range nodes {
+		if strings.TrimSpace(nodes[idx].Key) == key {
+			return &nodes[idx]
+		}
+		if child := findCategoryNode(nodes[idx].Children, key); child != nil {
+			return child
+		}
+	}
+	return nil
+}
+
+func buildCategoryTreeMeta(nodes []model.CategoryNode) (map[string]string, map[string]string) {
+	paths := make(map[string]string)
+	parents := make(map[string]string)
+	var walk func(list []model.CategoryNode, parentPath string, parentKey string)
+	walk = func(list []model.CategoryNode, parentPath string, parentKey string) {
+		for _, node := range list {
+			path := strings.TrimSpace(node.Label)
+			if parentPath != "" {
+				path = parentPath + " / " + path
+			}
+			paths[node.Key] = path
+			parents[node.Key] = parentKey
+			if len(node.Children) > 0 {
+				walk(node.Children, path, node.Key)
+			}
+		}
+	}
+	walk(nodes, "", "")
+	return paths, parents
+}
+
+func buildCategoryLineageKeys(nodes []model.CategoryNode) map[string][]string {
+	lineage := make(map[string][]string)
+	var walk func(list []model.CategoryNode, ancestors []string)
+	walk = func(list []model.CategoryNode, ancestors []string) {
+		for _, node := range list {
+			current := append(append([]string(nil), ancestors...), strings.TrimSpace(node.Key))
+			lineage[node.Key] = appendUniqueStrings(nil, current...)
+			if len(node.Children) > 0 {
+				walk(node.Children, current)
+			}
+		}
+	}
+	walk(nodes, nil)
+	return lineage
 }
 
 func convertRawGoodsList(items []rawGoodsItem) []model.HomepageProduct {
@@ -1297,12 +1566,17 @@ func buildRawProductSkeleton(product model.HomepageProduct, section model.Catego
 	}
 
 	return model.ProductPage{
-		ID:             normalizedRawProductID(product.SpuID, product.SkuID),
-		SpuID:          product.SpuID,
-		SkuID:          product.SkuID,
-		SourceType:     "list_skeleton",
-		SourceSections: []string{section.CategoryKey},
-		Summary:        product,
+		ID:                    normalizedRawProductID(product.SpuID, product.SkuID),
+		SpuID:                 product.SpuID,
+		SkuID:                 product.SkuID,
+		SourceType:            "list_skeleton",
+		SourceSections:        []string{section.CategoryKey},
+		CategoryKey:           section.CategoryKey,
+		CategoryPath:          section.CategoryPath,
+		CategoryKeys:          appendUniqueStrings(nil, section.CategoryKeys...),
+		ObservedCategoryKeys:  []string{section.CategoryKey},
+		ObservedCategoryPaths: []string{section.CategoryPath},
+		Summary:               product,
 		Detail: model.ProductDetail{
 			ContractID:   "raw_category_goods_list",
 			RequestQuery: map[string]any{"spuId": product.SpuID, "skuId": product.SkuID},
@@ -1323,9 +1597,9 @@ func buildRawProductSkeleton(product model.HomepageProduct, section model.Catego
 			DefaultStockText:          product.StockText,
 			UnitOptions:               product.UnitOptions,
 			PromotionTexts:            product.PromotionTexts,
-			PriceListRequestBody:      map[string]any{"subjectPath": section.CategoryKey},
-			DefaultStockRequestBody:   map[string]any{"subjectPath": section.CategoryKey},
-			MultiUnitStockRequestBody: map[string]any{"subjectPath": section.CategoryKey},
+			PriceListRequestBody:      map[string]any{"subjectPath": section.SubjectPath},
+			DefaultStockRequestBody:   map[string]any{"subjectPath": section.SubjectPath},
+			MultiUnitStockRequestBody: map[string]any{"subjectPath": section.SubjectPath},
 		},
 		Package: model.ProductPackage{
 			ContractID:  "raw_product_package_pending",
@@ -1342,6 +1616,18 @@ func buildRawProductSkeleton(product model.HomepageProduct, section model.Catego
 			UnitOptions:           orderUnits,
 		},
 	}
+}
+
+func mergeObservedCategorySection(product model.ProductPage, section model.CategorySection) model.ProductPage {
+	product.SourceSections = appendUniqueStrings(product.SourceSections, section.CategoryKey)
+	product.ObservedCategoryKeys = appendUniqueStrings(product.ObservedCategoryKeys, section.CategoryKey)
+	product.ObservedCategoryPaths = appendUniqueStrings(product.ObservedCategoryPaths, section.CategoryPath)
+	if strings.TrimSpace(product.CategoryKey) == "" || len(section.CategoryKeys) > len(product.CategoryKeys) {
+		product.CategoryKey = section.CategoryKey
+		product.CategoryPath = section.CategoryPath
+		product.CategoryKeys = appendUniqueStrings(nil, section.CategoryKeys...)
+	}
+	return product
 }
 
 func mergeRawProductDetail(product model.ProductPage, info rawGoodsInfoData, priceList []rawPriceListItem, packageData rawPackageData, cartSummary []any, chooseData rawCartChooseData, addCartSummary []any) model.ProductPage {

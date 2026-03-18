@@ -83,16 +83,23 @@ type WorkflowConfig struct {
 }
 
 type VendureConfig struct {
-	Endpoint        string
-	Token           string
-	Username        string
-	Password        string
-	LanguageCode    string
-	CurrencyCode    string
-	ChannelToken    string
-	RequestTimeout  time.Duration
-	AssetTags       []string
-	ReviewAssetBase string
+	Endpoint                   string
+	Token                      string
+	Username                   string
+	Password                   string
+	LanguageCode               string
+	CurrencyCode               string
+	ChannelToken               string
+	RequestTimeout             time.Duration
+	AssetTags                  []string
+	ReviewAssetBase            string
+	VariantSupplierCodeField   string
+	VariantSupplierCostField   string
+	VariantConversionRateField string
+	VariantSourceProductField  string
+	VariantSourceTypeField     string
+	ProductTargetAudienceField string
+	ProductCEndAssetField      string
 }
 
 func Load() Config {
@@ -155,16 +162,23 @@ func Load() Config {
 			CronSync:            getEnv("CRON_SYNC", "*/15 * * * *"),
 		},
 		Vendure: VendureConfig{
-			Endpoint:        getEnv("VENDURE_ADMIN_API", "http://127.0.0.1:26227/admin-api"),
-			Token:           strings.TrimSpace(os.Getenv("VENDURE_ADMIN_TOKEN")),
-			Username:        strings.TrimSpace(os.Getenv("VENDURE_ADMIN_USERNAME")),
-			Password:        strings.TrimSpace(os.Getenv("VENDURE_ADMIN_PASSWORD")),
-			LanguageCode:    getEnv("VENDURE_LANGUAGE_CODE", "zh_Hans"),
-			CurrencyCode:    getEnv("VENDURE_CURRENCY_CODE", "CNY"),
-			ChannelToken:    strings.TrimSpace(os.Getenv("VENDURE_CHANNEL_TOKEN")),
-			RequestTimeout:  getEnvDuration("VENDURE_TIMEOUT", 30*time.Second),
-			AssetTags:       splitCSV(getEnv("VENDURE_ASSET_TAGS", "pim,supplier")),
-			ReviewAssetBase: getEnv("PIM_PUBLIC_URL", "http://127.0.0.1:26228"),
+			Endpoint:                   getEnv("VENDURE_ADMIN_API", "http://127.0.0.1:26227/admin-api"),
+			Token:                      strings.TrimSpace(os.Getenv("VENDURE_ADMIN_TOKEN")),
+			Username:                   strings.TrimSpace(os.Getenv("VENDURE_ADMIN_USERNAME")),
+			Password:                   strings.TrimSpace(os.Getenv("VENDURE_ADMIN_PASSWORD")),
+			LanguageCode:               getEnv("VENDURE_LANGUAGE_CODE", "zh_Hans"),
+			CurrencyCode:               getEnv("VENDURE_CURRENCY_CODE", "CNY"),
+			ChannelToken:               strings.TrimSpace(os.Getenv("VENDURE_CHANNEL_TOKEN")),
+			RequestTimeout:             getEnvDuration("VENDURE_TIMEOUT", 30*time.Second),
+			AssetTags:                  splitCSV(getEnv("VENDURE_ASSET_TAGS", "pim,supplier")),
+			ReviewAssetBase:            getEnv("PIM_PUBLIC_URL", "http://127.0.0.1:26228"),
+			VariantSupplierCodeField:   strings.TrimSpace(os.Getenv("VENDURE_CF_VARIANT_SUPPLIER_CODE")),
+			VariantSupplierCostField:   strings.TrimSpace(os.Getenv("VENDURE_CF_VARIANT_SUPPLIER_COST_PRICE")),
+			VariantConversionRateField: strings.TrimSpace(os.Getenv("VENDURE_CF_VARIANT_CONVERSION_RATE")),
+			VariantSourceProductField:  strings.TrimSpace(os.Getenv("VENDURE_CF_VARIANT_SOURCE_PRODUCT_ID")),
+			VariantSourceTypeField:     strings.TrimSpace(os.Getenv("VENDURE_CF_VARIANT_SOURCE_TYPE")),
+			ProductTargetAudienceField: strings.TrimSpace(os.Getenv("VENDURE_CF_PRODUCT_TARGET_AUDIENCE")),
+			ProductCEndAssetField:      strings.TrimSpace(os.Getenv("VENDURE_CF_PRODUCT_C_END_FEATURED_ASSET")),
 		},
 	}
 }

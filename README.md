@@ -76,6 +76,7 @@ go run ./cmd/pim serve
 - Legacy Dashboard: `http://127.0.0.1:26228/_/mrtang-admin?legacy=1`
 - Legacy 抓取入库: `http://127.0.0.1:26228/_/mrtang-admin/target-sync?legacy=1`
 - Source Home: `http://127.0.0.1:26228/_/mrtang-admin/source`
+- Backend Release: `http://127.0.0.1:26228/_/mrtang-admin/backend-release`
 - Source Products: `http://127.0.0.1:26228/_/mrtang-admin/source/products`
 - Source Assets: `http://127.0.0.1:26228/_/mrtang-admin/source/assets`
 - Source Logs: `http://127.0.0.1:26228/_/mrtang-admin/source/logs`
@@ -106,8 +107,11 @@ go run ./cmd/pim serve
 如果你需要直接看“源站 API -> rr 样本 -> dataset -> 本地接口”的总览，见 [docs/source-api.md](./docs/source-api.md)。
 如果你需要直接看 checkout 摘要接口和推荐字段，见 [docs/checkout-api.md](./docs/checkout-api.md)。
 如果你需要直接看源站抓取入库任务、运行记录和变更详情，见 [docs/target-sync.md](./docs/target-sync.md)。
-如果你需要直接看 source 商品审核、图片处理、桥接与同步工作台，见 [docs/source-review-workbench.md](./docs/source-review-workbench.md)。
+如果你需要直接看 source 商品审核、图片处理、加入发布队列与同步工作台，见 [docs/source-review-workbench.md](./docs/source-review-workbench.md)。
 如果你需要直接看后台模块结构和页面入口，见 [docs/mrtang-admin.md](./docs/mrtang-admin.md)。
+如果你需要先规划 backend 与小程序发布前还缺哪些能力，再决定何时正式同步到 backend，见 [docs/backend-miniapp-plan.md](./docs/backend-miniapp-plan.md)。
+如果你需要直接看 source、supplier 与 Vendure 的字段映射和分类发布模型，见 [docs/backend-release-contract.md](./docs/backend-release-contract.md)。
+如果你需要直接配置 Vendure custom fields，见 [docs/vendure-field-setup.md](./docs/vendure-field-setup.md)。
 
 环境变量:
 
@@ -129,6 +133,13 @@ go run ./cmd/pim serve
 - `MINIAPP_CART_ORDER_SNAPSHOT=./datasets/miniapp/cart-order`
 - `MINIAPP_AUTH_ACCOUNT_ID=...`
 - `MINIAPP_USER_AGENT=Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.53(0x18003537) NetType/WIFI Language/zh_CN miniProgram`
+- `VENDURE_CF_VARIANT_SUPPLIER_CODE=`
+- `VENDURE_CF_VARIANT_SUPPLIER_COST_PRICE=`
+- `VENDURE_CF_VARIANT_CONVERSION_RATE=`
+- `VENDURE_CF_VARIANT_SOURCE_PRODUCT_ID=`
+- `VENDURE_CF_VARIANT_SOURCE_TYPE=`
+- `VENDURE_CF_PRODUCT_TARGET_AUDIENCE=`
+- `VENDURE_CF_PRODUCT_C_END_FEATURED_ASSET=`
 
 数据源切换:
 
@@ -364,7 +375,7 @@ curl -X POST 'http://127.0.0.1:26228/api/pim/procurement/order/status?id=<procur
 
 1. 在 `/_/mrtang-admin/target-sync` 执行目标站分类、商品规格和图片的抓取入库。
 2. 在 `/_/mrtang-admin/source/products` 审核商品，在 `/_/mrtang-admin/source/assets` 处理图片。
-3. 审核通过后桥接到 `supplier_products`，再走同步到 backend 的既有链路。
+3. 审核通过后加入发布队列，写入 `supplier_products`，再走同步到 backend 的既有链路。
 
 ## Vendure 对接约束
 

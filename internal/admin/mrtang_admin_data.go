@@ -22,6 +22,7 @@ type mrtangAdminPageData struct {
 	Miniapp              mrtangAdminMiniappData
 	MiniappError         string
 	SourceCapture        mrtangAdminSourceCaptureData
+	BackendReadiness     mrtangAdminBackendReadinessData
 	SourceError          string
 	FlashMessage         string
 	FlashError           string
@@ -37,6 +38,7 @@ type mrtangAdminMiniappData struct {
 	ConfigSourceMode            string
 	SourceURL                   string
 	DatasetSource               string
+	UsedStoredData              bool
 	RawAuthStatus               miniappmodel.RawAuthStatus
 	ContractCount               int
 	HomepageSectionCount        int
@@ -86,6 +88,20 @@ type mrtangAdminSourceCaptureData struct {
 	ProcessedAssetCount int
 	FailedAssetCount    int
 	RecentActions       []pim.SourceActionLog
+}
+
+type mrtangAdminBackendReadinessData struct {
+	VariantFieldConfigured int
+	VariantFieldTotal      int
+	ProductFieldConfigured int
+	ProductFieldTotal      int
+	MappedCategoryCount    int
+	PublishedCategoryCount int
+	PendingCategoryCount   int
+	PromotedProductCount   int
+	SyncedProductCount     int
+	Ready                  bool
+	MissingFields          []string
 }
 
 type mrtangAdminRecentAction struct {
@@ -254,6 +270,7 @@ func buildMrtangAdminBaseData(
 	} else {
 		page.SourceCapture = sourceCapture
 	}
+	page.BackendReadiness = buildBackendReadinessData(app, cfg, page.SourceCapture)
 	page.RecentActions = buildMrtangAdminRecentActions(app, page.SourceCapture.RecentActions, page.Procurement.RecentActions)
 
 	return page
@@ -378,6 +395,135 @@ func buildDashboardMiniappAPIData(ctx context.Context, cfg config.Config, servic
 		return data
 	}
 	data.Miniapp = miniappData
+	return data
+}
+
+func buildStoredDashboardMiniappData(
+	app core.App,
+	cfg config.Config,
+	miniappService *miniappservice.Service,
+	pimService *pim.Service,
+) (mrtangAdminMiniappData, error) {
+	data := mrtangAdminMiniappData{
+		SourceMode:       strings.TrimSpace(cfg.MiniApp.SourceMode),
+		ConfigSourceMode: strings.TrimSpace(cfg.MiniApp.SourceMode),
+		SourceURL:        strings.TrimSpace(cfg.MiniApp.SourceURL),
+		DatasetSource:    "stored_source_collections",
+		UsedStoredData:   true,
+	}
+	if miniappService != nil {
+		data.RawAuthStatus = miniappService.RawAuthStatus()
+	}
+
+	if pimService == nil {
+		data.Backlog = buildMrtangAdminBacklog(data)
+		return data, nil
+	}
+
+	liveSummary, err := pimService.TargetSyncStoredLiveSummary(app, strings.TrimSpace(cfg.MiniApp.SourceMode))
+	if err != nil {
+		return mrtangAdminMiniappData{}, err
+	}
+	sourceProducts, err := app.FindAllRecords(pim.CollectionSourceProducts)
+	if err != nil {
+		return mrtangAdminMiniappData{}, err
+	}
+
+	if strings.TrimSpace(liveSummary.SourceMode) != "" {
+		data.SourceMode = strings.TrimSpace(liveSummary.SourceMode)
+	}
+	data.CategoryTopLevelCount = liveSummary.TopLevelCount
+	data.CategoryNodeCount = liveSummary.ExpectedNodeCount
+	data.CategorySectionCount = len(liveSummary.ScopeOptions) - 1
+	if data.CategorySectionCount < 0 {
+		data.CategorySectionCount = 0
+	}
+	data.CategoryProductCount = liveSummary.ExpectedProductCount
+	data.ProductTotal = liveSummary.ExpectedProductCount
+	data.MultiUnitTotal = liveSummary.ExpectedMultiUnitCount
+	for _, option := range liveSummary.ScopeOptions {
+		if strings.TrimSpace(option.Key) == "" {
+			continue
+		}
+		if option.ProductCount > 0 {
+			data.CategorySectionWithProducts++
+		}
+	}
+	for _, product := range sourceProducts {
+		sourceType := strings.ToLower(strings.TrimSpace(product.GetString("source_type")))
+		switch {
+		case strings.Contains(sourceType, "detail"):
+			data.ProductRRDetailCount++
+		case strings.Contains(sourceType, "skeleton"):
+			data.ProductSkeletonCount++
+		}
+	}
+	data.Backlog = buildMrtangAdminBacklog(data)
+	return data, nil
+}
+
+func buildBackendReadinessData(app core.App, cfg config.Config, source mrtangAdminSourceCaptureData) mrtangAdminBackendReadinessData {
+	data := mrtangAdminBackendReadinessData{
+		VariantFieldTotal: 5,
+		ProductFieldTotal: 2,
+	}
+
+	checkField := func(value string, label string) bool {
+		if strings.TrimSpace(value) == "" {
+			data.MissingFields = append(data.MissingFields, label)
+			return false
+		}
+		return true
+	}
+
+	if checkField(cfg.Vendure.VariantSupplierCodeField, "Variant.supplierCode") {
+		data.VariantFieldConfigured++
+	}
+	if checkField(cfg.Vendure.VariantSupplierCostField, "Variant.supplierCostPrice") {
+		data.VariantFieldConfigured++
+	}
+	if checkField(cfg.Vendure.VariantConversionRateField, "Variant.conversionRate") {
+		data.VariantFieldConfigured++
+	}
+	if checkField(cfg.Vendure.VariantSourceProductField, "Variant.sourceProductId") {
+		data.VariantFieldConfigured++
+	}
+	if checkField(cfg.Vendure.VariantSourceTypeField, "Variant.sourceType") {
+		data.VariantFieldConfigured++
+	}
+	if checkField(cfg.Vendure.ProductTargetAudienceField, "Product.targetAudience") {
+		data.ProductFieldConfigured++
+	}
+	if checkField(cfg.Vendure.ProductCEndAssetField, "Product.cEndFeaturedAsset") {
+		data.ProductFieldConfigured++
+	}
+
+	data.PromotedProductCount = source.PromotedCount
+	data.SyncedProductCount = source.SyncedCount
+
+	categories, err := app.FindAllRecords("backend_category_mappings")
+	if err == nil {
+		for _, category := range categories {
+			status := strings.ToLower(strings.TrimSpace(category.GetString("publish_status")))
+			switch status {
+			case "mapped":
+				data.MappedCategoryCount++
+				data.PendingCategoryCount++
+			case "published":
+				data.MappedCategoryCount++
+				data.PublishedCategoryCount++
+			case "pending", "":
+				data.PendingCategoryCount++
+			case "error":
+				data.PendingCategoryCount++
+			}
+		}
+	}
+
+	data.Ready = data.VariantFieldConfigured == data.VariantFieldTotal &&
+		data.ProductFieldConfigured == data.ProductFieldTotal &&
+		(data.MappedCategoryCount > 0 || source.CategoryCount == 0)
+
 	return data
 }
 

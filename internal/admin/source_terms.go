@@ -7,9 +7,9 @@ func sourceReviewStatusLabel(status string) string {
 	case "imported":
 		return "待审核"
 	case "approved":
-		return "待桥接"
+		return "待加入发布队列"
 	case "promoted":
-		return "已桥接"
+		return "已加入发布队列"
 	case "rejected":
 		return "已拒绝"
 	default:
@@ -34,7 +34,7 @@ func sourceAssetStatusLabel(status string) string {
 
 func sourceSyncStatusLabel(status string, linked bool) string {
 	if !linked {
-		return "未桥接"
+		return "未进入发布队列"
 	}
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "synced":
@@ -44,7 +44,7 @@ func sourceSyncStatusLabel(status string, linked bool) string {
 	case "approved", "ready":
 		return "待同步"
 	case "":
-		return "已桥接"
+		return "已加入发布队列"
 	default:
 		return status
 	}
@@ -55,11 +55,11 @@ func sourceActionTypeLabel(action string) string {
 	case "update_review_status":
 		return "审核状态变更"
 	case "promote_product":
-		return "桥接商品"
+		return "加入发布队列"
 	case "promote_and_sync":
-		return "桥接并同步"
+		return "加入发布队列并发布到 Backend"
 	case "retry_sync":
-		return "重试同步"
+		return "重试发布到 Backend"
 	case "process_asset":
 		return "处理图片"
 	default:

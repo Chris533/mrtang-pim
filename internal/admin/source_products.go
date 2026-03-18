@@ -120,9 +120,9 @@ func RenderSourceProductsHTML(summary pim.SourceReviewWorkbenchSummary, filter p
     {{if .FlashError}}<div class="flash error">{{.FlashError}}</div>{{end}}
 
     <section class="stats">
-      <div class="stat"><div class="eyebrow">商品</div><div class="metric">{{.Summary.ProductCount}}</div><div class="small">{{.Summary.ImportedCount}} 待审核 / {{.Summary.ApprovedCount}} 待桥接 / {{.Summary.PromotedCount}} 已桥接</div></div>
+      <div class="stat"><div class="eyebrow">商品</div><div class="metric">{{.Summary.ProductCount}}</div><div class="small">{{.Summary.ImportedCount}} 待审核 / {{.Summary.ApprovedCount}} 待加入发布队列 / {{.Summary.PromotedCount}} 已加入发布队列</div></div>
       <div class="stat"><div class="eyebrow">当前筛选</div><div class="metric">{{len .Summary.Products}}</div><div class="small">当前页 {{.Summary.ProductPage}} / {{.Summary.ProductPages}}</div></div>
-      <div class="stat"><div class="eyebrow">桥接</div><div class="metric">{{.Summary.LinkedCount}}</div><div class="small">{{.Summary.UnlinkedCount}} 未桥接</div></div>
+      <div class="stat"><div class="eyebrow">发布队列</div><div class="metric">{{.Summary.LinkedCount}}</div><div class="small">{{.Summary.UnlinkedCount}} 未进入发布队列</div></div>
       <div class="stat"><div class="eyebrow">同步</div><div class="metric">{{.Summary.SyncedCount}}</div><div class="small">{{.Summary.SyncErrorCount}} 失败 / {{.Summary.ReadyToSyncCount}} 待同步</div></div>
     </section>
 
@@ -133,16 +133,16 @@ func RenderSourceProductsHTML(summary pim.SourceReviewWorkbenchSummary, filter p
             <select name="productStatus">
               <option value="">全部</option>
               <option value="imported" {{if eq .Filter.ProductStatus "imported"}}selected{{end}}>待审核</option>
-              <option value="approved" {{if eq .Filter.ProductStatus "approved"}}selected{{end}}>待桥接</option>
-              <option value="promoted" {{if eq .Filter.ProductStatus "promoted"}}selected{{end}}>已桥接</option>
+              <option value="approved" {{if eq .Filter.ProductStatus "approved"}}selected{{end}}>待加入发布队列</option>
+              <option value="promoted" {{if eq .Filter.ProductStatus "promoted"}}selected{{end}}>已加入发布队列</option>
               <option value="rejected" {{if eq .Filter.ProductStatus "rejected"}}selected{{end}}>已拒绝</option>
             </select>
           </label>
           <label>同步状态
             <select name="syncState">
               <option value="">全部</option>
-              <option value="unlinked" {{if eq .Filter.SyncState "unlinked"}}selected{{end}}>未桥接</option>
-              <option value="linked" {{if eq .Filter.SyncState "linked"}}selected{{end}}>已桥接</option>
+              <option value="unlinked" {{if eq .Filter.SyncState "unlinked"}}selected{{end}}>未进入发布队列</option>
+              <option value="linked" {{if eq .Filter.SyncState "linked"}}selected{{end}}>已加入发布队列</option>
               <option value="error" {{if eq .Filter.SyncState "error"}}selected{{end}}>同步失败</option>
               <option value="synced" {{if eq .Filter.SyncState "synced"}}selected{{end}}>已同步</option>
             </select>
@@ -160,9 +160,9 @@ func RenderSourceProductsHTML(summary pim.SourceReviewWorkbenchSummary, filter p
           <button type="submit" class="secondary">应用筛选</button>
           <a class="link small" href="/_/mrtang-admin/source/products">重置</a>
           <a class="link small" href="/_/mrtang-admin/source/products?productStatus=imported">待审批</a>
-          <a class="link small" href="/_/mrtang-admin/source/products?productStatus=approved">待 promote</a>
+          <a class="link small" href="/_/mrtang-admin/source/products?productStatus=approved">待加入发布队列</a>
           <a class="link small" href="/_/mrtang-admin/source/products?syncState=error">同步失败</a>
-          <a class="link small" href="/_/mrtang-admin/source/products?syncState=unlinked">未桥接</a>
+          <a class="link small" href="/_/mrtang-admin/source/products?syncState=unlinked">未进入发布队列</a>
           <a class="link small" href="/_/mrtang-admin/source/products?syncState=synced">已同步</a>
         </form>
 
@@ -172,9 +172,9 @@ func RenderSourceProductsHTML(summary pim.SourceReviewWorkbenchSummary, filter p
             <input type="hidden" name="status" value="approved">
             <button type="submit" class="secondary" data-confirm="确认批量通过当前选中的商品吗？">批量通过</button>
             <button type="submit" class="danger" formaction="/_/mrtang-admin/source/products/batch-status" onclick="this.form.status.value='rejected'" data-confirm="确认批量拒绝当前选中的商品吗？">批量拒绝</button>
-            <button type="submit" formaction="/_/mrtang-admin/source/products/batch-promote" data-confirm="确认批量桥接当前选中的商品吗？">批量桥接</button>
-            <button type="submit" formaction="/_/mrtang-admin/source/products/batch-promote-sync" data-confirm="确认批量桥接并同步当前选中的商品吗？">批量桥接并同步</button>
-            <button type="submit" class="warn" formaction="/_/mrtang-admin/source/products/batch-retry-sync" data-confirm="确认批量重试当前选中商品的同步吗？">批量重试同步</button>
+            <button type="submit" formaction="/_/mrtang-admin/source/products/batch-promote" data-confirm="确认将当前选中的商品批量加入发布队列吗？">批量加入发布队列</button>
+            <button type="submit" formaction="/_/mrtang-admin/source/products/batch-promote-sync" data-confirm="确认将当前选中的商品批量加入发布队列并发布到 Backend 吗？">批量加入发布队列并发布</button>
+            <button type="submit" class="warn" formaction="/_/mrtang-admin/source/products/batch-retry-sync" data-confirm="确认批量重试当前选中商品发布到 Backend 吗？">批量重试发布</button>
           </div>
           <div class="table-wrap"><table>
             <thead><tr><th>商品</th><th>状态</th><th>规格</th><th>同步</th><th>图片</th><th>操作</th></tr></thead>
@@ -220,21 +220,21 @@ func RenderSourceProductsHTML(summary pim.SourceReviewWorkbenchSummary, filter p
                       <input type="hidden" name="returnTo" value="{{$.CurrentURL}}">
                       <button class="danger" type="submit">拒绝</button>
                     </form>
-                    <form method="post" action="/_/mrtang-admin/source/products/promote" data-confirm="确认桥接这个商品到供应链商品集合吗？">
+                    <form method="post" action="/_/mrtang-admin/source/products/promote" data-confirm="确认将这个商品加入发布队列吗？">
                       <input type="hidden" name="id" value="{{.ID}}">
                       <input type="hidden" name="returnTo" value="{{$.CurrentURL}}">
-                      <button type="submit">桥接</button>
+                      <button type="submit">加入发布队列</button>
                     </form>
-                    <form method="post" action="/_/mrtang-admin/source/products/promote-sync" data-confirm="确认桥接并立即同步这个商品到后端吗？">
+                    <form method="post" action="/_/mrtang-admin/source/products/promote-sync" data-confirm="确认将这个商品加入发布队列并立即发布到 Backend 吗？">
                       <input type="hidden" name="id" value="{{.ID}}">
                       <input type="hidden" name="returnTo" value="{{$.CurrentURL}}">
-                      <button type="submit">桥接并同步</button>
+                      <button type="submit">加入发布队列并发布</button>
                     </form>
                     {{if and .Bridge.Linked (eq .Bridge.SyncStatus "error")}}
-                    <form method="post" action="/_/mrtang-admin/source/products/retry-sync" data-confirm="确认重试这个商品的同步吗？">
+                    <form method="post" action="/_/mrtang-admin/source/products/retry-sync" data-confirm="确认重试这个商品发布到 Backend 吗？">
                       <input type="hidden" name="id" value="{{.ID}}">
                       <input type="hidden" name="returnTo" value="{{$.CurrentURL}}">
-                      <button class="warn" type="submit">重试同步</button>
+                      <button class="warn" type="submit">重试发布</button>
                     </form>
                     {{end}}
                   </div>
@@ -265,12 +265,12 @@ func RenderSourceProductsHTML(summary pim.SourceReviewWorkbenchSummary, filter p
             <div class="small">优先处理 imported 商品。</div>
           </div>
           <div class="queue-item">
-            <div><strong>待桥接</strong> <span class="status warning">{{.Summary.ReadyToPromoteCount}}</span></div>
-            <div class="small">已通过商品需要桥接到供应链商品集合。</div>
+            <div><strong>待加入发布队列</strong> <span class="status warning">{{.Summary.ReadyToPromoteCount}}</span></div>
+            <div class="small">已通过商品需要进入发布队列，后续再同步到 Backend。</div>
           </div>
           <div class="queue-item">
             <div><strong>同步失败</strong> <span class="status danger">{{.Summary.SyncErrorCount}}</span></div>
-            <div class="small">已桥接商品失败后在这里重试同步。</div>
+            <div class="small">已加入发布队列商品失败后在这里重试发布。</div>
           </div>
           <div class="queue-item">
             <div><strong>失败图片</strong> <span class="status danger">{{.Summary.AssetFailed}}</span></div>
@@ -339,7 +339,7 @@ func RenderSourceProductsHTML(summary pim.SourceReviewWorkbenchSummary, filter p
 		return fmt.Sprintf("<pre>render source products failed: %s</pre>", template.HTMLEscapeString(err.Error()))
 	}
 
-	return decorateAdminPageHTML(builder.String(), "source", "源数据商品", "独立的商品管理页，负责筛选、分页和批量审核、桥接、同步。")
+	return decorateAdminPageHTML(builder.String(), "source", "源数据商品", "独立的商品管理页，负责筛选、分页和批量审核、加入发布队列、发布。")
 }
 
 func sourceProductsURL(filter pim.SourceReviewFilter, page int) string {

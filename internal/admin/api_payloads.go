@@ -72,6 +72,18 @@ type ProcurementAPIData struct {
 	FlashError   string                          `json:"flashError"`
 }
 
+type BackendReleaseAPIData struct {
+	Summary      pim.BackendReleaseSummary `json:"summary"`
+	FlashMessage string                    `json:"flashMessage"`
+	FlashError   string                    `json:"flashError"`
+}
+
+type BackendReleasePreviewAPIData struct {
+	Preview      pim.BackendReleasePayloadPreview `json:"preview"`
+	FlashMessage string                           `json:"flashMessage"`
+	FlashError   string                           `json:"flashError"`
+}
+
 type SourceProductDetailAPIData struct {
 	Detail       pim.SourceProductDetail `json:"detail"`
 	ReturnTo     string                  `json:"returnTo"`
@@ -119,8 +131,18 @@ func BuildDashboardAPIData(
 	return data
 }
 
-func BuildDashboardMiniappAPIData(ctx context.Context, cfg config.Config, miniappService *miniappservice.Service) DashboardMiniappLiveAPIData {
-	return buildDashboardMiniappAPIData(ctx, cfg, miniappService)
+func BuildDashboardMiniappAPIData(ctx context.Context, app core.App, cfg config.Config, pimService *pim.Service, miniappService *miniappservice.Service) DashboardMiniappLiveAPIData {
+	data := buildDashboardMiniappAPIData(ctx, cfg, miniappService)
+	if data.MiniappError == "" || app == nil || pimService == nil {
+		return data
+	}
+	storedData, err := buildStoredDashboardMiniappData(app, cfg, miniappService, pimService)
+	if err != nil {
+		return data
+	}
+	data.Miniapp = storedData
+	data.MiniappError = "加载实时摘要失败，已回退到已落库结果：" + data.MiniappError
+	return data
 }
 
 func BuildTargetSyncAPIData(
@@ -199,6 +221,22 @@ func BuildSourceAssetJobsAPIData(summary pim.SourceAssetJobsSummary, filter pim.
 func BuildProcurementAPIData(summary pim.ProcurementWorkbenchSummary, flashMessage string, flashError string) ProcurementAPIData {
 	return ProcurementAPIData{
 		Summary:      summary,
+		FlashMessage: strings.TrimSpace(flashMessage),
+		FlashError:   strings.TrimSpace(flashError),
+	}
+}
+
+func BuildBackendReleaseAPIData(summary pim.BackendReleaseSummary, flashMessage string, flashError string) BackendReleaseAPIData {
+	return BackendReleaseAPIData{
+		Summary:      summary,
+		FlashMessage: strings.TrimSpace(flashMessage),
+		FlashError:   strings.TrimSpace(flashError),
+	}
+}
+
+func BuildBackendReleasePreviewAPIData(preview pim.BackendReleasePayloadPreview, flashMessage string, flashError string) BackendReleasePreviewAPIData {
+	return BackendReleasePreviewAPIData{
+		Preview:      preview,
 		FlashMessage: strings.TrimSpace(flashMessage),
 		FlashError:   strings.TrimSpace(flashError),
 	}

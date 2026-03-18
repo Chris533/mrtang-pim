@@ -9,6 +9,8 @@ import (
 	"math"
 	"net/url"
 	"path"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -23,12 +25,13 @@ import (
 )
 
 const (
-	CollectionSupplierProducts      = "supplier_products"
-	CollectionCategoryMappings      = "category_mappings"
-	CollectionProcurementOrders     = "procurement_orders"
-	CollectionProcurementActionLogs = "procurement_action_logs"
-	CollectionMiniappActionLogs     = "miniapp_action_logs"
-	CollectionSourceAssetJobs       = "source_asset_jobs"
+	CollectionSupplierProducts        = "supplier_products"
+	CollectionCategoryMappings        = "category_mappings"
+	CollectionBackendCategoryMappings = "backend_category_mappings"
+	CollectionProcurementOrders       = "procurement_orders"
+	CollectionProcurementActionLogs   = "procurement_action_logs"
+	CollectionMiniappActionLogs       = "miniapp_action_logs"
+	CollectionSourceAssetJobs         = "source_asset_jobs"
 
 	StatusPending      = "pending"
 	StatusAIProcessing = "ai_processing"
@@ -270,6 +273,88 @@ type SourceAssetProcessProgress struct {
 	AssetIDs    []string                        `json:"assetIds"`
 }
 
+type BackendCategoryMappingItem struct {
+	ID                  string `json:"id"`
+	SourceKey           string `json:"sourceKey"`
+	Label               string `json:"label"`
+	SourcePath          string `json:"sourcePath"`
+	BackendCollection   string `json:"backendCollection"`
+	BackendCollectionID string `json:"backendCollectionId"`
+	BackendPath         string `json:"backendPath"`
+	PublishStatus       string `json:"publishStatus"`
+	LastError           string `json:"lastError"`
+	Note                string `json:"note"`
+	PublishedAt         string `json:"publishedAt"`
+}
+
+type BackendReleaseProductItem struct {
+	ID                 string  `json:"id"`
+	SupplierCode       string  `json:"supplierCode"`
+	SKU                string  `json:"sku"`
+	Title              string  `json:"title"`
+	NormalizedCategory string  `json:"normalizedCategory"`
+	TargetAudience     string  `json:"targetAudience"`
+	ConversionRate     float64 `json:"conversionRate"`
+	SyncStatus         string  `json:"syncStatus"`
+	VendureProductID   string  `json:"vendureProductId"`
+	VendureVariantID   string  `json:"vendureVariantId"`
+	Reason             string  `json:"reason"`
+	HasProcessedImage  bool    `json:"hasProcessedImage"`
+	HasConsumerImage   bool    `json:"hasConsumerImage"`
+	ReadyForPreview    bool    `json:"readyForPreview"`
+}
+
+type BackendCategoryBranchSummary struct {
+	RootKey        string `json:"rootKey"`
+	Label          string `json:"label"`
+	TotalCount     int    `json:"totalCount"`
+	PublishedCount int    `json:"publishedCount"`
+	PendingCount   int    `json:"pendingCount"`
+	ErrorCount     int    `json:"errorCount"`
+}
+
+type BackendCategoryMappingSuggestion struct {
+	SourceKey            string `json:"sourceKey"`
+	Label                string `json:"label"`
+	SourcePath           string `json:"sourcePath"`
+	SourceLevel          int    `json:"sourceLevel"`
+	SuggestedCollection  string `json:"suggestedCollection"`
+	SuggestedBackendPath string `json:"suggestedBackendPath"`
+	Reason               string `json:"reason"`
+}
+
+type BackendReleaseSummary struct {
+	CategoryCount        int                                `json:"categoryCount"`
+	MappedCategoryCount  int                                `json:"mappedCategoryCount"`
+	PublishedCount       int                                `json:"publishedCount"`
+	PendingCategoryCount int                                `json:"pendingCategoryCount"`
+	ErrorCategoryCount   int                                `json:"errorCategoryCount"`
+	ProductCount         int                                `json:"productCount"`
+	ReadyProductCount    int                                `json:"readyProductCount"`
+	SyncedProductCount   int                                `json:"syncedProductCount"`
+	ErrorProductCount    int                                `json:"errorProductCount"`
+	PublishedRootCount   int                                `json:"publishedRootCount"`
+	Categories           []BackendCategoryMappingItem       `json:"categories"`
+	Branches             []BackendCategoryBranchSummary     `json:"branches"`
+	Products             []BackendReleaseProductItem        `json:"products"`
+	SuggestedCategories  []BackendCategoryMappingSuggestion `json:"suggestedCategories"`
+	RecommendedProducts  []BackendReleaseProductItem        `json:"recommendedProducts"`
+}
+
+type BackendReleasePayloadPreview struct {
+	RecordID string         `json:"recordId"`
+	Payload  map[string]any `json:"payload"`
+}
+
+type BackendCategoryPublishBatchResult struct {
+	Requested    int                          `json:"requested"`
+	Published    int                          `json:"published"`
+	Failed       int                          `json:"failed"`
+	RequestedIDs []string                     `json:"requestedIds"`
+	Items        []BackendCategoryMappingItem `json:"items"`
+	Errors       []string                     `json:"errors"`
+}
+
 type Service struct {
 	cfg               config.Config
 	connector         supplier.Connector
@@ -479,6 +564,21 @@ func procurementOrderSortExpr(app core.App) (string, error) {
 		return "-created", nil
 	}
 
+	return "-id", nil
+}
+
+func supplierProductSortExpr(app core.App) (string, error) {
+	collection, err := app.FindCollectionByNameOrId(CollectionSupplierProducts)
+	if err != nil {
+		return "", err
+	}
+
+	if collection.Fields.GetByName("updated") != nil {
+		return "-updated", nil
+	}
+	if collection.Fields.GetByName("created") != nil {
+		return "-created", nil
+	}
 	return "-id", nil
 }
 
@@ -886,22 +986,7 @@ func (s *Service) processRecord(ctx context.Context, app core.App, record *core.
 }
 
 func (s *Service) syncRecord(ctx context.Context, app core.App, record *core.Record) error {
-	payload := vendure.ProductPayload{
-		Name:           displayTitle(record),
-		Slug:           slugify(record.GetString("supplier_code") + "-" + record.GetString("original_sku") + "-" + displayTitle(record)),
-		Description:    defaultString(record.GetString("marketing_description"), record.GetString("raw_description")),
-		SKU:            record.GetString("original_sku"),
-		CurrencyCode:   defaultString(record.GetString("currency_code"), s.cfg.Vendure.CurrencyCode),
-		ConsumerPrice:  toMinorUnits(record.GetFloat("c_price")),
-		AssetURL:       s.recordAssetURL(record),
-		AssetName:      path.Base(s.recordAssetURL(record)),
-		BusinessPrice:  toMinorUnits(record.GetFloat("b_price")),
-		DefaultStock:   s.cfg.Workflow.DefaultStockOnHand,
-		SalesUnit:      defaultString(readJSONAttribute(record, "sales_unit"), "件"),
-		VendureProduct: record.GetString("vendure_product_id"),
-		VendureVariant: record.GetString("vendure_variant_id"),
-		NeedColdChain:  strings.EqualFold(readJSONAttribute(record, "need_cold_chain"), "true"),
-	}
+	payload := s.buildVendurePayload(record)
 
 	result, err := s.vendure.SyncProduct(ctx, payload)
 	if err != nil {
@@ -911,12 +996,802 @@ func (s *Service) syncRecord(ctx context.Context, app core.App, record *core.Rec
 		return err
 	}
 
-	record.Set("vendure_product_id", coalesce(result.ProductID, record.GetString("vendure_product_id")))
-	record.Set("vendure_variant_id", coalesce(result.VariantID, record.GetString("vendure_variant_id")))
+	productID := coalesce(result.ProductID, record.GetString("vendure_product_id"))
+	variantID := coalesce(result.VariantID, record.GetString("vendure_variant_id"))
+	if err := s.syncVendureCollections(ctx, app, record, productID); err != nil {
+		record.Set("last_sync_error", err.Error())
+		record.Set("sync_status", StatusError)
+		_ = app.Save(record)
+		return err
+	}
+
+	record.Set("vendure_product_id", productID)
+	record.Set("vendure_variant_id", variantID)
 	record.Set("last_sync_error", "")
 	record.Set("sync_status", StatusSynced)
 	record.Set("last_synced_at", time.Now().Format(time.RFC3339))
 	return app.Save(record)
+}
+
+func (s *Service) buildVendurePayload(record *core.Record) vendure.ProductPayload {
+	assetURL := s.recordPrimaryAssetURL(record)
+	cEndAssetURL := s.recordConsumerAssetURL(record)
+	return vendure.ProductPayload{
+		Name:              displayTitle(record),
+		Slug:              slugify(record.GetString("supplier_code") + "-" + record.GetString("original_sku") + "-" + displayTitle(record)),
+		Description:       defaultString(record.GetString("marketing_description"), record.GetString("raw_description")),
+		SKU:               record.GetString("original_sku"),
+		CurrencyCode:      defaultString(record.GetString("currency_code"), s.cfg.Vendure.CurrencyCode),
+		ConsumerPrice:     toMinorUnits(record.GetFloat("c_price")),
+		AssetURL:          assetURL,
+		AssetName:         assetFileName(assetURL),
+		CEndAssetURL:      cEndAssetURL,
+		CEndAssetName:     assetFileName(cEndAssetURL),
+		BusinessPrice:     toMinorUnits(record.GetFloat("b_price")),
+		SupplierCode:      record.GetString("supplier_code"),
+		SupplierCostPrice: toMinorUnits(record.GetFloat("cost_price")),
+		ConversionRate:    sourceConversionRateFromSupplierRecord(record),
+		SourceProductID:   defaultString(record.GetString("source_product_id"), readJSONAttribute(record, "source_product_id")),
+		SourceType:        defaultString(record.GetString("source_type"), readJSONAttribute(record, "source_type")),
+		TargetAudience:    defaultString(record.GetString("target_audience"), "ALL"),
+		DefaultStock:      s.cfg.Workflow.DefaultStockOnHand,
+		SalesUnit:         defaultString(readJSONAttribute(record, "sales_unit"), "件"),
+		VendureProduct:    record.GetString("vendure_product_id"),
+		VendureVariant:    record.GetString("vendure_variant_id"),
+		NeedColdChain:     strings.EqualFold(readJSONAttribute(record, "need_cold_chain"), "true"),
+	}
+}
+
+func (s *Service) syncVendureCollections(ctx context.Context, app core.App, record *core.Record, productID string) error {
+	productID = strings.TrimSpace(productID)
+	if productID == "" {
+		return fmt.Errorf("vendure product id is empty")
+	}
+
+	if err := s.normalizePublishedCategoryBranchForSupplierRecord(ctx, app, record); err != nil {
+		return err
+	}
+
+	collectionIDs, err := s.backendCollectionIDsForSupplierRecord(app, record)
+	if err != nil {
+		return err
+	}
+	if len(collectionIDs) == 0 {
+		categoryKey := supplierRecordReleaseCategoryKey(record)
+		if categoryKey == "" {
+			return nil
+		}
+		return fmt.Errorf("no published backend category mapping for source category %s", categoryKey)
+	}
+	branchIDs, err := s.backendBranchCollectionIDsForSupplierRecord(app, record)
+	if err != nil {
+		return err
+	}
+	return s.vendure.SyncProductCollectionsExact(ctx, productID, collectionIDs, branchIDs)
+}
+
+func (s *Service) normalizePublishedCategoryBranchForSupplierRecord(ctx context.Context, app core.App, record *core.Record) error {
+	categoryKey := supplierRecordReleaseCategoryKey(record)
+	if categoryKey == "" {
+		return nil
+	}
+
+	rootKey, rootPath, err := s.sourceCategoryRoot(app, categoryKey)
+	if err != nil {
+		return nil
+	}
+
+	mappings, err := app.FindRecordsByFilter(
+		CollectionBackendCategoryMappings,
+		"publish_status = {:status}",
+		"-published_at",
+		500,
+		0,
+		dbx.Params{"status": "published"},
+	)
+	if err != nil {
+		return err
+	}
+
+	var branch []*core.Record
+	for _, mapping := range mappings {
+		sourceKey := strings.TrimSpace(mapping.GetString("source_key"))
+		sourcePath := strings.TrimSpace(mapping.GetString("source_path"))
+		if sourceKey == "" || sourcePath == "" {
+			continue
+		}
+		if sourceKey == rootKey || sourcePath == rootPath || strings.HasPrefix(sourcePath, rootPath+"/") {
+			branch = append(branch, mapping)
+		}
+	}
+
+	sort.SliceStable(branch, func(i, j int) bool {
+		return len(strings.TrimSpace(branch[i].GetString("source_path"))) < len(strings.TrimSpace(branch[j].GetString("source_path")))
+	})
+
+	for _, mapping := range branch {
+		if _, err := s.publishBackendCategoryRecursive(
+			ctx,
+			app,
+			strings.TrimSpace(mapping.GetString("source_key")),
+			strings.TrimSpace(mapping.GetString("backend_collection")),
+			strings.TrimSpace(mapping.GetString("backend_path")),
+			strings.TrimSpace(mapping.GetString("note")),
+			map[string]bool{},
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *Service) backendCollectionIDsForSupplierRecord(app core.App, record *core.Record) ([]string, error) {
+	categoryKey := supplierRecordReleaseCategoryKey(record)
+	if categoryKey == "" {
+		return nil, nil
+	}
+
+	categoryKeys := []string{categoryKey}
+	currentKey := categoryKey
+	for {
+		sourceRecord, err := app.FindFirstRecordByFilter(CollectionSourceCategories, "source_key = {:source_key}", dbx.Params{"source_key": currentKey})
+		if err != nil {
+			break
+		}
+		parentKey := strings.TrimSpace(sourceRecord.GetString("parent_key"))
+		if parentKey == "" || containsTrimmed(categoryKeys, parentKey) {
+			break
+		}
+		categoryKeys = append(categoryKeys, parentKey)
+		currentKey = parentKey
+	}
+
+	collectionIDs := make([]string, 0, len(categoryKeys))
+	for _, key := range categoryKeys {
+		mapping, err := app.FindFirstRecordByFilter(
+			CollectionBackendCategoryMappings,
+			"source_key = {:source_key} && publish_status = {:status}",
+			dbx.Params{
+				"source_key": key,
+				"status":     "published",
+			},
+		)
+		if err != nil {
+			continue
+		}
+		if collectionID := strings.TrimSpace(mapping.GetString("backend_collection_id")); collectionID != "" {
+			collectionIDs = append(collectionIDs, collectionID)
+		}
+	}
+	return uniqueTrimmed(collectionIDs), nil
+}
+
+func (s *Service) backendBranchCollectionIDsForSupplierRecord(app core.App, record *core.Record) ([]string, error) {
+	categoryKey := supplierRecordReleaseCategoryKey(record)
+	if categoryKey == "" {
+		return nil, nil
+	}
+
+	rootKey, rootPath, err := s.sourceCategoryRoot(app, categoryKey)
+	if err != nil {
+		return nil, err
+	}
+
+	mappings, err := app.FindRecordsByFilter(
+		CollectionBackendCategoryMappings,
+		"publish_status = {:status}",
+		"-published_at",
+		500,
+		0,
+		dbx.Params{"status": "published"},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	ids := make([]string, 0, len(mappings))
+	for _, mapping := range mappings {
+		sourceKey := strings.TrimSpace(mapping.GetString("source_key"))
+		sourcePath := strings.TrimSpace(mapping.GetString("source_path"))
+		if sourceKey == "" || sourcePath == "" {
+			continue
+		}
+		if sourceKey == rootKey || sourcePath == rootPath || strings.HasPrefix(sourcePath, rootPath+"/") {
+			if collectionID := strings.TrimSpace(mapping.GetString("backend_collection_id")); collectionID != "" {
+				ids = append(ids, collectionID)
+			}
+		}
+	}
+
+	return uniqueTrimmed(ids), nil
+}
+
+func (s *Service) sourceCategoryRoot(app core.App, categoryKey string) (string, string, error) {
+	currentKey := strings.TrimSpace(categoryKey)
+	if currentKey == "" {
+		return "", "", fmt.Errorf("category key is empty")
+	}
+
+	var lastRecord *core.Record
+	for {
+		record, err := app.FindFirstRecordByFilter(CollectionSourceCategories, "source_key = {:source_key}", dbx.Params{"source_key": currentKey})
+		if err != nil {
+			if lastRecord != nil {
+				return strings.TrimSpace(lastRecord.GetString("source_key")), strings.TrimSpace(lastRecord.GetString("category_path")), nil
+			}
+			return "", "", err
+		}
+		lastRecord = record
+		parentKey := strings.TrimSpace(record.GetString("parent_key"))
+		if parentKey == "" {
+			break
+		}
+		currentKey = parentKey
+	}
+
+	if lastRecord == nil {
+		return "", "", fmt.Errorf("source category not found")
+	}
+	return strings.TrimSpace(lastRecord.GetString("source_key")), strings.TrimSpace(lastRecord.GetString("category_path")), nil
+}
+
+func (s *Service) BackendReleaseSummary(_ context.Context, app core.App, limit int) (BackendReleaseSummary, error) {
+	if limit <= 0 {
+		limit = 12
+	}
+	summary := BackendReleaseSummary{}
+
+	sourceCategories, err := app.FindAllRecords(CollectionSourceCategories)
+	if err != nil {
+		return summary, err
+	}
+	summary.CategoryCount = len(sourceCategories)
+	bySourceKey := make(map[string]*core.Record, len(sourceCategories))
+	for _, record := range sourceCategories {
+		bySourceKey[record.GetString("source_key")] = record
+	}
+
+	categoryMappings, err := app.FindAllRecords(CollectionBackendCategoryMappings)
+	if err == nil {
+		for _, mapping := range categoryMappings {
+			status := strings.ToLower(strings.TrimSpace(mapping.GetString("publish_status")))
+			item := BackendCategoryMappingItem{
+				ID:                  mapping.Id,
+				SourceKey:           mapping.GetString("source_key"),
+				SourcePath:          mapping.GetString("source_path"),
+				BackendCollection:   mapping.GetString("backend_collection"),
+				BackendCollectionID: mapping.GetString("backend_collection_id"),
+				BackendPath:         mapping.GetString("backend_path"),
+				PublishStatus:       mapping.GetString("publish_status"),
+				LastError:           mapping.GetString("last_error"),
+				Note:                mapping.GetString("note"),
+				PublishedAt:         mapping.GetString("published_at"),
+			}
+			if source := bySourceKey[item.SourceKey]; source != nil {
+				item.Label = source.GetString("label")
+				if item.SourcePath == "" {
+					item.SourcePath = source.GetString("category_path")
+				}
+			}
+			switch status {
+			case "mapped":
+				summary.MappedCategoryCount++
+				summary.PendingCategoryCount++
+			case "published":
+				summary.MappedCategoryCount++
+				summary.PublishedCount++
+			case "error":
+				summary.ErrorCategoryCount++
+			default:
+				summary.PendingCategoryCount++
+			}
+			summary.Categories = append(summary.Categories, item)
+		}
+	}
+
+	for _, source := range sourceCategories {
+		sourceKey := strings.TrimSpace(source.GetString("source_key"))
+		if sourceKey == "" {
+			continue
+		}
+		found := false
+		for _, item := range summary.Categories {
+			if item.SourceKey == sourceKey {
+				found = true
+				break
+			}
+		}
+		if !found {
+			summary.PendingCategoryCount++
+			summary.Categories = append(summary.Categories, BackendCategoryMappingItem{
+				SourceKey:     sourceKey,
+				Label:         source.GetString("label"),
+				SourcePath:    source.GetString("category_path"),
+				PublishStatus: "pending",
+			})
+		}
+	}
+	summary.SuggestedCategories = buildBackendCategorySuggestions(sourceCategories, summary.Categories, 8)
+	summary.Branches = buildBackendCategoryBranchSummaries(sourceCategories, summary.Categories)
+	for _, branch := range summary.Branches {
+		if branch.PublishedCount > 0 {
+			summary.PublishedRootCount++
+		}
+	}
+
+	sortExpr, err := supplierProductSortExpr(app)
+	if err != nil {
+		return summary, err
+	}
+
+	records, err := app.FindRecordsByFilter(CollectionSupplierProducts, "sync_status != ''", sortExpr, limit, 0)
+	if err != nil {
+		return summary, err
+	}
+	allProducts, err := app.FindAllRecords(CollectionSupplierProducts)
+	if err == nil {
+		summary.ProductCount = len(allProducts)
+		for _, record := range allProducts {
+			status := strings.ToLower(strings.TrimSpace(record.GetString("sync_status")))
+			switch status {
+			case StatusApproved:
+				summary.ReadyProductCount++
+			case StatusSynced:
+				summary.SyncedProductCount++
+			case StatusError:
+				summary.ErrorProductCount++
+			}
+		}
+	}
+	for _, record := range records {
+		summary.Products = append(summary.Products, backendReleaseProductItemFromRecord(record))
+	}
+	summary.RecommendedProducts = pickRecommendedBackendReleaseProducts(records, 3)
+
+	slices.SortFunc(summary.Categories, func(a, b BackendCategoryMappingItem) int {
+		return strings.Compare(a.SourcePath, b.SourcePath)
+	})
+
+	return summary, nil
+}
+
+func backendReleaseProductItemFromRecord(record *core.Record) BackendReleaseProductItem {
+	hasProcessedImage := strings.TrimSpace(sourceAssetConsumerImageURL(record)) != ""
+	hasConsumerImage := strings.TrimSpace(sourceAssetConsumerImageURL(record)) != "" || strings.TrimSpace(sourceAssetPrimaryImageURL(record)) != ""
+	conversionRate := sourceConversionRateFromSupplierRecord(record)
+	return BackendReleaseProductItem{
+		ID:                 record.Id,
+		SupplierCode:       record.GetString("supplier_code"),
+		SKU:                record.GetString("original_sku"),
+		Title:              displayTitle(record),
+		NormalizedCategory: defaultString(record.GetString("normalized_category"), record.GetString("raw_category")),
+		TargetAudience:     defaultString(record.GetString("target_audience"), "ALL"),
+		ConversionRate:     conversionRate,
+		SyncStatus:         record.GetString("sync_status"),
+		VendureProductID:   record.GetString("vendure_product_id"),
+		VendureVariantID:   record.GetString("vendure_variant_id"),
+		HasProcessedImage:  hasProcessedImage,
+		HasConsumerImage:   hasConsumerImage,
+		ReadyForPreview:    strings.TrimSpace(record.GetString("original_sku")) != "" && strings.TrimSpace(displayTitle(record)) != "",
+	}
+}
+
+func buildBackendCategorySuggestions(sourceCategories []*core.Record, existing []BackendCategoryMappingItem, limit int) []BackendCategoryMappingSuggestion {
+	if limit <= 0 {
+		limit = 8
+	}
+	mapped := make(map[string]struct{}, len(existing))
+	for _, item := range existing {
+		if strings.TrimSpace(item.SourceKey) == "" {
+			continue
+		}
+		if strings.TrimSpace(item.BackendCollection) != "" || strings.TrimSpace(item.BackendPath) != "" {
+			mapped[strings.TrimSpace(item.SourceKey)] = struct{}{}
+		}
+	}
+	suggestions := make([]BackendCategoryMappingSuggestion, 0, limit)
+	for _, source := range sourceCategories {
+		sourceKey := strings.TrimSpace(source.GetString("source_key"))
+		if sourceKey == "" {
+			continue
+		}
+		if _, ok := mapped[sourceKey]; ok {
+			continue
+		}
+		sourcePath := strings.TrimSpace(source.GetString("category_path"))
+		segments := splitCategoryPath(sourcePath, source.GetString("label"))
+		collection := strings.Join(slugifySegments(segments), "/")
+		level := source.GetInt("level")
+		reason := "建议先为顶级分类建立 Collection，再逐级补子分类。"
+		if level >= 3 {
+			reason = "末级分类建议直接映射到最终 Collection，便于后续商品发布。"
+		} else if level == 2 {
+			reason = "二级分类建议保留为中间 Collection，保持导航层级。"
+		}
+		suggestions = append(suggestions, BackendCategoryMappingSuggestion{
+			SourceKey:            sourceKey,
+			Label:                source.GetString("label"),
+			SourcePath:           sourcePath,
+			SourceLevel:          level,
+			SuggestedCollection:  collection,
+			SuggestedBackendPath: strings.Join(segments, "/"),
+			Reason:               reason,
+		})
+		if len(suggestions) >= limit {
+			break
+		}
+	}
+	return suggestions
+}
+
+func buildBackendCategoryBranchSummaries(sourceCategories []*core.Record, existing []BackendCategoryMappingItem) []BackendCategoryBranchSummary {
+	topLevelByLabel := make(map[string]string)
+	for _, source := range sourceCategories {
+		label := strings.TrimSpace(source.GetString("label"))
+		if label == "" {
+			continue
+		}
+		level := source.GetInt("level")
+		path := splitCategoryPath(source.GetString("category_path"), label)
+		if level <= 1 || len(path) <= 1 {
+			topLevelByLabel[path[0]] = strings.TrimSpace(source.GetString("source_key"))
+		}
+	}
+
+	type accumulator struct {
+		BackendCategoryBranchSummary
+	}
+	branches := make(map[string]*accumulator)
+	for _, source := range sourceCategories {
+		sourceKey := strings.TrimSpace(source.GetString("source_key"))
+		path := splitCategoryPath(source.GetString("category_path"), source.GetString("label"))
+		if sourceKey == "" || len(path) == 0 {
+			continue
+		}
+		rootLabel := path[0]
+		rootKey := topLevelByLabel[rootLabel]
+		if rootKey == "" {
+			rootKey = sourceKey
+		}
+		entry := branches[rootKey]
+		if entry == nil {
+			entry = &accumulator{BackendCategoryBranchSummary: BackendCategoryBranchSummary{
+				RootKey: rootKey,
+				Label:   rootLabel,
+			}}
+			branches[rootKey] = entry
+		}
+		entry.TotalCount++
+	}
+
+	statusBySourceKey := make(map[string]string, len(existing))
+	for _, item := range existing {
+		sourceKey := strings.TrimSpace(item.SourceKey)
+		if sourceKey == "" {
+			continue
+		}
+		statusBySourceKey[sourceKey] = strings.ToLower(strings.TrimSpace(item.PublishStatus))
+	}
+
+	for _, source := range sourceCategories {
+		sourceKey := strings.TrimSpace(source.GetString("source_key"))
+		path := splitCategoryPath(source.GetString("category_path"), source.GetString("label"))
+		if sourceKey == "" || len(path) == 0 {
+			continue
+		}
+		rootLabel := path[0]
+		rootKey := topLevelByLabel[rootLabel]
+		if rootKey == "" {
+			rootKey = sourceKey
+		}
+		entry := branches[rootKey]
+		if entry == nil {
+			continue
+		}
+		switch statusBySourceKey[sourceKey] {
+		case "published":
+			entry.PublishedCount++
+		case "error":
+			entry.ErrorCount++
+		default:
+			entry.PendingCount++
+		}
+	}
+
+	items := make([]BackendCategoryBranchSummary, 0, len(branches))
+	for _, branch := range branches {
+		items = append(items, branch.BackendCategoryBranchSummary)
+	}
+	slices.SortFunc(items, func(left, right BackendCategoryBranchSummary) int {
+		if left.PublishedCount != right.PublishedCount {
+			if left.PublishedCount > right.PublishedCount {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(left.Label, right.Label)
+	})
+	return items
+}
+
+func pickRecommendedBackendReleaseProducts(records []*core.Record, limit int) []BackendReleaseProductItem {
+	if limit <= 0 {
+		limit = 3
+	}
+	type candidate struct {
+		item   BackendReleaseProductItem
+		score  int
+		record *core.Record
+	}
+	candidates := make([]candidate, 0, len(records))
+	for _, record := range records {
+		item := backendReleaseProductItemFromRecord(record)
+		score := 0
+		reasons := make([]string, 0, 3)
+		if item.ConversionRate > 1 {
+			score += 3
+			reasons = append(reasons, "多单位换算")
+		}
+		if item.HasProcessedImage {
+			score += 2
+			reasons = append(reasons, "已有处理图")
+		}
+		if strings.EqualFold(item.SyncStatus, StatusApproved) {
+			score += 2
+			reasons = append(reasons, "待发布验证")
+		}
+		if item.TargetAudience != "" && !strings.EqualFold(item.TargetAudience, "ALL") {
+			score += 1
+			reasons = append(reasons, "客群分流")
+		}
+		if score == 0 {
+			reasons = append(reasons, "基础联调样例")
+		}
+		item.Reason = strings.Join(reasons, " / ")
+		candidates = append(candidates, candidate{item: item, score: score, record: record})
+	}
+	slices.SortFunc(candidates, func(left, right candidate) int {
+		if left.score != right.score {
+			if left.score > right.score {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(left.item.Title, right.item.Title)
+	})
+	recommended := make([]BackendReleaseProductItem, 0, minInt(limit, len(candidates)))
+	for _, item := range candidates {
+		if len(recommended) >= limit {
+			break
+		}
+		recommended = append(recommended, item.item)
+	}
+	return recommended
+}
+
+func (s *Service) SaveBackendCategoryMapping(_ context.Context, app core.App, sourceKey string, backendCollection string, backendPath string, note string) error {
+	sourceKey = strings.TrimSpace(sourceKey)
+	if sourceKey == "" {
+		return fmt.Errorf("source_key is required")
+	}
+	backendCollection = strings.TrimSpace(backendCollection)
+	backendPath = strings.TrimSpace(backendPath)
+	if backendCollection == "" && backendPath == "" {
+		return fmt.Errorf("backend collection or backend path is required")
+	}
+	source, err := app.FindFirstRecordByFilter(CollectionSourceCategories, "source_key = {:source_key}", dbx.Params{"source_key": sourceKey})
+	if err != nil {
+		return fmt.Errorf("load source category %s: %w", sourceKey, err)
+	}
+	_, err = upsertByFilter(app, CollectionBackendCategoryMappings, "source_key = {:source_key}", dbx.Params{"source_key": sourceKey}, func(record *core.Record, created bool) error {
+		record.Set("source_key", sourceKey)
+		record.Set("source_path", source.GetString("category_path"))
+		record.Set("backend_collection", backendCollection)
+		record.Set("backend_path", backendPath)
+		record.Set("note", strings.TrimSpace(note))
+		record.Set("last_error", "")
+		record.Set("publish_status", "mapped")
+		return nil
+	})
+	return err
+}
+
+func (s *Service) PublishBackendCategory(ctx context.Context, app core.App, sourceKey string, backendCollection string, backendPath string, note string) (BackendCategoryMappingItem, error) {
+	sourceKey = strings.TrimSpace(sourceKey)
+	if sourceKey == "" {
+		return BackendCategoryMappingItem{}, fmt.Errorf("source_key is required")
+	}
+	visited := map[string]bool{}
+	return s.publishBackendCategoryRecursive(ctx, app, sourceKey, strings.TrimSpace(backendCollection), strings.TrimSpace(backendPath), strings.TrimSpace(note), visited)
+}
+
+func (s *Service) PublishBackendCategoriesBatch(ctx context.Context, app core.App, sourceKeys []string) (BackendCategoryPublishBatchResult, error) {
+	keys := uniqueNonEmptyStrings(sourceKeys)
+	result := BackendCategoryPublishBatchResult{
+		Requested:    len(keys),
+		RequestedIDs: keys,
+		Items:        make([]BackendCategoryMappingItem, 0, len(keys)),
+		Errors:       make([]string, 0),
+	}
+	if len(keys) == 0 {
+		return result, fmt.Errorf("missing backend category source keys")
+	}
+
+	for _, sourceKey := range keys {
+		item, err := s.PublishBackendCategory(ctx, app, sourceKey, "", "", "")
+		if err != nil {
+			result.Failed++
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %s", sourceKey, strings.TrimSpace(err.Error())))
+			continue
+		}
+		result.Published++
+		result.Items = append(result.Items, item)
+	}
+
+	return result, nil
+}
+
+func (s *Service) publishBackendCategoryRecursive(ctx context.Context, app core.App, sourceKey string, backendCollection string, backendPath string, note string, visited map[string]bool) (BackendCategoryMappingItem, error) {
+	if visited[sourceKey] {
+		return BackendCategoryMappingItem{}, fmt.Errorf("detected category publish cycle for %s", sourceKey)
+	}
+	visited[sourceKey] = true
+
+	sourceRecord, err := app.FindFirstRecordByFilter(CollectionSourceCategories, "source_key = {:source_key}", dbx.Params{"source_key": sourceKey})
+	if err != nil {
+		return BackendCategoryMappingItem{}, fmt.Errorf("load source category %s: %w", sourceKey, err)
+	}
+
+	mappingRecord, _ := app.FindFirstRecordByFilter(CollectionBackendCategoryMappings, "source_key = {:source_key}", dbx.Params{"source_key": sourceKey})
+	if mappingRecord == nil {
+		collection, findErr := app.FindCollectionByNameOrId(CollectionBackendCategoryMappings)
+		if findErr != nil {
+			return BackendCategoryMappingItem{}, findErr
+		}
+		mappingRecord = core.NewRecord(collection)
+		mappingRecord.Set("source_key", sourceKey)
+	}
+
+	defaultCollection, defaultPath := defaultBackendCategoryMappingValues(sourceRecord)
+	if backendCollection == "" {
+		backendCollection = strings.TrimSpace(mappingRecord.GetString("backend_collection"))
+	}
+	if backendPath == "" {
+		backendPath = strings.TrimSpace(mappingRecord.GetString("backend_path"))
+	}
+	if backendCollection == "" {
+		backendCollection = defaultCollection
+	}
+	if backendPath == "" {
+		backendPath = defaultPath
+	}
+	if backendCollection == "" && backendPath == "" {
+		return BackendCategoryMappingItem{}, fmt.Errorf("backend collection or backend path is required")
+	}
+
+	parentCollectionID := ""
+	parentKey := strings.TrimSpace(sourceRecord.GetString("parent_key"))
+	if parentKey != "" {
+		parentResult, parentErr := s.publishBackendCategoryRecursive(ctx, app, parentKey, "", "", "", visited)
+		if parentErr != nil {
+			recordBackendCategoryPublishFailure(mappingRecord, sourceRecord, backendCollection, backendPath, note, parentErr)
+			_ = app.Save(mappingRecord)
+			return BackendCategoryMappingItem{}, parentErr
+		}
+		parentCollectionID = strings.TrimSpace(parentResult.BackendCollectionID)
+	}
+
+	payload := vendure.CollectionPayload{
+		SourceCategoryKey:   sourceKey,
+		SourceCategoryPath:  sourceRecord.GetString("category_path"),
+		SourceCategoryLevel: sourceRecord.GetInt("depth"),
+		Name:                defaultString(lastCategoryPathSegment(backendPath), sourceRecord.GetString("label")),
+		Slug:                backendCollectionSlug(backendCollection, backendPath, sourceKey),
+		Description:         defaultString(sourceRecord.GetString("category_path"), sourceRecord.GetString("label")),
+		ParentCollectionID:  parentCollectionID,
+	}
+
+	result, vendureErr := s.vendure.EnsureCollection(ctx, payload)
+	if vendureErr != nil {
+		recordBackendCategoryPublishFailure(mappingRecord, sourceRecord, backendCollection, backendPath, note, vendureErr)
+		_ = app.Save(mappingRecord)
+		return BackendCategoryMappingItem{}, vendureErr
+	}
+
+	mappingRecord.Set("source_path", sourceRecord.GetString("category_path"))
+	mappingRecord.Set("backend_collection", backendCollection)
+	mappingRecord.Set("backend_path", backendPath)
+	mappingRecord.Set("backend_collection_id", result.CollectionID)
+	mappingRecord.Set("publish_status", "published")
+	mappingRecord.Set("last_error", "")
+	mappingRecord.Set("note", note)
+	mappingRecord.Set("published_at", time.Now().Format(time.RFC3339))
+	if err := app.Save(mappingRecord); err != nil {
+		return BackendCategoryMappingItem{}, err
+	}
+
+	return BackendCategoryMappingItem{
+		ID:                  mappingRecord.Id,
+		SourceKey:           sourceKey,
+		Label:               sourceRecord.GetString("label"),
+		SourcePath:          sourceRecord.GetString("category_path"),
+		BackendCollection:   backendCollection,
+		BackendCollectionID: result.CollectionID,
+		BackendPath:         backendPath,
+		PublishStatus:       "published",
+		LastError:           "",
+		Note:                note,
+		PublishedAt:         mappingRecord.GetString("published_at"),
+	}, nil
+}
+
+func recordBackendCategoryPublishFailure(mappingRecord *core.Record, sourceRecord *core.Record, backendCollection string, backendPath string, note string, cause error) {
+	mappingRecord.Set("source_path", sourceRecord.GetString("category_path"))
+	mappingRecord.Set("backend_collection", backendCollection)
+	mappingRecord.Set("backend_path", backendPath)
+	mappingRecord.Set("publish_status", "error")
+	mappingRecord.Set("last_error", strings.TrimSpace(cause.Error()))
+	mappingRecord.Set("note", note)
+}
+
+func defaultBackendCategoryMappingValues(sourceRecord *core.Record) (string, string) {
+	sourcePath := strings.TrimSpace(sourceRecord.GetString("category_path"))
+	segments := splitCategoryPath(sourcePath, sourceRecord.GetString("label"))
+	return strings.Join(slugifySegments(segments), "/"), strings.Join(segments, "/")
+}
+
+func lastCategoryPathSegment(pathValue string) string {
+	segments := splitCategoryPath(pathValue, "")
+	if len(segments) == 0 {
+		return ""
+	}
+	return segments[len(segments)-1]
+}
+
+func backendCollectionSlug(collectionPath string, backendPath string, sourceKey string) string {
+	candidate := collectionPath
+	if strings.TrimSpace(candidate) == "" {
+		candidate = backendPath
+	}
+	slug := strings.Join(slugifySegments(splitCategoryPath(candidate, sourceKey)), "-")
+	if slug == "" {
+		slug = slugify(sourceKey)
+	}
+	return slug
+}
+
+func (s *Service) PreviewBackendReleasePayload(_ context.Context, app core.App, recordID string) (BackendReleasePayloadPreview, error) {
+	record, err := app.FindRecordById(CollectionSupplierProducts, strings.TrimSpace(recordID))
+	if err != nil {
+		return BackendReleasePayloadPreview{}, err
+	}
+	payload := s.buildVendurePayload(record)
+	preview := map[string]any{
+		"name":              payload.Name,
+		"slug":              payload.Slug,
+		"description":       payload.Description,
+		"sku":               payload.SKU,
+		"currencyCode":      payload.CurrencyCode,
+		"consumerPrice":     payload.ConsumerPrice,
+		"businessPrice":     payload.BusinessPrice,
+		"supplierCode":      payload.SupplierCode,
+		"supplierCostPrice": payload.SupplierCostPrice,
+		"conversionRate":    payload.ConversionRate,
+		"sourceProductId":   payload.SourceProductID,
+		"sourceType":        payload.SourceType,
+		"targetAudience":    payload.TargetAudience,
+		"defaultStock":      payload.DefaultStock,
+		"salesUnit":         payload.SalesUnit,
+		"assetURL":          payload.AssetURL,
+		"cEndAssetURL":      payload.CEndAssetURL,
+		"vendureProductId":  payload.VendureProduct,
+		"vendureVariantId":  payload.VendureVariant,
+	}
+	return BackendReleasePayloadPreview{
+		RecordID: record.Id,
+		Payload:  preview,
+	}, nil
 }
 
 func (s *Service) resolveProcurementItems(_ context.Context, app core.App, requested []ProcurementItemRequest) ([]procurementCatalogItem, error) {
@@ -1178,8 +2053,126 @@ func (s *Service) recordAssetURL(record *core.Record) string {
 	return fmt.Sprintf("%s/api/files/%s/%s/%s", base, record.Collection().Id, record.Id, url.PathEscape(fileName))
 }
 
+func (s *Service) recordPrimaryAssetURL(record *core.Record) string {
+	if value := strings.TrimSpace(record.GetString("raw_image_url")); value != "" {
+		return value
+	}
+	return s.recordAssetURL(record)
+}
+
+func (s *Service) recordConsumerAssetURL(record *core.Record) string {
+	if value := s.recordAssetURL(record); value != "" {
+		return value
+	}
+	return s.recordPrimaryAssetURL(record)
+}
+
+func sourceAssetPrimaryImageURL(record *core.Record) string {
+	if value := strings.TrimSpace(record.GetString("raw_image_url")); value != "" {
+		return value
+	}
+	return ""
+}
+
+func sourceAssetConsumerImageURL(record *core.Record) string {
+	if value := strings.TrimSpace(record.GetString("processed_image")); value != "" {
+		return value
+	}
+	return ""
+}
+
+func sourceConversionRateFromSupplierRecord(record *core.Record) float64 {
+	if value := record.GetFloat("conversion_rate"); value > 0 {
+		return value
+	}
+	if value := readJSONNumber(record, "conversion_rate"); value > 0 {
+		return value
+	}
+	return 1
+}
+
 func (s *Service) recordKey(supplierCode string, sku string) string {
 	return strings.TrimSpace(supplierCode) + "::" + strings.TrimSpace(sku)
+}
+
+func splitCategoryPath(pathValue string, fallback string) []string {
+	trimmed := strings.TrimSpace(pathValue)
+	if trimmed == "" {
+		trimmed = strings.TrimSpace(fallback)
+	}
+	if trimmed == "" {
+		return []string{"unclassified"}
+	}
+	parts := strings.FieldsFunc(trimmed, func(r rune) bool {
+		return r == '/' || r == '>' || r == '\\'
+	})
+	result := make([]string, 0, len(parts))
+	for _, item := range parts {
+		value := strings.TrimSpace(item)
+		if value == "" {
+			continue
+		}
+		result = append(result, value)
+	}
+	if len(result) == 0 {
+		return []string{"unclassified"}
+	}
+	return result
+}
+
+func slugifySegments(items []string) []string {
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		value := slugify(item)
+		if value == "" {
+			continue
+		}
+		result = append(result, value)
+	}
+	if len(result) == 0 {
+		return []string{"unclassified"}
+	}
+	return result
+}
+
+func minInt(left int, right int) int {
+	if left < right {
+		return left
+	}
+	return right
+}
+
+func uniqueTrimmed(items []string) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(items))
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		value := strings.TrimSpace(item)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func containsTrimmed(items []string, target string) bool {
+	needle := strings.TrimSpace(target)
+	if needle == "" {
+		return false
+	}
+	for _, item := range items {
+		if strings.EqualFold(strings.TrimSpace(item), needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func buildProcurementSummary(
@@ -1393,6 +2386,23 @@ func coalesce(values ...string) string {
 	return ""
 }
 
+func uniqueNonEmptyStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	items := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		items = append(items, trimmed)
+	}
+	return items
+}
+
 func toMinorUnits(value float64) int {
 	return int(math.Round(value * 100))
 }
@@ -1413,6 +2423,91 @@ func readJSONAttribute(record *core.Record, key string) string {
 	}
 
 	return ""
+}
+
+func readJSONNumber(record *core.Record, key string) float64 {
+	raw := strings.TrimSpace(record.GetString("supplier_payload"))
+	if raw == "" {
+		return 0
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return 0
+	}
+
+	value, ok := payload[key]
+	if !ok {
+		return 0
+	}
+
+	switch v := value.(type) {
+	case float64:
+		return v
+	case int:
+		return float64(v)
+	case int64:
+		return float64(v)
+	case json.Number:
+		number, _ := v.Float64()
+		return number
+	default:
+		return 0
+	}
+}
+
+func readJSONArrayAttributes(record *core.Record, key string) []string {
+	raw := strings.TrimSpace(record.GetString("supplier_payload"))
+	if raw == "" {
+		return nil
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return nil
+	}
+
+	value, ok := payload[key]
+	if !ok {
+		return nil
+	}
+
+	items, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		trimmed := strings.TrimSpace(fmt.Sprintf("%v", item))
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return uniqueTrimmed(result)
+}
+
+func supplierRecordReleaseCategoryKey(record *core.Record) string {
+	return defaultString(
+		readJSONAttribute(record, "release_category_key"),
+		readJSONAttribute(record, "category_key"),
+	)
+}
+
+func supplierRecordObservedCategoryKeys(record *core.Record) []string {
+	keys := readJSONArrayAttributes(record, "observed_category_keys")
+	if len(keys) == 0 {
+		keys = readJSONArrayAttributes(record, "category_keys")
+	}
+	return uniqueTrimmed(append(keys, supplierRecordReleaseCategoryKey(record)))
+}
+
+func assetFileName(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	return path.Base(raw)
 }
 
 func (s *Service) logProcurementAction(app core.App, record *core.Record, actionType string, status string, message string, actor ProcurementActionActor, note string, details any) {

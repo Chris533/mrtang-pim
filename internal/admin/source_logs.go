@@ -134,8 +134,8 @@ func RenderSourceLogsHTML(data SourceLogsPageData, flashMessage string, flashErr
           <select name="actionType">
             <option value="">全部</option>
             <option value="update_review_status" {{if eq .Data.Filter.ActionType "update_review_status"}}selected{{end}}>审核状态变更</option>
-            <option value="promote_product" {{if eq .Data.Filter.ActionType "promote_product"}}selected{{end}}>桥接商品</option>
-            <option value="promote_and_sync" {{if eq .Data.Filter.ActionType "promote_and_sync"}}selected{{end}}>桥接并同步</option>
+            <option value="promote_product" {{if eq .Data.Filter.ActionType "promote_product"}}selected{{end}}>加入发布队列</option>
+            <option value="promote_and_sync" {{if eq .Data.Filter.ActionType "promote_and_sync"}}selected{{end}}>加入发布队列并发布到 Backend</option>
             <option value="retry_sync" {{if eq .Data.Filter.ActionType "retry_sync"}}selected{{end}}>重试同步</option>
             <option value="process_asset" {{if eq .Data.Filter.ActionType "process_asset"}}selected{{end}}>处理图片</option>
           </select>

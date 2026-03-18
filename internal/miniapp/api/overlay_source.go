@@ -46,6 +46,30 @@ func (s *OverlaySource) FetchDataset(ctx context.Context) (*model.Dataset, error
 	return &copied, nil
 }
 
+func (s *OverlaySource) FetchTargetSyncDataset(ctx context.Context, entityType string, scopeKey string) (*model.Dataset, error) {
+	if syncSource, ok := s.base.(TargetSyncSource); ok {
+		dataset, err := syncSource.FetchTargetSyncDataset(ctx, entityType, scopeKey)
+		if err != nil || dataset == nil {
+			return dataset, err
+		}
+
+		body, err := json.Marshal(dataset)
+		if err != nil {
+			return dataset, nil
+		}
+
+		var copied model.Dataset
+		if err := json.Unmarshal(body, &copied); err != nil {
+			return dataset, nil
+		}
+
+		normalizeCartOrderFlow(&copied)
+		return &copied, nil
+	}
+
+	return s.FetchDataset(ctx)
+}
+
 func normalizeCartOrderFlow(dataset *model.Dataset) {
 	if dataset == nil {
 		return
