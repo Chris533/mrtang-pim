@@ -883,7 +883,7 @@ mutation CreateCollection($input: CreateCollectionInput!) {
   }
 }`
 
-	input := c.collectionInput(payload, false)
+	input := c.collectionInput(payload, true)
 	var response struct {
 		CreateCollection graphQLNode `json:"createCollection"`
 	}
@@ -901,7 +901,7 @@ mutation UpdateCollection($input: UpdateCollectionInput!) {
   }
 }`
 
-	input := c.collectionInput(payload, true)
+	input := c.collectionInput(payload, false)
 	input["id"] = collectionID
 
 	var response struct {
@@ -1065,11 +1065,10 @@ query CollectionFilters($id: ID!) {
 	return response.Collection.Filters, nil
 }
 
-func (c *Client) collectionInput(payload CollectionPayload, includeParent bool) map[string]any {
+func (c *Client) collectionInput(payload CollectionPayload, includeFilters bool) map[string]any {
 	input := map[string]any{
 		"isPrivate":      false,
 		"inheritFilters": false,
-		"filters":        []map[string]any{},
 		"translations": []map[string]any{
 			{
 				"languageCode": c.cfg.LanguageCode,
@@ -1084,11 +1083,11 @@ func (c *Client) collectionInput(payload CollectionPayload, includeParent bool) 
 			"sourceCategoryLevel": payload.SourceCategoryLevel,
 		},
 	}
-	if includeParent && strings.TrimSpace(payload.ParentCollectionID) != "" {
+	if strings.TrimSpace(payload.ParentCollectionID) != "" {
 		input["parentId"] = payload.ParentCollectionID
 	}
-	if !includeParent && strings.TrimSpace(payload.ParentCollectionID) != "" {
-		input["parentId"] = payload.ParentCollectionID
+	if includeFilters {
+		input["filters"] = []map[string]any{}
 	}
 	return input
 }
@@ -1101,11 +1100,9 @@ func (c *Client) buildProductCustomFields(payload ProductPayload, cEndAssetID st
 	}
 
 	if field := strings.TrimSpace(c.cfg.ProductCEndAssetField); field != "" {
-		relationField := relationInputFieldName(field)
-		if strings.TrimSpace(cEndAssetID) != "" {
-			customFields[relationField] = cEndAssetID
-		} else {
-			customFields[relationField] = nil
+		if trimmedID := strings.TrimSpace(cEndAssetID); trimmedID != "" {
+			relationField := relationInputFieldName(field)
+			customFields[relationField] = trimmedID
 		}
 	}
 

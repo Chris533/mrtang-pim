@@ -7,6 +7,7 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 
+	"mrtang-pim/internal/config"
 	"mrtang-pim/internal/supplier"
 )
 
@@ -175,5 +176,36 @@ func TestSortAssetFailureReasons(t *testing.T) {
 
 	if !reflect.DeepEqual(reasons, expected) {
 		t.Fatalf("unexpected sorted reasons: %#v", reasons)
+	}
+}
+
+func TestRecordPrimaryAssetURLSkipsMockFallback(t *testing.T) {
+	service := &Service{
+		cfg: config.Config{
+			App: config.AppConfig{PublicURL: "http://127.0.0.1:26228"},
+		},
+	}
+	record := core.NewRecord(core.NewBaseCollection("supplier_products"))
+	record.Set("processed_image", "mock.svg")
+	record.Set("processed_image_source", "mock")
+
+	if got := service.recordPrimaryAssetURL(record); got != "" {
+		t.Fatalf("expected empty primary asset url when only mock processed image exists, got %q", got)
+	}
+}
+
+func TestRecordPrimaryAssetURLUsesProcessedWhenNotMock(t *testing.T) {
+	service := &Service{
+		cfg: config.Config{
+			App: config.AppConfig{PublicURL: "http://127.0.0.1:26228"},
+		},
+	}
+	record := core.NewRecord(core.NewBaseCollection("supplier_products"))
+	record.Set("processed_image", "real.png")
+	record.Set("processed_image_source", "webhook")
+
+	got := service.recordPrimaryAssetURL(record)
+	if got == "" || !strings.Contains(got, "/api/files/") {
+		t.Fatalf("expected file url from processed image, got %q", got)
 	}
 }

@@ -2878,6 +2878,9 @@ func (s *Service) bestProcessedSourceAssetFile(app core.App, productID string) (
 		if !strings.EqualFold(asset.GetString("image_processing_status"), ImageStatusProcessed) || strings.TrimSpace(asset.GetString("processed_image")) == "" {
 			continue
 		}
+		if isMockImageSource(asset.GetString("processed_image_source")) {
+			continue
+		}
 		if strings.EqualFold(asset.GetString("asset_role"), "cover") {
 			return cloneRecordFile(app, asset, "processed_image")
 		}
@@ -3823,6 +3826,9 @@ func (s *Service) bestProcessedSourceAssetURL(app core.App, productID string) (s
 	var fallback string
 	for _, asset := range assets {
 		if !strings.EqualFold(asset.GetString("image_processing_status"), ImageStatusProcessed) || strings.TrimSpace(asset.GetString("processed_image")) == "" {
+			continue
+		}
+		if isMockImageSource(asset.GetString("processed_image_source")) {
 			continue
 		}
 		url := s.recordFileURL(asset, "processed_image")

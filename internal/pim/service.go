@@ -2214,17 +2214,24 @@ func (s *Service) recordPrimaryAssetURL(record *core.Record) string {
 	if value := strings.TrimSpace(record.GetString("raw_image_url")); value != "" {
 		return value
 	}
+	if isMockImageSource(record.GetString("processed_image_source")) {
+		return ""
+	}
 	return s.recordAssetURL(record)
 }
 
 func (s *Service) recordConsumerAssetURL(record *core.Record) string {
-	if strings.EqualFold(strings.TrimSpace(record.GetString("processed_image_source")), "mock") {
+	if isMockImageSource(record.GetString("processed_image_source")) {
 		return s.recordPrimaryAssetURL(record)
 	}
 	if value := s.recordAssetURL(record); value != "" {
 		return value
 	}
 	return s.recordPrimaryAssetURL(record)
+}
+
+func isMockImageSource(source string) bool {
+	return strings.EqualFold(strings.TrimSpace(source), "mock")
 }
 
 func sourceAssetPrimaryImageURL(record *core.Record) string {
