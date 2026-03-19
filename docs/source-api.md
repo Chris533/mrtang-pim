@@ -18,6 +18,8 @@
     -> 脱敏整理
     -> datasets/miniapp/homepage | datasets/miniapp/category-page | datasets/miniapp/product-page | datasets/miniapp/cart-order
     -> snapshot/raw source
+    -> mrtang-backend shop API
+    -> /api/miniapp-ui/**
     -> internal/miniapp/service
     -> /api/miniapp/**
 ```
@@ -232,6 +234,31 @@
 - `/api/miniapp/product-page/coverage` 会把当前可见商品按 `homepage_dual_unit -> category_dual_unit -> visible_single_unit -> done_rr_detail` 排序，直接给出下一批应优先替换的目标
 - `/api/miniapp/product-page/coverage?priority=homepage_dual_unit` 可以直接只看“首页双单位优先批次”
 - `/api/miniapp/product-page/coverage-summary` 会返回总数、分桶统计和 `firstBatch`
+
+## Miniapp UI 代理链路
+
+除了原始 source dataset 接口，本项目现在还会代理 `mrtang-backend` 的 shop API，给后续正式小程序 UI 使用。
+
+```text
+mrtang-backend shop-api
+    -> miniapp-ui plugin
+    -> mrtang-pim vendure client
+    -> /api/miniapp-ui/**
+```
+
+当前代理接口：
+
+| backend shop API | pim 代理接口 | 作用 |
+| --- | --- | --- |
+| `miniappCollectionsTree` | `GET /api/miniapp-ui/collections/tree` | 分类树、breadcrumb、分类图 |
+| `miniappCollectionProducts(slug,audience,skip,take)` | `GET /api/miniapp-ui/collections/products?slug=...&audience=C|B&skip=0&take=24` | 分类商品列表、客群过滤、多单位摘要 |
+| `miniappProductDetail(slug,audience)` | `GET /api/miniapp-ui/products/detail?slug=...&audience=C|B` | 商品详情、相册、C 端图、多单位与 order units |
+
+说明：
+
+- 这组接口仍然复用 `Authorization: Bearer <MINIAPP_AUTH_ACCOUNT_ID>` 校验。
+- `audience=B` 表示 B 端可见商品，`audience=C` 表示 C 端或游客可见商品。
+- `mrtang-pim` 默认会从 `VENDURE_ADMIN_API` 推导 `VENDURE_SHOP_API`；也可以显式配置 `VENDURE_SHOP_API`。
 
 ### 购物车与下单链路
 

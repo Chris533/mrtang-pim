@@ -32,6 +32,7 @@ const (
 	CollectionProcurementActionLogs   = "procurement_action_logs"
 	CollectionMiniappActionLogs       = "miniapp_action_logs"
 	CollectionSourceAssetJobs         = "source_asset_jobs"
+	CollectionSourceProductJobs       = "source_product_jobs"
 
 	StatusPending      = "pending"
 	StatusAIProcessing = "ai_processing"
@@ -133,6 +134,22 @@ type ProcurementExport struct {
 	RowCount    int                `json:"rowCount"`
 	CSV         string             `json:"csv"`
 	Summary     ProcurementSummary `json:"summary"`
+}
+
+func (s *Service) MiniappCollectionsTree(ctx context.Context) ([]vendure.MiniappCollectionNode, error) {
+	return s.vendure.MiniappCollectionsTree(ctx)
+}
+
+func (s *Service) MiniappCollectionProducts(ctx context.Context, slug string, audience string, skip int, take int) (vendure.MiniappProductList, error) {
+	return s.vendure.MiniappCollectionProducts(ctx, slug, audience, skip, take)
+}
+
+func (s *Service) MiniappProductDetail(ctx context.Context, slug string, audience string) (*vendure.MiniappProductDetail, error) {
+	return s.vendure.MiniappProductDetail(ctx, slug, audience)
+}
+
+func (s *Service) CleanupBackendAssets(ctx context.Context) (vendure.AssetCleanupResult, error) {
+	return s.vendure.CleanupOrphanedPIMAssets(ctx)
 }
 
 type ProcurementSubmitResponse struct {
@@ -273,6 +290,37 @@ type SourceAssetProcessProgress struct {
 	AssetIDs    []string                        `json:"assetIds"`
 }
 
+type SourceProductSyncProgressLog struct {
+	Time    string `json:"time"`
+	Message string `json:"message"`
+}
+
+type SourceProductFailedItem struct {
+	RecordID   string `json:"recordId"`
+	ProductID  string `json:"productId"`
+	SKU        string `json:"sku"`
+	Name       string `json:"name"`
+	SyncStatus string `json:"syncStatus"`
+	Error      string `json:"error"`
+}
+
+type SourceProductSyncProgress struct {
+	ID          string                         `json:"id"`
+	JobType     string                         `json:"jobType"`
+	Mode        string                         `json:"mode"`
+	Status      string                         `json:"status"`
+	Total       int                            `json:"total"`
+	Processed   int                            `json:"processed"`
+	Failed      int                            `json:"failed"`
+	CurrentItem string                         `json:"currentItem"`
+	StartedAt   string                         `json:"startedAt"`
+	FinishedAt  string                         `json:"finishedAt"`
+	Error       string                         `json:"error"`
+	Logs        []SourceProductSyncProgressLog `json:"logs"`
+	FailedItems []SourceProductFailedItem      `json:"failedItems"`
+	ProductIDs  []string                       `json:"productIds"`
+}
+
 type BackendCategoryMappingItem struct {
 	ID                  string `json:"id"`
 	SourceKey           string `json:"sourceKey"`
@@ -366,6 +414,8 @@ type Service struct {
 	sourceAssetMu     sync.Mutex
 	activeAssetLoads  map[string]*SourceAssetDownloadProgress
 	activeAssetProcs  map[string]*SourceAssetProcessProgress
+	sourceProductMu   sync.Mutex
+	activeProductJobs map[string]*SourceProductSyncProgress
 }
 
 func NewService(cfg config.Config) *Service {
@@ -385,6 +435,7 @@ func NewService(cfg config.Config) *Service {
 		activeTargetSyncs: make(map[string]string),
 		activeAssetLoads:  make(map[string]*SourceAssetDownloadProgress),
 		activeAssetProcs:  make(map[string]*SourceAssetProcessProgress),
+		activeProductJobs: make(map[string]*SourceProductSyncProgress),
 	}
 }
 
@@ -1213,23 +1264,43 @@ func (s *Service) normalizePublishedCategoryBranchForSupplierRecord(ctx context.
 
 func (s *Service) backendCollectionIDsForSupplierRecord(app core.App, record *core.Record) ([]string, error) {
 	categoryKey := supplierRecordReleaseCategoryKey(record)
-	if categoryKey == "" {
-		return nil, nil
+	categoryKeys := make([]string, 0, 8)
+	if categoryKey != "" {
+		categoryKeys = append(categoryKeys, categoryKey)
+		currentKey := categoryKey
+		for {
+			sourceRecord, err := app.FindFirstRecordByFilter(CollectionSourceCategories, "source_key = {:source_key}", dbx.Params{"source_key": currentKey})
+			if err != nil {
+				break
+			}
+			parentKey := strings.TrimSpace(sourceRecord.GetString("parent_key"))
+			if parentKey == "" || containsTrimmed(categoryKeys, parentKey) {
+				break
+			}
+			categoryKeys = append(categoryKeys, parentKey)
+			currentKey = parentKey
+		}
 	}
 
-	categoryKeys := []string{categoryKey}
-	currentKey := categoryKey
-	for {
-		sourceRecord, err := app.FindFirstRecordByFilter(CollectionSourceCategories, "source_key = {:source_key}", dbx.Params{"source_key": currentKey})
+	for _, observedKey := range supplierRecordObservedCategoryKeys(record) {
+		observedKey = strings.TrimSpace(observedKey)
+		if observedKey == "" || containsTrimmed(categoryKeys, observedKey) {
+			continue
+		}
+		sourceRecord, err := app.FindFirstRecordByFilter(CollectionSourceCategories, "source_key = {:source_key}", dbx.Params{"source_key": observedKey})
 		if err != nil {
-			break
+			continue
 		}
 		parentKey := strings.TrimSpace(sourceRecord.GetString("parent_key"))
-		if parentKey == "" || containsTrimmed(categoryKeys, parentKey) {
-			break
+		hasChildren := sourceRecord.GetBool("has_children")
+		// Top-level terminal categories should keep all observed products in backend.
+		if parentKey == "" && !hasChildren {
+			categoryKeys = append(categoryKeys, observedKey)
 		}
-		categoryKeys = append(categoryKeys, parentKey)
-		currentKey = parentKey
+	}
+
+	if len(categoryKeys) == 0 {
+		return nil, nil
 	}
 
 	collectionIDs := make([]string, 0, len(categoryKeys))
@@ -2147,6 +2218,9 @@ func (s *Service) recordPrimaryAssetURL(record *core.Record) string {
 }
 
 func (s *Service) recordConsumerAssetURL(record *core.Record) string {
+	if strings.EqualFold(strings.TrimSpace(record.GetString("processed_image_source")), "mock") {
+		return s.recordPrimaryAssetURL(record)
+	}
 	if value := s.recordAssetURL(record); value != "" {
 		return value
 	}

@@ -99,6 +99,7 @@ type SourceAssetFailureReason struct {
 type SourceReviewWorkbenchSummary struct {
 	CategoryCount           int                        `json:"categoryCount"`
 	ProductCount            int                        `json:"productCount"`
+	FilteredProductCount    int                        `json:"filteredProductCount"`
 	ImportedCount           int                        `json:"importedCount"`
 	ApprovedCount           int                        `json:"approvedCount"`
 	PromotedCount           int                        `json:"promotedCount"`
@@ -133,9 +134,11 @@ type SourceReviewWorkbenchSummary struct {
 
 type SourceReviewFilter struct {
 	CategoryKey    string `json:"categoryKey"`
+	CategoryKeys   string `json:"categoryKeys"`
 	ProductStatus  string `json:"productStatus"`
 	AssetStatus    string `json:"assetStatus"`
 	OriginalStatus string `json:"originalStatus"`
+	ProductIDs     string `json:"productIds"`
 	AssetIDs       string `json:"assetIds"`
 	SyncState      string `json:"syncState"`
 	Query          string `json:"query"`
@@ -221,6 +224,55 @@ type SourceAssetJobsSummary struct {
 type SourceAssetJobDetail struct {
 	SourceAssetJobItem
 	FailedItems []SourceAssetFailedItem `json:"failedItems"`
+}
+
+type SourceProductJobFilter struct {
+	JobType  string `json:"jobType"`
+	Status   string `json:"status"`
+	Query    string `json:"query"`
+	Page     int    `json:"page"`
+	PageSize int    `json:"pageSize"`
+}
+
+type SourceProductJobLog struct {
+	Time    string `json:"time"`
+	Message string `json:"message"`
+}
+
+type SourceProductJobItem struct {
+	ID          string                    `json:"id"`
+	JobType     string                    `json:"jobType"`
+	Mode        string                    `json:"mode"`
+	Status      string                    `json:"status"`
+	Total       int                       `json:"total"`
+	Processed   int                       `json:"processed"`
+	Failed      int                       `json:"failed"`
+	CurrentItem string                    `json:"currentItem"`
+	StartedAt   string                    `json:"startedAt"`
+	FinishedAt  string                    `json:"finishedAt"`
+	Error       string                    `json:"error"`
+	Created     string                    `json:"created"`
+	Logs        []SourceProductJobLog     `json:"logs"`
+	FailedItems []SourceProductFailedItem `json:"failedItems"`
+	ProductIDs  []string                  `json:"productIds"`
+	CanRetry    bool                      `json:"canRetry"`
+}
+
+type SourceProductJobsSummary struct {
+	TotalJobs     int                    `json:"totalJobs"`
+	RunningJobs   int                    `json:"runningJobs"`
+	CompletedJobs int                    `json:"completedJobs"`
+	FailedJobs    int                    `json:"failedJobs"`
+	Page          int                    `json:"page"`
+	Pages         int                    `json:"pages"`
+	PageSize      int                    `json:"pageSize"`
+	CurrentJob    *SourceProductJobItem  `json:"currentJob,omitempty"`
+	Items         []SourceProductJobItem `json:"items"`
+}
+
+type SourceProductJobDetail struct {
+	SourceProductJobItem
+	FailedItems []SourceProductFailedItem `json:"failedItems"`
 }
 
 type SourceBridgeStatus struct {
@@ -309,9 +361,9 @@ func (s *Service) ImportMiniappSource(ctx context.Context, app core.App, dataset
 
 	if summary.Scope == "all" || summary.Scope == "products" || summary.Scope == "assets" {
 		sections := buildCategorySectionLookup(dataset.CategoryPage.Sections)
-		_, parentByKey := buildCategoryTreeMeta(dataset.CategoryPage.Tree)
+		_, parentByKey, hasChildrenByKey := buildCategoryTreeMeta(dataset.CategoryPage.Tree)
 		for _, product := range dataset.ProductPage.Products {
-			categoryKey, categoryPath, categoryKeys, observedCategoryKeys, observedCategoryPaths := productCategoryInfo(product, sections, parentByKey)
+			categoryKey, categoryPath, categoryKeys, observedCategoryKeys, observedCategoryPaths := productCategoryInfo(product, sections, parentByKey, hasChildrenByKey)
 
 			if summary.Scope == "all" || summary.Scope == "products" {
 				if created, err := s.upsertSourceProduct(ctx, app, product, categoryKey, categoryPath, categoryKeys, observedCategoryKeys, observedCategoryPaths); err != nil {
@@ -662,12 +714,18 @@ func firstCategoryKey(sourceSections []string, lookup map[string]miniappmodel.Ca
 	return ""
 }
 
-func productCategoryInfo(product miniappmodel.ProductPage, sections map[string]miniappmodel.CategorySection, parentByKey map[string]string) (string, string, []string, []string, []string) {
+func productCategoryInfo(product miniappmodel.ProductPage, sections map[string]miniappmodel.CategorySection, parentByKey map[string]string, hasChildrenByKey map[string]bool) (string, string, []string, []string, []string) {
 	categoryKey := strings.TrimSpace(product.CategoryKey)
 	categoryPath := strings.TrimSpace(product.CategoryPath)
 	categoryKeys := normalizeSourceCategoryKeys(product.CategoryKeys, categoryKey)
 	observedCategoryKeys := normalizeSourceCategoryKeys(product.ObservedCategoryKeys, categoryKey)
 	observedCategoryPaths := normalizeSourceCategoryPaths(product.ObservedCategoryPaths, categoryPath)
+
+	if preferred := preferredTerminalTopLevelCategoryKey(product, sections, parentByKey, hasChildrenByKey); preferred != "" {
+		categoryKey = preferred
+		categoryPath = ""
+		categoryKeys = nil
+	}
 
 	if categoryKey == "" {
 		categoryKey = firstCategoryKey(product.SourceSections, sections)
@@ -696,6 +754,28 @@ func productCategoryInfo(product miniappmodel.ProductPage, sections map[string]m
 		expandedKeys = categoryLineageKeys(categoryKey, parentByKey)
 	}
 	return categoryKey, categoryPath, normalizeSourceCategoryKeys(expandedKeys, categoryKey), normalizeSourceCategoryKeys(observedCategoryKeys, categoryKey), normalizeSourceCategoryPaths(observedCategoryPaths, categoryPath)
+}
+
+func preferredTerminalTopLevelCategoryKey(product miniappmodel.ProductPage, sections map[string]miniappmodel.CategorySection, parentByKey map[string]string, hasChildrenByKey map[string]bool) string {
+	candidates := normalizeSourceCategoryKeys(append([]string{}, product.ObservedCategoryKeys...), product.CategoryKey)
+	candidates = normalizeSourceCategoryKeys(append(candidates, product.SourceSections...), product.CategoryKey)
+	for _, key := range candidates {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, ok := sections[key]; !ok {
+			continue
+		}
+		if strings.TrimSpace(parentByKey[key]) != "" {
+			continue
+		}
+		if hasChildrenByKey[key] {
+			continue
+		}
+		return key
+	}
+	return ""
 }
 
 func categoryLineageKeys(categoryKey string, parentByKey map[string]string) []string {
@@ -965,6 +1045,22 @@ func normalizeSourceAssetJobFilter(filter SourceAssetJobFilter) SourceAssetJobFi
 		filter.Status = ""
 	}
 
+	filter.Query = strings.TrimSpace(filter.Query)
+	if filter.Page <= 0 {
+		filter.Page = 1
+	}
+	switch {
+	case filter.PageSize <= 0:
+		filter.PageSize = 20
+	case filter.PageSize > 100:
+		filter.PageSize = 100
+	}
+	return filter
+}
+
+func normalizeSourceProductJobFilter(filter SourceProductJobFilter) SourceProductJobFilter {
+	filter.JobType = strings.TrimSpace(filter.JobType)
+	filter.Status = strings.TrimSpace(filter.Status)
 	filter.Query = strings.TrimSpace(filter.Query)
 	if filter.Page <= 0 {
 		filter.Page = 1
@@ -1856,6 +1952,21 @@ func sourceReviewFilterAssetIDs(filter SourceReviewFilter) []string {
 	return normalizeSourceIDSlice(strings.Split(strings.TrimSpace(filter.AssetIDs), ","))
 }
 
+func sourceReviewFilterCategoryKeys(filter SourceReviewFilter) []string {
+	parts := make([]string, 0, 8)
+	if raw := strings.TrimSpace(filter.CategoryKeys); raw != "" {
+		parts = append(parts, strings.Split(raw, ",")...)
+	}
+	if raw := strings.TrimSpace(filter.CategoryKey); raw != "" {
+		parts = append(parts, raw)
+	}
+	return normalizeSourceCategoryKeys(parts, "")
+}
+
+func sourceReviewFilterProductIDs(filter SourceReviewFilter) []string {
+	return normalizeSourceIDSlice(strings.Split(strings.TrimSpace(filter.ProductIDs), ","))
+}
+
 func displayOriginalImageStatus(record *core.Record) string {
 	if record == nil {
 		return ""
@@ -2051,6 +2162,552 @@ func (s *Service) RetrySourceAssetJob(app core.App, id string, actor SourceActio
 	default:
 		return SourceAssetJobItem{}, fmt.Errorf("不支持的图片任务类型")
 	}
+}
+
+func (s *Service) StartSourceProductRetrySyncAsyncForIDs(app core.App, ids []string, actor SourceActionActor, note string) (SourceProductSyncProgress, error) {
+	records, err := s.sourceProductRecordsByIDs(app, ids)
+	if err != nil {
+		return SourceProductSyncProgress{}, err
+	}
+	return s.startSourceProductSyncJob(app, records, "retry_sync", "selected", fmt.Sprintf("开始批量重试 %d 个商品发布。", len(records)), actor, note)
+}
+
+func (s *Service) StartSourceProductRetrySyncAsyncForFilter(app core.App, filter SourceReviewFilter, actor SourceActionActor, note string) (SourceProductSyncProgress, error) {
+	ids, err := s.SourceProductIDsForFilter(app, filter)
+	if err != nil {
+		return SourceProductSyncProgress{}, err
+	}
+	records, err := s.sourceProductRecordsByIDs(app, ids)
+	if err != nil {
+		return SourceProductSyncProgress{}, err
+	}
+	return s.startSourceProductSyncJob(app, records, "retry_sync", "filtered", fmt.Sprintf("开始按当前筛选结果批量重试 %d 个商品发布。", len(records)), actor, note)
+}
+
+func (s *Service) StartSourceProductPromoteSyncAsyncForIDs(app core.App, ids []string, actor SourceActionActor, note string) (SourceProductSyncProgress, error) {
+	records, err := s.sourceProductRecordsByIDs(app, ids)
+	if err != nil {
+		return SourceProductSyncProgress{}, err
+	}
+	return s.startSourceProductSyncJob(app, records, "promote_sync", "selected", fmt.Sprintf("开始批量将 %d 个商品加入发布队列并发布到 Backend。", len(records)), actor, note)
+}
+
+func (s *Service) StartSourceProductPromoteSyncAsyncForFilter(app core.App, filter SourceReviewFilter, actor SourceActionActor, note string) (SourceProductSyncProgress, error) {
+	ids, err := s.SourceProductIDsForFilter(app, filter)
+	if err != nil {
+		return SourceProductSyncProgress{}, err
+	}
+	records, err := s.sourceProductRecordsByIDs(app, ids)
+	if err != nil {
+		return SourceProductSyncProgress{}, err
+	}
+	return s.startSourceProductSyncJob(app, records, "promote_sync", "filtered", fmt.Sprintf("开始按当前筛选结果将 %d 个商品加入发布队列并发布到 Backend。", len(records)), actor, note)
+}
+
+func (s *Service) StartSourceProductPromoteAsyncForIDs(app core.App, ids []string, actor SourceActionActor, note string) (SourceProductSyncProgress, error) {
+	records, err := s.sourceProductRecordsByIDs(app, ids)
+	if err != nil {
+		return SourceProductSyncProgress{}, err
+	}
+	return s.startSourceProductSyncJob(app, records, "promote", "selected", fmt.Sprintf("开始批量将 %d 个商品加入发布队列。", len(records)), actor, note)
+}
+
+func (s *Service) StartSourceProductPromoteAsyncForFilter(app core.App, filter SourceReviewFilter, actor SourceActionActor, note string) (SourceProductSyncProgress, error) {
+	ids, err := s.SourceProductIDsForFilter(app, filter)
+	if err != nil {
+		return SourceProductSyncProgress{}, err
+	}
+	records, err := s.sourceProductRecordsByIDs(app, ids)
+	if err != nil {
+		return SourceProductSyncProgress{}, err
+	}
+	return s.startSourceProductSyncJob(app, records, "promote", "filtered", fmt.Sprintf("开始按当前筛选结果将 %d 个商品加入发布队列。", len(records)), actor, note)
+}
+
+func (s *Service) startSourceProductSyncJob(app core.App, records []*core.Record, jobType string, mode string, label string, actor SourceActionActor, note string) (SourceProductSyncProgress, error) {
+	progress := &SourceProductSyncProgress{
+		JobType:    strings.TrimSpace(jobType),
+		Mode:       strings.TrimSpace(mode),
+		Status:     "running",
+		Total:      len(records),
+		StartedAt:  time.Now().Format(time.RFC3339),
+		Logs:       []SourceProductSyncProgressLog{{Time: time.Now().Format(time.RFC3339), Message: label}},
+		ProductIDs: sourceProductRecordIDs(records),
+	}
+	jobRecord, err := s.createSourceProductJobRecord(app, progress.JobType, progress.Mode, progress.Status, progress.StartedAt, progress.ProductIDs)
+	if err != nil {
+		return SourceProductSyncProgress{}, err
+	}
+	progress.ID = jobRecord.Id
+	if err := s.saveSourceProductJob(app, progress); err != nil {
+		return SourceProductSyncProgress{}, err
+	}
+	s.sourceProductMu.Lock()
+	s.activeProductJobs[progress.ID] = progress
+	s.sourceProductMu.Unlock()
+
+	go s.runSourceProductSyncJob(app, progress.ID, actor, note)
+
+	snapshot := *progress
+	snapshot.Logs = append([]SourceProductSyncProgressLog(nil), progress.Logs...)
+	snapshot.FailedItems = append([]SourceProductFailedItem(nil), progress.FailedItems...)
+	snapshot.ProductIDs = append([]string(nil), progress.ProductIDs...)
+	return snapshot, nil
+}
+
+func (s *Service) runSourceProductSyncJob(app core.App, progressID string, actor SourceActionActor, note string) {
+	progress, ok := s.getActiveSourceProductJob(progressID)
+	if !ok {
+		return
+	}
+	records, err := s.sourceProductRecordsByIDs(app, progress.ProductIDs)
+	if err != nil {
+		s.finishSourceProductJob(app, progressID, "failed", "", err)
+		return
+	}
+	if len(records) == 0 {
+		s.updateSourceProductJob(app, progressID, func(item *SourceProductSyncProgress) {
+			item.Logs = append(item.Logs, SourceProductSyncProgressLog{Time: time.Now().Format(time.RFC3339), Message: "当前没有可重试发布的商品。"})
+		})
+		s.finishSourceProductJob(app, progressID, "completed", "", nil)
+		return
+	}
+	for _, record := range records {
+		current := strings.TrimSpace(record.GetString("name"))
+		if current == "" {
+			current = strings.TrimSpace(record.GetString("product_id"))
+		}
+		actionLabel := "重试发布"
+		successLabel := "发布完成"
+		switch strings.ToLower(progress.JobType) {
+		case "promote":
+			actionLabel = "加入发布队列"
+			successLabel = "加入发布队列完成"
+		case "promote_sync":
+			actionLabel = "加入发布队列并发布"
+			successLabel = "加入发布队列并发布完成"
+		}
+		s.updateSourceProductJob(app, progressID, func(item *SourceProductSyncProgress) {
+			item.CurrentItem = current
+			item.Logs = append(item.Logs, SourceProductSyncProgressLog{Time: time.Now().Format(time.RFC3339), Message: actionLabel + "：" + current})
+		})
+		var err error
+		switch strings.ToLower(progress.JobType) {
+		case "promote":
+			err = s.PromoteSourceProductWithAudit(context.Background(), app, record.Id, actor, note)
+		case "promote_sync":
+			err = s.PromoteAndSyncSourceProductWithAudit(context.Background(), app, record.Id, actor, note)
+		default:
+			err = s.RetrySourceProductSyncWithAudit(context.Background(), app, record.Id, actor, note)
+		}
+		if err != nil {
+			failedItem := sourceProductFailedItem(record, err)
+			s.updateSourceProductJob(app, progressID, func(item *SourceProductSyncProgress) {
+				item.Failed++
+				item.FailedItems = append(item.FailedItems, failedItem)
+				item.Logs = append(item.Logs, SourceProductSyncProgressLog{Time: time.Now().Format(time.RFC3339), Message: fmt.Sprintf("发布失败：%s（%v）", current, err)})
+			})
+			continue
+		}
+		s.updateSourceProductJob(app, progressID, func(item *SourceProductSyncProgress) {
+			item.Processed++
+			item.Logs = append(item.Logs, SourceProductSyncProgressLog{Time: time.Now().Format(time.RFC3339), Message: successLabel + "：" + current})
+		})
+	}
+	s.finishSourceProductJob(app, progressID, "completed", "", nil)
+}
+
+func (s *Service) getActiveSourceProductJob(id string) (*SourceProductSyncProgress, bool) {
+	s.sourceProductMu.Lock()
+	defer s.sourceProductMu.Unlock()
+	progress, ok := s.activeProductJobs[strings.TrimSpace(id)]
+	return progress, ok
+}
+
+func (s *Service) updateSourceProductJob(app core.App, id string, update func(*SourceProductSyncProgress)) {
+	s.sourceProductMu.Lock()
+	progress, ok := s.activeProductJobs[strings.TrimSpace(id)]
+	if !ok {
+		s.sourceProductMu.Unlock()
+		return
+	}
+	update(progress)
+	if len(progress.Logs) > 20 {
+		progress.Logs = append([]SourceProductSyncProgressLog(nil), progress.Logs[len(progress.Logs)-20:]...)
+	}
+	snapshot := *progress
+	snapshot.Logs = append([]SourceProductSyncProgressLog(nil), progress.Logs...)
+	snapshot.FailedItems = append([]SourceProductFailedItem(nil), progress.FailedItems...)
+	snapshot.ProductIDs = append([]string(nil), progress.ProductIDs...)
+	s.sourceProductMu.Unlock()
+	_ = s.saveSourceProductJob(app, &snapshot)
+}
+
+func (s *Service) finishSourceProductJob(app core.App, id string, status string, currentItem string, err error) {
+	s.updateSourceProductJob(app, id, func(item *SourceProductSyncProgress) {
+		item.Status = status
+		item.CurrentItem = currentItem
+		item.FinishedAt = time.Now().Format(time.RFC3339)
+		if err != nil {
+			item.Error = err.Error()
+			item.Logs = append(item.Logs, SourceProductSyncProgressLog{Time: time.Now().Format(time.RFC3339), Message: "任务失败：" + err.Error()})
+			return
+		}
+		switch strings.ToLower(item.JobType) {
+		case "promote":
+			item.Logs = append(item.Logs, SourceProductSyncProgressLog{Time: time.Now().Format(time.RFC3339), Message: "加入发布队列任务已完成。"})
+		case "promote_sync":
+			item.Logs = append(item.Logs, SourceProductSyncProgressLog{Time: time.Now().Format(time.RFC3339), Message: "加入发布队列并发布任务已完成。"})
+		default:
+			item.Logs = append(item.Logs, SourceProductSyncProgressLog{Time: time.Now().Format(time.RFC3339), Message: "商品发布任务已完成。"})
+		}
+	})
+	s.sourceProductMu.Lock()
+	delete(s.activeProductJobs, strings.TrimSpace(id))
+	s.sourceProductMu.Unlock()
+}
+
+func (s *Service) createSourceProductJobRecord(app core.App, jobType string, mode string, status string, startedAt string, productIDs []string) (*core.Record, error) {
+	collection, err := app.FindCollectionByNameOrId(CollectionSourceProductJobs)
+	if err != nil {
+		return nil, err
+	}
+	record := core.NewRecord(collection)
+	record.Set("job_type", strings.TrimSpace(jobType))
+	record.Set("mode", strings.TrimSpace(mode))
+	record.Set("status", strings.TrimSpace(status))
+	record.Set("started_at", strings.TrimSpace(startedAt))
+	record.Set("logs_json", "[]")
+	record.Set("failed_items_json", "[]")
+	if err := setJSON(record, "product_ids_json", normalizeSourceIDSlice(productIDs)); err != nil {
+		return nil, err
+	}
+	if err := app.Save(record); err != nil {
+		return nil, err
+	}
+	return record, nil
+}
+
+func (s *Service) saveSourceProductJob(app core.App, progress *SourceProductSyncProgress) error {
+	record, err := app.FindRecordById(CollectionSourceProductJobs, progress.ID)
+	if err != nil {
+		return err
+	}
+	record.Set("job_type", strings.TrimSpace(progress.JobType))
+	record.Set("status", strings.TrimSpace(progress.Status))
+	record.Set("mode", strings.TrimSpace(progress.Mode))
+	record.Set("total", progress.Total)
+	record.Set("processed", progress.Processed)
+	record.Set("failed_count", progress.Failed)
+	record.Set("current_item", strings.TrimSpace(progress.CurrentItem))
+	record.Set("started_at", strings.TrimSpace(progress.StartedAt))
+	record.Set("finished_at", strings.TrimSpace(progress.FinishedAt))
+	record.Set("error", strings.TrimSpace(progress.Error))
+	if err := setJSON(record, "product_ids_json", normalizeSourceIDSlice(progress.ProductIDs)); err != nil {
+		return err
+	}
+	if err := setJSON(record, "failed_items_json", progress.FailedItems); err != nil {
+		return err
+	}
+	if err := setJSON(record, "logs_json", progress.Logs); err != nil {
+		return err
+	}
+	return app.Save(record)
+}
+
+func sourceProductJobLogs(raw string) []SourceProductJobLog {
+	logs := []SourceProductJobLog{}
+	if decoded, ok := decodeRawJSON(raw).([]any); ok {
+		for _, item := range decoded {
+			if m, ok := item.(map[string]any); ok {
+				logs = append(logs, SourceProductJobLog{
+					Time:    strings.TrimSpace(fmt.Sprintf("%v", m["time"])),
+					Message: strings.TrimSpace(fmt.Sprintf("%v", m["message"])),
+				})
+			}
+		}
+	}
+	return logs
+}
+
+func sourceProductJobProductIDs(record *core.Record) []string {
+	if decoded, ok := decodeRawJSON(record.GetString("product_ids_json")).([]any); ok {
+		ids := make([]string, 0, len(decoded))
+		for _, item := range decoded {
+			id := strings.TrimSpace(fmt.Sprintf("%v", item))
+			if id != "" {
+				ids = append(ids, id)
+			}
+		}
+		return normalizeSourceIDSlice(ids)
+	}
+	return nil
+}
+
+func sourceProductJobFailedItems(raw string) []SourceProductFailedItem {
+	failedItems := []SourceProductFailedItem{}
+	if decoded, ok := decodeRawJSON(raw).([]any); ok {
+		for _, item := range decoded {
+			if m, ok := item.(map[string]any); ok {
+				failedItems = append(failedItems, SourceProductFailedItem{
+					RecordID:   strings.TrimSpace(fmt.Sprintf("%v", m["recordId"])),
+					ProductID:  strings.TrimSpace(fmt.Sprintf("%v", m["productId"])),
+					SKU:        strings.TrimSpace(fmt.Sprintf("%v", m["sku"])),
+					Name:       strings.TrimSpace(fmt.Sprintf("%v", m["name"])),
+					SyncStatus: strings.TrimSpace(fmt.Sprintf("%v", m["syncStatus"])),
+					Error:      strings.TrimSpace(fmt.Sprintf("%v", m["error"])),
+				})
+			}
+		}
+	}
+	return failedItems
+}
+
+func sourceProductJobItem(record *core.Record) SourceProductJobItem {
+	item := SourceProductJobItem{
+		ID:          record.Id,
+		JobType:     strings.TrimSpace(record.GetString("job_type")),
+		Mode:        strings.TrimSpace(record.GetString("mode")),
+		Status:      strings.TrimSpace(record.GetString("status")),
+		Total:       record.GetInt("total"),
+		Processed:   record.GetInt("processed"),
+		Failed:      record.GetInt("failed_count"),
+		CurrentItem: strings.TrimSpace(record.GetString("current_item")),
+		StartedAt:   strings.TrimSpace(record.GetString("started_at")),
+		FinishedAt:  strings.TrimSpace(record.GetString("finished_at")),
+		Error:       strings.TrimSpace(record.GetString("error")),
+		Created:     strings.TrimSpace(record.GetString("created")),
+		Logs:        sourceProductJobLogs(record.GetString("logs_json")),
+		FailedItems: sourceProductJobFailedItems(record.GetString("failed_items_json")),
+		ProductIDs:  sourceProductJobProductIDs(record),
+	}
+	item.CanRetry = !strings.EqualFold(item.Status, "running")
+	return item
+}
+
+func sourceProductFailedItem(record *core.Record, err error) SourceProductFailedItem {
+	message := ""
+	if err != nil {
+		message = strings.TrimSpace(err.Error())
+	}
+	if message == "" {
+		message = strings.TrimSpace(record.GetString("sync_error"))
+	}
+	return SourceProductFailedItem{
+		RecordID:   record.Id,
+		ProductID:  strings.TrimSpace(record.GetString("product_id")),
+		SKU:        strings.TrimSpace(record.GetString("sku_id")),
+		Name:       strings.TrimSpace(record.GetString("name")),
+		SyncStatus: strings.TrimSpace(record.GetString("sync_status")),
+		Error:      message,
+	}
+}
+
+func (s *Service) sourceProductRecordsByIDs(app core.App, ids []string) ([]*core.Record, error) {
+	records := make([]*core.Record, 0, len(ids))
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		record, err := app.FindRecordById(CollectionSourceProducts, id)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, nil
+}
+
+func sourceProductRecordIDs(records []*core.Record) []string {
+	ids := make([]string, 0, len(records))
+	for _, record := range records {
+		if record == nil {
+			continue
+		}
+		ids = append(ids, record.Id)
+	}
+	return normalizeSourceIDSlice(ids)
+}
+
+func (s *Service) reconcileSourceProductJobRecord(app core.App, record *core.Record) error {
+	if record == nil || !strings.EqualFold(record.GetString("status"), "running") {
+		return nil
+	}
+	if _, ok := s.getActiveSourceProductJob(record.Id); ok {
+		return nil
+	}
+	processed := record.GetInt("processed")
+	failed := record.GetInt("failed_count")
+	total := record.GetInt("total")
+	if total > 0 && processed+failed >= total && strings.TrimSpace(record.GetString("error")) == "" {
+		record.Set("status", "completed")
+		record.Set("finished_at", time.Now().Format(time.RFC3339))
+		logs := sourceProductJobLogs(record.GetString("logs_json"))
+		logs = append(logs, SourceProductJobLog{Time: time.Now().Format(time.RFC3339), Message: "任务已完成，但结束状态未及时回写，系统已自动补写为完成。"})
+		return saveSourceProductJobLogs(record, logs, app)
+	}
+	record.Set("status", "failed")
+	if strings.TrimSpace(record.GetString("error")) == "" {
+		record.Set("error", "任务已中断，通常是服务重启或请求中断后未正常回写。")
+	}
+	record.Set("finished_at", time.Now().Format(time.RFC3339))
+	logs := sourceProductJobLogs(record.GetString("logs_json"))
+	logs = append(logs, SourceProductJobLog{Time: time.Now().Format(time.RFC3339), Message: "任务已中断，系统已自动结束该任务。"})
+	return saveSourceProductJobLogs(record, logs, app)
+}
+
+func saveSourceProductJobLogs(record *core.Record, logs []SourceProductJobLog, app core.App) error {
+	if err := setJSON(record, "logs_json", logs); err != nil {
+		return err
+	}
+	return app.Save(record)
+}
+
+func (s *Service) SourceProductJobs(_ context.Context, app core.App, filter SourceProductJobFilter) (SourceProductJobsSummary, error) {
+	filter = normalizeSourceProductJobFilter(filter)
+	summary := SourceProductJobsSummary{Page: filter.Page, PageSize: filter.PageSize, Pages: 1}
+	records, err := app.FindAllRecords(CollectionSourceProductJobs)
+	if err != nil {
+		return summary, err
+	}
+
+	items := make([]SourceProductJobItem, 0, len(records))
+	query := strings.ToLower(filter.Query)
+	for _, record := range records {
+		_ = s.reconcileSourceProductJobRecord(app, record)
+		item := sourceProductJobItem(record)
+		summary.TotalJobs++
+		switch strings.ToLower(item.Status) {
+		case "running":
+			summary.RunningJobs++
+		case "completed":
+			summary.CompletedJobs++
+		case "failed":
+			summary.FailedJobs++
+		}
+		if filter.JobType != "" && !strings.EqualFold(filter.JobType, item.JobType) {
+			continue
+		}
+		if filter.Status != "" && !strings.EqualFold(filter.Status, item.Status) {
+			continue
+		}
+		if query != "" {
+			search := strings.ToLower(strings.Join([]string{
+				item.JobType,
+				item.Mode,
+				item.Status,
+				item.CurrentItem,
+				item.Error,
+			}, " "))
+			if !strings.Contains(search, query) {
+				continue
+			}
+		}
+		items = append(items, item)
+	}
+
+	slices.SortFunc(items, func(a SourceProductJobItem, b SourceProductJobItem) int {
+		left := a.Created
+		if left == "" {
+			left = a.StartedAt
+		}
+		right := b.Created
+		if right == "" {
+			right = b.StartedAt
+		}
+		if left != right {
+			return strings.Compare(right, left)
+		}
+		return strings.Compare(b.ID, a.ID)
+	})
+	for idx := range items {
+		if strings.EqualFold(items[idx].Status, "running") {
+			current := items[idx]
+			summary.CurrentJob = &current
+			break
+		}
+	}
+
+	total := len(items)
+	summary.Pages = totalPages(total, filter.PageSize)
+	start := (filter.Page - 1) * filter.PageSize
+	if start < 0 {
+		start = 0
+	}
+	if start > total {
+		start = total
+	}
+	end := start + filter.PageSize
+	if end > total {
+		end = total
+	}
+	summary.Items = items[start:end]
+	return summary, nil
+}
+
+func (s *Service) SourceProductJobDetail(_ context.Context, app core.App, id string) (SourceProductJobDetail, error) {
+	record, err := app.FindRecordById(CollectionSourceProductJobs, strings.TrimSpace(id))
+	if err != nil {
+		return SourceProductJobDetail{}, err
+	}
+	_ = s.reconcileSourceProductJobRecord(app, record)
+	item := sourceProductJobItem(record)
+	return SourceProductJobDetail{
+		SourceProductJobItem: item,
+		FailedItems:          append([]SourceProductFailedItem(nil), item.FailedItems...),
+	}, nil
+}
+
+func (s *Service) RetrySourceProductJob(app core.App, id string, actor SourceActionActor, note string) (SourceProductJobItem, error) {
+	record, err := app.FindRecordById(CollectionSourceProductJobs, strings.TrimSpace(id))
+	if err != nil {
+		return SourceProductJobItem{}, err
+	}
+	job := sourceProductJobItem(record)
+	if strings.EqualFold(job.Status, "running") {
+		return job, fmt.Errorf("当前任务仍在执行中")
+	}
+	if !slices.Contains([]string{"retry_sync", "promote", "promote_sync"}, strings.ToLower(job.JobType)) {
+		return SourceProductJobItem{}, fmt.Errorf("不支持的商品任务类型")
+	}
+	ids := make([]string, 0, len(job.FailedItems))
+	for _, item := range job.FailedItems {
+		if strings.TrimSpace(item.RecordID) != "" {
+			ids = append(ids, item.RecordID)
+		}
+	}
+	var progress SourceProductSyncProgress
+	if len(ids) > 0 {
+		if strings.EqualFold(job.JobType, "promote") {
+			progress, err = s.StartSourceProductPromoteAsyncForIDs(app, ids, actor, note)
+		} else if strings.EqualFold(job.JobType, "promote_sync") {
+			progress, err = s.StartSourceProductPromoteSyncAsyncForIDs(app, ids, actor, note)
+		} else {
+			progress, err = s.StartSourceProductRetrySyncAsyncForIDs(app, ids, actor, note)
+		}
+	} else {
+		if strings.EqualFold(job.JobType, "promote") {
+			progress, err = s.StartSourceProductPromoteAsyncForIDs(app, job.ProductIDs, actor, note)
+		} else if strings.EqualFold(job.JobType, "promote_sync") {
+			progress, err = s.StartSourceProductPromoteSyncAsyncForIDs(app, job.ProductIDs, actor, note)
+		} else {
+			progress, err = s.StartSourceProductRetrySyncAsyncForIDs(app, job.ProductIDs, actor, note)
+		}
+	}
+	if err != nil {
+		return SourceProductJobItem{}, err
+	}
+	jobRecord, err := app.FindRecordById(CollectionSourceProductJobs, progress.ID)
+	if err != nil {
+		return SourceProductJobItem{}, err
+	}
+	return sourceProductJobItem(jobRecord), nil
 }
 
 func (s *Service) PromoteApprovedSourceProducts(ctx context.Context, app core.App, limit int) (SourceProductPromotionSummary, error) {
@@ -2318,6 +2975,8 @@ func normalizeSourceReviewFilter(filter SourceReviewFilter) SourceReviewFilter {
 	filter.ProductStatus = strings.ToLower(strings.TrimSpace(filter.ProductStatus))
 	filter.AssetStatus = strings.ToLower(strings.TrimSpace(filter.AssetStatus))
 	filter.OriginalStatus = strings.ToLower(strings.TrimSpace(filter.OriginalStatus))
+	filter.CategoryKeys = strings.Join(sourceReviewFilterCategoryKeys(filter), ",")
+	filter.ProductIDs = strings.Join(sourceReviewFilterProductIDs(filter), ",")
 	filter.AssetIDs = strings.Join(sourceReviewFilterAssetIDs(filter), ",")
 	filter.SyncState = strings.ToLower(strings.TrimSpace(filter.SyncState))
 	filter.CategoryKey = strings.TrimSpace(filter.CategoryKey)
@@ -2339,11 +2998,17 @@ func buildSourceReviewParams(filter SourceReviewFilter) dbx.Params {
 	if filter.CategoryKey != "" {
 		params["category_key"] = filter.CategoryKey
 	}
+	if filter.CategoryKeys != "" {
+		params["category_keys"] = sourceReviewFilterCategoryKeys(filter)
+	}
 	if filter.ProductStatus != "" {
 		params["product_status"] = filter.ProductStatus
 	}
 	if filter.AssetStatus != "" {
 		params["asset_status"] = filter.AssetStatus
+	}
+	if filter.ProductIDs != "" {
+		params["product_ids"] = sourceReviewFilterProductIDs(filter)
 	}
 	if filter.OriginalStatus != "" {
 		params["original_status"] = filter.OriginalStatus
@@ -2358,12 +3023,18 @@ func buildSourceReviewParams(filter SourceReviewFilter) dbx.Params {
 }
 
 func buildSourceProductFilterExpr(filter SourceReviewFilter) string {
-	parts := make([]string, 0, 3)
+	parts := make([]string, 0, 4)
 	if filter.CategoryKey != "" {
 		parts = append(parts, "category_key = {:category_key}")
 	}
+	if filter.CategoryKeys != "" {
+		parts = append(parts, "category_keys_json != ''")
+	}
 	if filter.ProductStatus != "" {
 		parts = append(parts, "review_status = {:product_status}")
+	}
+	if filter.ProductIDs != "" {
+		parts = append(parts, "id ?= {:product_ids}")
 	}
 	if filter.Query != "" {
 		parts = append(parts, "(name ~ {:query} || product_id ~ {:query} || category_path ~ {:query})")
@@ -2436,8 +3107,30 @@ func matchesSourceSyncState(state string, bridge SourceBridgeStatus) bool {
 }
 
 func matchesSourceProductFilter(filter SourceReviewFilter, record *core.Record) bool {
+	if filter.ProductIDs != "" {
+		allowed := sourceReviewFilterProductIDs(filter)
+		if len(allowed) > 0 && !slices.Contains(allowed, strings.TrimSpace(record.Id)) {
+			return false
+		}
+	}
 	if filter.CategoryKey != "" && !slices.Contains(sourceProductCategoryKeys(record), strings.TrimSpace(filter.CategoryKey)) {
 		return false
+	}
+	if filter.CategoryKeys != "" {
+		selected := sourceReviewFilterCategoryKeys(filter)
+		if len(selected) > 0 {
+			recordKeys := sourceProductCategoryKeys(record)
+			matched := false
+			for _, key := range selected {
+				if slices.Contains(recordKeys, key) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+		}
 	}
 	if filter.ProductStatus != "" && !strings.EqualFold(strings.TrimSpace(record.GetString("review_status")), filter.ProductStatus) {
 		return false
@@ -2654,6 +3347,7 @@ func (s *Service) SourceReviewWorkbench(ctx context.Context, app core.App, produ
 			Bridge:                bridge,
 		})
 	}
+	summary.FilteredProductCount = len(filteredProducts)
 	summary.ProductPage = filter.ProductPage
 	summary.ProductPages = totalPages(len(filteredProducts), filter.PageSize)
 	summary.Products = paginateProducts(filteredProducts, filter.ProductPage, filter.PageSize)
@@ -2723,8 +3417,8 @@ func normalizeSourceCategoryFilter(filter SourceCategoryFilter) SourceCategoryFi
 	if filter.PageSize <= 0 {
 		filter.PageSize = 24
 	}
-	if filter.PageSize > 100 {
-		filter.PageSize = 100
+	if filter.PageSize > 300 {
+		filter.PageSize = 300
 	}
 	filter.Query = strings.TrimSpace(filter.Query)
 	return filter

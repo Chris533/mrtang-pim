@@ -105,6 +105,7 @@ go run ./cmd/pim serve
 - 为后续正式授权接入保留可插拔的数据源边界
 
 如果你需要直接看“源站 API -> rr 样本 -> dataset -> 本地接口”的总览，见 [docs/source-api.md](./docs/source-api.md)。
+如果你要直接看 `mrtang-backend` shop API 经过 `mrtang-pim` 代理后的分类树、分类商品和商品详情接口，也见 [docs/source-api.md](./docs/source-api.md) 里的 `Miniapp UI 代理链路`。
 如果你需要直接看 checkout 摘要接口和推荐字段，见 [docs/checkout-api.md](./docs/checkout-api.md)。
 如果你需要直接看源站抓取入库任务、运行记录和变更详情，见 [docs/target-sync.md](./docs/target-sync.md)。
 如果你需要直接看 source 商品审核、图片处理、加入发布队列与同步工作台，见 [docs/source-review-workbench.md](./docs/source-review-workbench.md)。
@@ -134,6 +135,7 @@ go run ./cmd/pim serve
 - `MINIAPP_CART_ORDER_SNAPSHOT=./datasets/miniapp/cart-order`
 - `MINIAPP_AUTH_ACCOUNT_ID=...`
 - `MINIAPP_USER_AGENT=Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.53(0x18003537) NetType/WIFI Language/zh_CN miniProgram`
+- `VENDURE_SHOP_API=`
 - `VENDURE_CF_VARIANT_SUPPLIER_CODE=`
 - `VENDURE_CF_VARIANT_SUPPLIER_COST_PRICE=`
 - `VENDURE_CF_VARIANT_CONVERSION_RATE=`
@@ -197,6 +199,9 @@ curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/minia
 curl -X POST -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/cart-order/order/submit
 curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/cart-order/order/submit-summary
 curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp/cart-order/checkout-summary
+curl -H 'Authorization: Bearer your-account-id' http://127.0.0.1:26228/api/miniapp-ui/collections/tree
+curl -H 'Authorization: Bearer your-account-id' 'http://127.0.0.1:26228/api/miniapp-ui/collections/products?slug=duck-products&audience=C&skip=0&take=24'
+curl -H 'Authorization: Bearer your-account-id' 'http://127.0.0.1:26228/api/miniapp-ui/products/detail?slug=ming-yang-jiao-ma-ya&audience=C'
 ```
 
 接口说明:

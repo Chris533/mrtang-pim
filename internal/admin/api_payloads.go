@@ -66,6 +66,13 @@ type SourceAssetJobsAPIData struct {
 	FlashError   string                     `json:"flashError"`
 }
 
+type SourceProductJobsAPIData struct {
+	Summary      pim.SourceProductJobsSummary `json:"summary"`
+	Filter       pim.SourceProductJobFilter   `json:"filter"`
+	FlashMessage string                       `json:"flashMessage"`
+	FlashError   string                       `json:"flashError"`
+}
+
 type ProcurementAPIData struct {
 	Summary      pim.ProcurementWorkbenchSummary `json:"summary"`
 	FlashMessage string                          `json:"flashMessage"`
@@ -103,6 +110,13 @@ type SourceAssetJobDetailAPIData struct {
 	ReturnTo     string                   `json:"returnTo"`
 	FlashMessage string                   `json:"flashMessage"`
 	FlashError   string                   `json:"flashError"`
+}
+
+type SourceProductJobDetailAPIData struct {
+	Detail       pim.SourceProductJobDetail `json:"detail"`
+	ReturnTo     string                     `json:"returnTo"`
+	FlashMessage string                     `json:"flashMessage"`
+	FlashError   string                     `json:"flashError"`
 }
 
 type ProcurementDetailAPIData struct {
@@ -223,6 +237,15 @@ func BuildSourceAssetJobsAPIData(summary pim.SourceAssetJobsSummary, filter pim.
 	}
 }
 
+func BuildSourceProductJobsAPIData(summary pim.SourceProductJobsSummary, filter pim.SourceProductJobFilter, flashMessage string, flashError string) SourceProductJobsAPIData {
+	return SourceProductJobsAPIData{
+		Summary:      summary,
+		Filter:       filter,
+		FlashMessage: strings.TrimSpace(flashMessage),
+		FlashError:   strings.TrimSpace(flashError),
+	}
+}
+
 func BuildProcurementAPIData(summary pim.ProcurementWorkbenchSummary, flashMessage string, flashError string) ProcurementAPIData {
 	return ProcurementAPIData{
 		Summary:      summary,
@@ -267,6 +290,15 @@ func BuildSourceAssetDetailAPIData(detail pim.SourceAssetDetail, returnTo string
 
 func BuildSourceAssetJobDetailAPIData(detail pim.SourceAssetJobDetail, returnTo string, flashMessage string, flashError string) SourceAssetJobDetailAPIData {
 	return SourceAssetJobDetailAPIData{
+		Detail:       detail,
+		ReturnTo:     strings.TrimSpace(returnTo),
+		FlashMessage: strings.TrimSpace(flashMessage),
+		FlashError:   strings.TrimSpace(flashError),
+	}
+}
+
+func BuildSourceProductJobDetailAPIData(detail pim.SourceProductJobDetail, returnTo string, flashMessage string, flashError string) SourceProductJobDetailAPIData {
+	return SourceProductJobDetailAPIData{
 		Detail:       detail,
 		ReturnTo:     strings.TrimSpace(returnTo),
 		FlashMessage: strings.TrimSpace(flashMessage),

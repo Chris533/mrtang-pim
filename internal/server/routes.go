@@ -14,6 +14,7 @@ func RegisterRoutes(app *pocketbase.PocketBase, cfg config.Config, service *pim.
 		registerAdminRoutes(se, cfg, service, miniappService)
 		registerProcurementRoutes(se, cfg, service)
 		registerMiniAppRoutes(se, cfg, miniappService)
+		registerMiniAppUiRoutes(se, cfg, service)
 		registerPIMWorkflowRoutes(se, cfg, service)
 		return se.Next()
 	})

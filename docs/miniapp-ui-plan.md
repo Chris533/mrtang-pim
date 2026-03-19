@@ -8,6 +8,12 @@
 - backend 发布链：已经基本可用，可继续收尾
 - 小程序 UI 目标模型：应当成为当前主优先级
 
+当前 P0 收口项：
+
+- 商品列表或详情页出现价格为 `0`
+- 列表页没有明确显示多规格/多单位价格
+- 点击详情后提示“商品不存在或当前客户群不可见”，但缺少 `slug/id` fallback 与友好空态
+
 ## 一、为什么现在先做 UI
 
 如果不先定 UI contract，后面会反复返工：
@@ -194,6 +200,12 @@
 - [miniapp-ui-batch3-contract.md](./miniapp-ui-batch3-contract.md)
 - [miniapp-ui-batch4-contract.md](./miniapp-ui-batch4-contract.md)
 - [miniapp-ui-implementation-backlog.md](./miniapp-ui-implementation-backlog.md)
+
+当前先收这组 P0：
+
+1. 修价格为 `0` 的 fallback
+2. 列表页和详情页明确显示多规格价格
+3. 统一详情页 `slug/id` fallback 与“不可见/不存在”空态
 
 下一步建议直接进入：
 

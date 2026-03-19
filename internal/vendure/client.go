@@ -3,6 +3,8 @@ package vendure
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -53,6 +55,15 @@ type SyncResult struct {
 	AssetID   string
 }
 
+type AssetCleanupResult struct {
+	TaggedAssets     int      `json:"taggedAssets"`
+	ReferencedAssets int      `json:"referencedAssets"`
+	DeletedAssets    int      `json:"deletedAssets"`
+	FailedAssets     int      `json:"failedAssets"`
+	DeletedIDs       []string `json:"deletedIds,omitempty"`
+	FailedIDs        []string `json:"failedIds,omitempty"`
+}
+
 type CollectionPayload struct {
 	SourceCategoryKey   string
 	SourceCategoryPath  string
@@ -68,6 +79,103 @@ type CollectionSyncResult struct {
 	Created      bool
 }
 
+type MiniappAsset struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Preview string `json:"preview"`
+	Source  string `json:"source"`
+}
+
+type MiniappCollectionBreadcrumb struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+}
+
+type MiniappCollectionNode struct {
+	ID                  string                        `json:"id"`
+	Name                string                        `json:"name"`
+	Slug                string                        `json:"slug"`
+	ParentID            string                        `json:"parentId"`
+	FeaturedAsset       *MiniappAsset                 `json:"featuredAsset,omitempty"`
+	Breadcrumbs         []MiniappCollectionBreadcrumb `json:"breadcrumbs"`
+	SourceCategoryKey   string                        `json:"sourceCategoryKey"`
+	SourceCategoryPath  string                        `json:"sourceCategoryPath"`
+	SourceCategoryLevel int                           `json:"sourceCategoryLevel"`
+	Children            []MiniappCollectionNode       `json:"children"`
+}
+
+type MiniappUnitOption struct {
+	UnitID    string  `json:"unitId"`
+	UnitName  string  `json:"unitName"`
+	Price     int     `json:"price"`
+	BaseUnit  string  `json:"baseUnit"`
+	Rate      float64 `json:"rate"`
+	IsDefault bool    `json:"isDefault"`
+	StockQty  int     `json:"stockQty"`
+	StockText string  `json:"stockText"`
+}
+
+type MiniappOrderUnit struct {
+	UnitID      string  `json:"unitId"`
+	UnitName    string  `json:"unitName"`
+	Rate        float64 `json:"rate"`
+	IsBase      bool    `json:"isBase"`
+	IsDefault   bool    `json:"isDefault"`
+	AllowOrder  bool    `json:"allowOrder"`
+	MinOrderQty int     `json:"minOrderQty"`
+	MaxOrderQty int     `json:"maxOrderQty"`
+}
+
+type MiniappProductCard struct {
+	ID                string              `json:"id"`
+	Name              string              `json:"name"`
+	Slug              string              `json:"slug"`
+	FeaturedAsset     *MiniappAsset       `json:"featuredAsset,omitempty"`
+	CEndFeaturedAsset *MiniappAsset       `json:"cEndFeaturedAsset,omitempty"`
+	TargetAudience    string              `json:"targetAudience"`
+	DefaultPrice      int                 `json:"defaultPrice"`
+	BusinessPrice     int                 `json:"businessPrice"`
+	DefaultUnit       string              `json:"defaultUnit"`
+	HasMultiUnit      bool                `json:"hasMultiUnit"`
+	UnitOptions       []MiniappUnitOption `json:"unitOptions"`
+}
+
+type MiniappProductList struct {
+	Items      []MiniappProductCard `json:"items"`
+	TotalItems int                  `json:"totalItems"`
+}
+
+type MiniappProductVariant struct {
+	ID              string        `json:"id"`
+	Name            string        `json:"name"`
+	SKU             string        `json:"sku"`
+	FeaturedAsset   *MiniappAsset `json:"featuredAsset,omitempty"`
+	Price           int           `json:"price"`
+	StockOnHand     int           `json:"stockOnHand"`
+	SalesUnit       string        `json:"salesUnit"`
+	BPrice          int           `json:"bPrice"`
+	ConversionRate  float64       `json:"conversionRate"`
+	SourceProductID string        `json:"sourceProductId"`
+	SourceType      string        `json:"sourceType"`
+}
+
+type MiniappProductDetail struct {
+	ID                string                  `json:"id"`
+	Name              string                  `json:"name"`
+	Slug              string                  `json:"slug"`
+	Description       string                  `json:"description"`
+	FeaturedAsset     *MiniappAsset           `json:"featuredAsset,omitempty"`
+	CEndFeaturedAsset *MiniappAsset           `json:"cEndFeaturedAsset,omitempty"`
+	Assets            []MiniappAsset          `json:"assets"`
+	TargetAudience    string                  `json:"targetAudience"`
+	Variants          []MiniappProductVariant `json:"variants"`
+	DefaultVariant    *MiniappProductVariant  `json:"defaultVariant,omitempty"`
+	DefaultUnit       string                  `json:"defaultUnit"`
+	UnitOptions       []MiniappUnitOption     `json:"unitOptions"`
+	OrderUnits        []MiniappOrderUnit      `json:"orderUnits"`
+}
+
 type collectionFilterArg struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
@@ -76,6 +184,14 @@ type collectionFilterArg struct {
 type collectionFilter struct {
 	Code string                `json:"code"`
 	Args []collectionFilterArg `json:"args"`
+}
+
+type assetNode struct {
+	ID string `json:"id"`
+}
+
+type assetListItem struct {
+	ID string `json:"id"`
 }
 
 type Client struct {
@@ -151,6 +267,180 @@ func (c *Client) SyncProduct(ctx context.Context, payload ProductPayload) (SyncR
 	}
 
 	return result, nil
+}
+
+func (c *Client) MiniappCollectionsTree(ctx context.Context) ([]MiniappCollectionNode, error) {
+	query := `
+query MiniappCollectionsTree {
+  miniappCollectionsTree {
+    id
+    name
+    slug
+    parentId
+    sourceCategoryKey
+    sourceCategoryPath
+    sourceCategoryLevel
+    breadcrumbs { id name slug }
+    featuredAsset { id name preview source }
+    children {
+      id
+      name
+      slug
+      parentId
+      sourceCategoryKey
+      sourceCategoryPath
+      sourceCategoryLevel
+      breadcrumbs { id name slug }
+      featuredAsset { id name preview source }
+      children {
+        id
+        name
+        slug
+        parentId
+        sourceCategoryKey
+        sourceCategoryPath
+        sourceCategoryLevel
+        breadcrumbs { id name slug }
+        featuredAsset { id name preview source }
+        children {
+          id
+          name
+          slug
+          parentId
+          sourceCategoryKey
+          sourceCategoryPath
+          sourceCategoryLevel
+          breadcrumbs { id name slug }
+          featuredAsset { id name preview source }
+        }
+      }
+    }
+  }
+}`
+
+	var response struct {
+		MiniappCollectionsTree []MiniappCollectionNode `json:"miniappCollectionsTree"`
+	}
+	if _, err := c.shopGraphQL(ctx, query, map[string]any{}, &response); err != nil {
+		return nil, err
+	}
+	return response.MiniappCollectionsTree, nil
+}
+
+func (c *Client) MiniappCollectionProducts(ctx context.Context, slug string, audience string, skip int, take int) (MiniappProductList, error) {
+	query := `
+query MiniappCollectionProducts($slug: String!, $audience: String!, $skip: Int!, $take: Int!) {
+  miniappCollectionProducts(slug: $slug, audience: $audience, skip: $skip, take: $take) {
+    totalItems
+    items {
+      id
+      name
+      slug
+      targetAudience
+      defaultPrice
+      businessPrice
+      defaultUnit
+      hasMultiUnit
+      featuredAsset { id name preview source }
+      cEndFeaturedAsset { id name preview source }
+      unitOptions {
+        unitId
+        unitName
+        price
+        baseUnit
+        rate
+        isDefault
+        stockQty
+        stockText
+      }
+    }
+  }
+}`
+
+	var response struct {
+		MiniappCollectionProducts MiniappProductList `json:"miniappCollectionProducts"`
+	}
+	_, err := c.shopGraphQL(ctx, query, map[string]any{
+		"slug":     slug,
+		"audience": audience,
+		"skip":     skip,
+		"take":     take,
+	}, &response)
+	return response.MiniappCollectionProducts, err
+}
+
+func (c *Client) MiniappProductDetail(ctx context.Context, slug string, audience string) (*MiniappProductDetail, error) {
+	query := `
+query MiniappProductDetail($slug: String!, $audience: String!) {
+  miniappProductDetail(slug: $slug, audience: $audience) {
+    id
+    name
+    slug
+    description
+    targetAudience
+    defaultUnit
+    featuredAsset { id name preview source }
+    cEndFeaturedAsset { id name preview source }
+    assets { id name preview source }
+    defaultVariant {
+      id
+      name
+      sku
+      price
+      stockOnHand
+      salesUnit
+      bPrice
+      conversionRate
+      sourceProductId
+      sourceType
+      featuredAsset { id name preview source }
+    }
+    variants {
+      id
+      name
+      sku
+      price
+      stockOnHand
+      salesUnit
+      bPrice
+      conversionRate
+      sourceProductId
+      sourceType
+      featuredAsset { id name preview source }
+    }
+    unitOptions {
+      unitId
+      unitName
+      price
+      baseUnit
+      rate
+      isDefault
+      stockQty
+      stockText
+    }
+    orderUnits {
+      unitId
+      unitName
+      rate
+      isBase
+      isDefault
+      allowOrder
+      minOrderQty
+      maxOrderQty
+    }
+  }
+}`
+
+	var response struct {
+		MiniappProductDetail *MiniappProductDetail `json:"miniappProductDetail"`
+	}
+	if _, err := c.shopGraphQL(ctx, query, map[string]any{
+		"slug":     slug,
+		"audience": audience,
+	}, &response); err != nil {
+		return nil, err
+	}
+	return response.MiniappProductDetail, nil
 }
 
 func (c *Client) uploadProductAssets(ctx context.Context, payload ProductPayload) ([]string, string, error) {
@@ -241,6 +531,51 @@ mutation UpdateProduct($input: UpdateProductInput!) {
 		},
 	}, &response)
 	return err
+}
+
+func (c *Client) CleanupOrphanedPIMAssets(ctx context.Context) (AssetCleanupResult, error) {
+	if err := c.ensureAuthenticated(ctx); err != nil {
+		return AssetCleanupResult{}, err
+	}
+
+	assets, err := c.listTaggedAssets(ctx)
+	if err != nil {
+		return AssetCleanupResult{}, err
+	}
+	referenced, err := c.referencedAssetIDs(ctx)
+	if err != nil {
+		return AssetCleanupResult{}, err
+	}
+
+	result := AssetCleanupResult{
+		TaggedAssets:     len(assets),
+		ReferencedAssets: len(referenced),
+		DeletedIDs:       []string{},
+		FailedIDs:        []string{},
+	}
+
+	orphanIDs := make([]string, 0, len(assets))
+	for _, item := range assets {
+		if _, ok := referenced[item.ID]; ok {
+			continue
+		}
+		orphanIDs = append(orphanIDs, item.ID)
+	}
+
+	for _, chunk := range chunkStrings(orphanIDs, 20) {
+		if len(chunk) == 0 {
+			continue
+		}
+		if err := c.deleteAssets(ctx, chunk); err != nil {
+			result.FailedAssets += len(chunk)
+			result.FailedIDs = append(result.FailedIDs, chunk...)
+			continue
+		}
+		result.DeletedAssets += len(chunk)
+		result.DeletedIDs = append(result.DeletedIDs, chunk...)
+	}
+
+	return result, nil
 }
 
 func (c *Client) EnsureCollection(ctx context.Context, payload CollectionPayload) (CollectionSyncResult, error) {
@@ -765,8 +1100,13 @@ func (c *Client) buildProductCustomFields(payload ProductPayload, cEndAssetID st
 		customFields[field] = payload.TargetAudience
 	}
 
-	if field := strings.TrimSpace(c.cfg.ProductCEndAssetField); field != "" && strings.TrimSpace(cEndAssetID) != "" {
-		customFields[relationInputFieldName(field)] = cEndAssetID
+	if field := strings.TrimSpace(c.cfg.ProductCEndAssetField); field != "" {
+		relationField := relationInputFieldName(field)
+		if strings.TrimSpace(cEndAssetID) != "" {
+			customFields[relationField] = cEndAssetID
+		} else {
+			customFields[relationField] = nil
+		}
 	}
 
 	return customFields
@@ -798,7 +1138,17 @@ func (c *Client) buildVariantCustomFields(payload ProductPayload) map[string]any
 }
 
 func (c *Client) uploadAsset(ctx context.Context, fileURL string, filename string) (string, error) {
-	body, contentType, err := c.buildUploadBody(ctx, fileURL, filename)
+	fileURL = strings.TrimSpace(fileURL)
+	filename = strings.TrimSpace(filename)
+	keyTag := vendureAssetKeyTag(fileURL)
+	assetTags := appendVendureAssetTags(c.cfg.AssetTags, keyTag)
+	if existingID, err := c.findExistingAssetByKey(ctx, assetTags, filename); err != nil {
+		return "", err
+	} else if existingID != "" {
+		return existingID, nil
+	}
+
+	body, contentType, err := c.buildUploadBody(ctx, fileURL, filename, assetTags)
 	if err != nil {
 		return "", err
 	}
@@ -857,7 +1207,7 @@ func (c *Client) uploadAsset(ctx context.Context, fileURL string, filename strin
 	return first.ID, nil
 }
 
-func (c *Client) buildUploadBody(ctx context.Context, fileURL string, filename string) (*bytes.Buffer, string, error) {
+func (c *Client) buildUploadBody(ctx context.Context, fileURL string, filename string, assetTags []string) (*bytes.Buffer, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
 	if err != nil {
 		return nil, "", err
@@ -912,7 +1262,7 @@ func (c *Client) buildUploadBody(ctx context.Context, fileURL string, filename s
 			"input": []map[string]any{
 				{
 					"file": nil,
-					"tags": c.cfg.AssetTags,
+					"tags": uniqueNonEmptyStrings(assetTags),
 				},
 			},
 		},
@@ -962,6 +1312,334 @@ func (c *Client) buildUploadBody(ctx context.Context, fileURL string, filename s
 	return buffer, writer.FormDataContentType(), nil
 }
 
+func (c *Client) findExistingAssetByKey(ctx context.Context, assetTags []string, filename string) (string, error) {
+	tags := uniqueNonEmptyStrings(assetTags)
+	if len(tags) == 0 {
+		return "", nil
+	}
+
+	query := `
+query Assets($options: AssetListOptions) {
+  assets(options: $options) {
+    items {
+      id
+      name
+    }
+  }
+}`
+
+	options := map[string]any{
+		"take":         10,
+		"tags":         tags,
+		"tagsOperator": "AND",
+		"sort": map[string]any{
+			"createdAt": "DESC",
+		},
+	}
+	if strings.TrimSpace(filename) != "" {
+		options["filter"] = map[string]any{
+			"name": map[string]any{
+				"eq": strings.TrimSpace(filename),
+			},
+		}
+	}
+
+	var response struct {
+		Assets struct {
+			Items []assetListItem `json:"items"`
+		} `json:"assets"`
+	}
+	if _, err := c.graphQL(ctx, query, map[string]any{"options": options}, &response); err != nil {
+		return "", err
+	}
+	if len(response.Assets.Items) == 0 && strings.TrimSpace(filename) != "" {
+		delete(options, "filter")
+		if _, err := c.graphQL(ctx, query, map[string]any{"options": options}, &response); err != nil {
+			return "", err
+		}
+	}
+	if len(response.Assets.Items) == 0 {
+		return "", nil
+	}
+	return strings.TrimSpace(response.Assets.Items[0].ID), nil
+}
+
+func (c *Client) listTaggedAssets(ctx context.Context) ([]assetListItem, error) {
+	query := `
+query Assets($options: AssetListOptions) {
+  assets(options: $options) {
+    items {
+      id
+      name
+    }
+    totalItems
+  }
+}`
+
+	items := []assetListItem{}
+	skip := 0
+	for {
+		var response struct {
+			Assets struct {
+				Items      []assetListItem `json:"items"`
+				TotalItems int             `json:"totalItems"`
+			} `json:"assets"`
+		}
+		_, err := c.graphQL(ctx, query, map[string]any{
+			"options": map[string]any{
+				"skip":         skip,
+				"take":         100,
+				"tags":         uniqueNonEmptyStrings(c.cfg.AssetTags),
+				"tagsOperator": "AND",
+				"sort": map[string]any{
+					"createdAt": "DESC",
+				},
+			},
+		}, &response)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, response.Assets.Items...)
+		skip += len(response.Assets.Items)
+		if skip >= response.Assets.TotalItems || len(response.Assets.Items) == 0 {
+			break
+		}
+	}
+	return items, nil
+}
+
+func (c *Client) referencedAssetIDs(ctx context.Context) (map[string]struct{}, error) {
+	referenced := make(map[string]struct{})
+	if err := c.collectReferencedProductAssets(ctx, referenced); err != nil {
+		return nil, err
+	}
+	if err := c.collectReferencedVariantAssets(ctx, referenced); err != nil {
+		return nil, err
+	}
+	if err := c.collectReferencedCollectionAssets(ctx, referenced); err != nil {
+		return nil, err
+	}
+	return referenced, nil
+}
+
+func (c *Client) collectReferencedProductAssets(ctx context.Context, target map[string]struct{}) error {
+	consumerField := ""
+	if field := strings.TrimSpace(c.cfg.ProductCEndAssetField); field != "" {
+		consumerField = fmt.Sprintf("\n      customFields {\n        pimConsumerAsset: %s { id }\n      }", field)
+	}
+	query := fmt.Sprintf(`
+query Products($options: ProductListOptions) {
+  products(options: $options) {
+    items {
+      id
+      featuredAsset { id }
+      assets { id }%s
+    }
+    totalItems
+  }
+}`, consumerField)
+
+	skip := 0
+	for {
+		var response struct {
+			Products struct {
+				Items []struct {
+					ID            string      `json:"id"`
+					FeaturedAsset *assetNode  `json:"featuredAsset"`
+					Assets        []assetNode `json:"assets"`
+					CustomFields  struct {
+						ConsumerAsset *assetNode `json:"pimConsumerAsset"`
+					} `json:"customFields"`
+				} `json:"items"`
+				TotalItems int `json:"totalItems"`
+			} `json:"products"`
+		}
+		_, err := c.graphQL(ctx, query, map[string]any{
+			"options": map[string]any{"skip": skip, "take": 100},
+		}, &response)
+		if err != nil {
+			return err
+		}
+		for _, item := range response.Products.Items {
+			if item.FeaturedAsset != nil {
+				target[item.FeaturedAsset.ID] = struct{}{}
+			}
+			for _, asset := range item.Assets {
+				target[asset.ID] = struct{}{}
+			}
+			if item.CustomFields.ConsumerAsset != nil {
+				target[item.CustomFields.ConsumerAsset.ID] = struct{}{}
+			}
+		}
+		skip += len(response.Products.Items)
+		if skip >= response.Products.TotalItems || len(response.Products.Items) == 0 {
+			break
+		}
+	}
+	return nil
+}
+
+func (c *Client) collectReferencedVariantAssets(ctx context.Context, target map[string]struct{}) error {
+	query := `
+query ProductVariants($options: ProductVariantListOptions) {
+  productVariants(options: $options) {
+    items {
+      id
+      featuredAsset { id }
+      assets { id }
+    }
+    totalItems
+  }
+}`
+
+	skip := 0
+	for {
+		var response struct {
+			ProductVariants struct {
+				Items []struct {
+					ID            string      `json:"id"`
+					FeaturedAsset *assetNode  `json:"featuredAsset"`
+					Assets        []assetNode `json:"assets"`
+				} `json:"items"`
+				TotalItems int `json:"totalItems"`
+			} `json:"productVariants"`
+		}
+		_, err := c.graphQL(ctx, query, map[string]any{
+			"options": map[string]any{"skip": skip, "take": 100},
+		}, &response)
+		if err != nil {
+			return err
+		}
+		for _, item := range response.ProductVariants.Items {
+			if item.FeaturedAsset != nil {
+				target[item.FeaturedAsset.ID] = struct{}{}
+			}
+			for _, asset := range item.Assets {
+				target[asset.ID] = struct{}{}
+			}
+		}
+		skip += len(response.ProductVariants.Items)
+		if skip >= response.ProductVariants.TotalItems || len(response.ProductVariants.Items) == 0 {
+			break
+		}
+	}
+	return nil
+}
+
+func (c *Client) collectReferencedCollectionAssets(ctx context.Context, target map[string]struct{}) error {
+	query := `
+query Collections($options: CollectionListOptions) {
+  collections(options: $options) {
+    items {
+      id
+      featuredAsset { id }
+      assets { id }
+    }
+    totalItems
+  }
+}`
+
+	skip := 0
+	for {
+		var response struct {
+			Collections struct {
+				Items []struct {
+					ID            string      `json:"id"`
+					FeaturedAsset *assetNode  `json:"featuredAsset"`
+					Assets        []assetNode `json:"assets"`
+				} `json:"items"`
+				TotalItems int `json:"totalItems"`
+			} `json:"collections"`
+		}
+		_, err := c.graphQL(ctx, query, map[string]any{
+			"options": map[string]any{"skip": skip, "take": 100},
+		}, &response)
+		if err != nil {
+			return err
+		}
+		for _, item := range response.Collections.Items {
+			if item.FeaturedAsset != nil {
+				target[item.FeaturedAsset.ID] = struct{}{}
+			}
+			for _, asset := range item.Assets {
+				target[asset.ID] = struct{}{}
+			}
+		}
+		skip += len(response.Collections.Items)
+		if skip >= response.Collections.TotalItems || len(response.Collections.Items) == 0 {
+			break
+		}
+	}
+	return nil
+}
+
+func (c *Client) deleteAssets(ctx context.Context, assetIDs []string) error {
+	assetIDs = uniqueNonEmptyStrings(assetIDs)
+	if len(assetIDs) == 0 {
+		return nil
+	}
+	mutation := `
+mutation DeleteAssets($input: DeleteAssetsInput!) {
+  deleteAssets(input: $input) {
+    result
+    message
+  }
+}`
+	var response struct {
+		DeleteAssets struct {
+			Result  string `json:"result"`
+			Message string `json:"message"`
+		} `json:"deleteAssets"`
+	}
+	if _, err := c.graphQL(ctx, mutation, map[string]any{
+		"input": map[string]any{
+			"assetIds": assetIDs,
+			"force":    true,
+		},
+	}, &response); err != nil {
+		return err
+	}
+	if result := strings.TrimSpace(response.DeleteAssets.Result); result != "" && !strings.EqualFold(result, "DELETED") {
+		message := strings.TrimSpace(response.DeleteAssets.Message)
+		if message == "" {
+			message = result
+		}
+		return fmt.Errorf("delete assets failed: %s", message)
+	}
+	return nil
+}
+
+func vendureAssetKeyTag(fileURL string) string {
+	value := strings.TrimSpace(fileURL)
+	if value == "" {
+		return ""
+	}
+	sum := sha1.Sum([]byte(value))
+	return "pim-asset-key-" + hex.EncodeToString(sum[:10])
+}
+
+func appendVendureAssetTags(base []string, extras ...string) []string {
+	tags := make([]string, 0, len(base)+len(extras))
+	tags = append(tags, base...)
+	tags = append(tags, extras...)
+	return uniqueNonEmptyStrings(tags)
+}
+
+func chunkStrings(items []string, size int) [][]string {
+	if size <= 0 || len(items) == 0 {
+		return nil
+	}
+	chunks := make([][]string, 0, (len(items)+size-1)/size)
+	for start := 0; start < len(items); start += size {
+		end := start + size
+		if end > len(items) {
+			end = len(items)
+		}
+		chunks = append(chunks, items[start:end])
+	}
+	return chunks
+}
+
 func detectUploadContentType(filename string, responseContentType string, content []byte) string {
 	contentType := strings.TrimSpace(responseContentType)
 	if contentType != "" {
@@ -998,6 +1676,14 @@ func escapeMultipartFilename(filename string) string {
 }
 
 func (c *Client) graphQL(ctx context.Context, query string, variables map[string]any, target any) ([]graphQLError, error) {
+	return c.graphQLToEndpoint(ctx, c.cfg.Endpoint, query, variables, target)
+}
+
+func (c *Client) shopGraphQL(ctx context.Context, query string, variables map[string]any, target any) ([]graphQLError, error) {
+	return c.graphQLToEndpoint(ctx, c.cfg.ShopEndpoint, query, variables, target)
+}
+
+func (c *Client) graphQLToEndpoint(ctx context.Context, endpoint string, query string, variables map[string]any, target any) ([]graphQLError, error) {
 	payload := map[string]any{
 		"query":     query,
 		"variables": variables,
@@ -1008,7 +1694,7 @@ func (c *Client) graphQL(ctx context.Context, query string, variables map[string
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.Endpoint, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

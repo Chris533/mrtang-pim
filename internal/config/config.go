@@ -84,6 +84,7 @@ type WorkflowConfig struct {
 
 type VendureConfig struct {
 	Endpoint                   string
+	ShopEndpoint               string
 	Token                      string
 	Username                   string
 	Password                   string
@@ -163,6 +164,7 @@ func Load() Config {
 		},
 		Vendure: VendureConfig{
 			Endpoint:                   getEnv("VENDURE_ADMIN_API", "http://127.0.0.1:26227/admin-api"),
+			ShopEndpoint:               getEnv("VENDURE_SHOP_API", defaultVendureShopEndpoint(getEnv("VENDURE_ADMIN_API", "http://127.0.0.1:26227/admin-api"))),
 			Token:                      strings.TrimSpace(os.Getenv("VENDURE_ADMIN_TOKEN")),
 			Username:                   strings.TrimSpace(os.Getenv("VENDURE_ADMIN_USERNAME")),
 			Password:                   strings.TrimSpace(os.Getenv("VENDURE_ADMIN_PASSWORD")),
@@ -181,6 +183,17 @@ func Load() Config {
 			ProductCEndAssetField:      strings.TrimSpace(os.Getenv("VENDURE_CF_PRODUCT_C_END_FEATURED_ASSET")),
 		},
 	}
+}
+
+func defaultVendureShopEndpoint(adminEndpoint string) string {
+	value := strings.TrimSpace(adminEndpoint)
+	if value == "" {
+		return "http://127.0.0.1:26227/shop-api"
+	}
+	if strings.Contains(value, "/admin-api") {
+		return strings.Replace(value, "/admin-api", "/shop-api", 1)
+	}
+	return value
 }
 
 func getEnv(key string, fallback string) string {

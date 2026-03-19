@@ -37,6 +37,7 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	registerAdminSlashRedirect(se, "/_/mrtang-admin/source/products/", "/_/mrtang-admin/source/products")
 	registerAdminSlashRedirect(se, "/_/mrtang-admin/source/assets/", "/_/mrtang-admin/source/assets")
 	registerAdminSlashRedirect(se, "/_/mrtang-admin/source/asset-jobs/", "/_/mrtang-admin/source/asset-jobs")
+	registerAdminSlashRedirect(se, "/_/mrtang-admin/source/product-jobs/", "/_/mrtang-admin/source/product-jobs")
 	registerAdminSlashRedirect(se, "/_/mrtang-admin/source/logs/", "/_/mrtang-admin/source/logs")
 	registerAdminSlashRedirect(se, "/_/mrtang-admin/procurement/", "/_/mrtang-admin/procurement")
 	registerAdminSlashRedirect(se, "/_/mrtang-admin/backend-release/", "/_/mrtang-admin/backend-release")
@@ -434,6 +435,7 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		status := strings.TrimSpace(re.Request.FormValue("status"))
 		filter := pim.SourceReviewFilter{
 			CategoryKey:   strings.TrimSpace(re.Request.FormValue("categoryKey")),
+			CategoryKeys:  strings.TrimSpace(re.Request.FormValue("categoryKeys")),
 			ProductStatus: strings.TrimSpace(re.Request.FormValue("productStatus")),
 			SyncState:     strings.TrimSpace(re.Request.FormValue("syncState")),
 			Query:         strings.TrimSpace(re.Request.FormValue("q")),
@@ -476,17 +478,17 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 				"message": "请先选择要桥接的商品。",
 			})
 		}
-		summary, err := service.BatchPromoteSourceProductsWithAudit(re.Request.Context(), re.App, ids, false, sourceActionActor(re), sourceActionNote(re))
+		job, err := service.StartSourceProductPromoteAsyncForIDs(re.App, ids, sourceActionActor(re), sourceActionNote(re))
 		if err != nil {
 			return re.JSON(http.StatusInternalServerError, map[string]any{
 				"ok":      false,
-				"message": "批量桥接商品失败：" + err.Error(),
+				"message": "启动批量加入发布队列失败：" + err.Error(),
 			})
 		}
-		return re.JSON(http.StatusOK, map[string]any{
+		return re.JSON(http.StatusAccepted, map[string]any{
 			"ok":      true,
-			"message": fmt.Sprintf("批量桥接完成：成功 %d，失败 %d。", summary.Processed, summary.Failed),
-			"summary": summary,
+			"message": fmt.Sprintf("已启动 %d 个商品的加入发布队列任务。", job.Total),
+			"job":     job,
 		})
 	})
 
@@ -496,6 +498,7 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		}
 		filter := pim.SourceReviewFilter{
 			CategoryKey:   strings.TrimSpace(re.Request.FormValue("categoryKey")),
+			CategoryKeys:  strings.TrimSpace(re.Request.FormValue("categoryKeys")),
 			ProductStatus: strings.TrimSpace(re.Request.FormValue("productStatus")),
 			SyncState:     strings.TrimSpace(re.Request.FormValue("syncState")),
 			Query:         strings.TrimSpace(re.Request.FormValue("q")),
@@ -513,17 +516,17 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 				"message": "当前筛选结果下没有可加入发布队列的商品。",
 			})
 		}
-		summary, err := service.BatchPromoteSourceProductsWithAudit(re.Request.Context(), re.App, ids, false, sourceActionActor(re), sourceActionNote(re))
+		job, err := service.StartSourceProductPromoteAsyncForFilter(re.App, filter, sourceActionActor(re), sourceActionNote(re))
 		if err != nil {
 			return re.JSON(http.StatusInternalServerError, map[string]any{
 				"ok":      false,
-				"message": "按当前筛选结果批量加入发布队列失败：" + err.Error(),
+				"message": "启动按当前筛选结果批量加入发布队列失败：" + err.Error(),
 			})
 		}
-		return re.JSON(http.StatusOK, map[string]any{
+		return re.JSON(http.StatusAccepted, map[string]any{
 			"ok":      true,
-			"message": fmt.Sprintf("按当前筛选结果批量加入发布队列完成：成功 %d，失败 %d。", summary.Processed, summary.Failed),
-			"summary": summary,
+			"message": fmt.Sprintf("已启动当前筛选结果 %d 个商品的加入发布队列任务。", job.Total),
+			"job":     job,
 		})
 	})
 
@@ -538,17 +541,17 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 				"message": "请先选择要桥接并同步的商品。",
 			})
 		}
-		summary, err := service.BatchPromoteSourceProductsWithAudit(re.Request.Context(), re.App, ids, true, sourceActionActor(re), sourceActionNote(re))
+		job, err := service.StartSourceProductPromoteSyncAsyncForIDs(re.App, ids, sourceActionActor(re), sourceActionNote(re))
 		if err != nil {
 			return re.JSON(http.StatusInternalServerError, map[string]any{
 				"ok":      false,
-				"message": "批量桥接并同步商品失败：" + err.Error(),
+				"message": "启动批量加入发布队列并发布失败：" + err.Error(),
 			})
 		}
-		return re.JSON(http.StatusOK, map[string]any{
+		return re.JSON(http.StatusAccepted, map[string]any{
 			"ok":      true,
-			"message": fmt.Sprintf("批量桥接并同步完成：成功 %d，失败 %d。", summary.Processed, summary.Failed),
-			"summary": summary,
+			"message": fmt.Sprintf("已启动 %d 个商品的加入发布队列并发布任务。", job.Total),
+			"job":     job,
 		})
 	})
 
@@ -558,6 +561,7 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		}
 		filter := pim.SourceReviewFilter{
 			CategoryKey:   strings.TrimSpace(re.Request.FormValue("categoryKey")),
+			CategoryKeys:  strings.TrimSpace(re.Request.FormValue("categoryKeys")),
 			ProductStatus: strings.TrimSpace(re.Request.FormValue("productStatus")),
 			SyncState:     strings.TrimSpace(re.Request.FormValue("syncState")),
 			Query:         strings.TrimSpace(re.Request.FormValue("q")),
@@ -575,17 +579,17 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 				"message": "当前筛选结果下没有可发布的商品。",
 			})
 		}
-		summary, err := service.BatchPromoteSourceProductsWithAudit(re.Request.Context(), re.App, ids, true, sourceActionActor(re), sourceActionNote(re))
+		job, err := service.StartSourceProductPromoteSyncAsyncForFilter(re.App, filter, sourceActionActor(re), sourceActionNote(re))
 		if err != nil {
 			return re.JSON(http.StatusInternalServerError, map[string]any{
 				"ok":      false,
-				"message": "按当前筛选结果批量加入发布队列并发布失败：" + err.Error(),
+				"message": "启动按当前筛选结果加入发布队列并发布失败：" + err.Error(),
 			})
 		}
-		return re.JSON(http.StatusOK, map[string]any{
+		return re.JSON(http.StatusAccepted, map[string]any{
 			"ok":      true,
-			"message": fmt.Sprintf("按当前筛选结果批量加入发布队列并发布完成：成功 %d，失败 %d。", summary.Processed, summary.Failed),
-			"summary": summary,
+			"message": fmt.Sprintf("已启动当前筛选结果 %d 个商品的加入发布队列并发布任务。", job.Total),
+			"job":     job,
 		})
 	})
 
@@ -600,17 +604,17 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 				"message": "请先选择要重试同步的商品。",
 			})
 		}
-		summary, err := service.BatchRetrySourceProductSyncWithAudit(re.Request.Context(), re.App, ids, sourceActionActor(re), sourceActionNote(re))
+		job, err := service.StartSourceProductRetrySyncAsyncForIDs(re.App, ids, sourceActionActor(re), sourceActionNote(re))
 		if err != nil {
 			return re.JSON(http.StatusInternalServerError, map[string]any{
 				"ok":      false,
-				"message": "批量重试商品同步失败：" + err.Error(),
+				"message": "启动批量重试发布失败：" + err.Error(),
 			})
 		}
-		return re.JSON(http.StatusOK, map[string]any{
+		return re.JSON(http.StatusAccepted, map[string]any{
 			"ok":      true,
-			"message": fmt.Sprintf("批量重试同步完成：成功 %d，失败 %d。", summary.Processed, summary.Failed),
-			"summary": summary,
+			"message": fmt.Sprintf("已启动 %d 个商品的批量重试发布任务。", job.Total),
+			"job":     job,
 		})
 	})
 
@@ -620,6 +624,7 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		}
 		filter := pim.SourceReviewFilter{
 			CategoryKey:   strings.TrimSpace(re.Request.FormValue("categoryKey")),
+			CategoryKeys:  strings.TrimSpace(re.Request.FormValue("categoryKeys")),
 			ProductStatus: strings.TrimSpace(re.Request.FormValue("productStatus")),
 			SyncState:     strings.TrimSpace(re.Request.FormValue("syncState")),
 			Query:         strings.TrimSpace(re.Request.FormValue("q")),
@@ -637,18 +642,33 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 				"message": "当前筛选结果下没有可重试发布的商品。",
 			})
 		}
-		summary, err := service.BatchRetrySourceProductSyncWithAudit(re.Request.Context(), re.App, ids, sourceActionActor(re), sourceActionNote(re))
+		job, err := service.StartSourceProductRetrySyncAsyncForFilter(re.App, filter, sourceActionActor(re), sourceActionNote(re))
 		if err != nil {
 			return re.JSON(http.StatusInternalServerError, map[string]any{
 				"ok":      false,
-				"message": "按当前筛选结果批量重试发布失败：" + err.Error(),
+				"message": "启动按当前筛选结果批量重试发布失败：" + err.Error(),
 			})
 		}
-		return re.JSON(http.StatusOK, map[string]any{
+		return re.JSON(http.StatusAccepted, map[string]any{
 			"ok":      true,
-			"message": fmt.Sprintf("按当前筛选结果批量重试发布完成：成功 %d，失败 %d。", summary.Processed, summary.Failed),
-			"summary": summary,
+			"message": fmt.Sprintf("已启动当前筛选结果 %d 个商品的重试发布任务。", job.Total),
+			"job":     job,
 		})
+	})
+
+	se.Router.POST("/api/pim/admin/source/product-jobs/retry", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		id := strings.TrimSpace(re.Request.FormValue("id"))
+		if id == "" {
+			return re.JSON(http.StatusBadRequest, map[string]any{"ok": false, "message": "缺少商品任务 ID。"})
+		}
+		job, err := service.RetrySourceProductJob(re.App, id, sourceActionActor(re), sourceActionNote(re))
+		if err != nil {
+			return re.JSON(http.StatusBadRequest, map[string]any{"ok": false, "message": "重新执行商品任务失败：" + err.Error()})
+		}
+		return re.JSON(http.StatusAccepted, map[string]any{"ok": true, "message": "商品发布任务已重新启动。", "job": job})
 	})
 
 	se.Router.POST("/api/pim/admin/source/assets/process", func(re *core.RequestEvent) error {
@@ -1289,6 +1309,57 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		))
 	})
 
+	se.Router.GET("/api/pim/admin/source/product-jobs", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 4*time.Second)
+		defer cancel()
+		filter := readSourceProductJobFilter(re)
+		summary, err := service.SourceProductJobs(loadCtx, re.App, filter)
+		if err != nil {
+			return re.JSON(http.StatusOK, admin.BuildSourceProductJobsAPIData(
+				pim.SourceProductJobsSummary{},
+				filter,
+				strings.TrimSpace(re.Request.URL.Query().Get("message")),
+				"加载商品发布任务失败："+err.Error(),
+			))
+		}
+		return re.JSON(http.StatusOK, admin.BuildSourceProductJobsAPIData(
+			summary,
+			filter,
+			strings.TrimSpace(re.Request.URL.Query().Get("message")),
+			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		))
+	})
+
+	se.Router.GET("/api/pim/admin/source/product-jobs/detail", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 4*time.Second)
+		defer cancel()
+		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
+		if id == "" {
+			return re.BadRequestError("missing source product job id", nil)
+		}
+		detail, err := service.SourceProductJobDetail(loadCtx, re.App, id)
+		if err != nil {
+			return re.JSON(http.StatusOK, admin.BuildSourceProductJobDetailAPIData(
+				pim.SourceProductJobDetail{},
+				strings.TrimSpace(re.Request.URL.Query().Get("returnTo")),
+				strings.TrimSpace(re.Request.URL.Query().Get("message")),
+				"加载商品发布任务详情失败："+err.Error(),
+			))
+		}
+		return re.JSON(http.StatusOK, admin.BuildSourceProductJobDetailAPIData(
+			detail,
+			strings.TrimSpace(re.Request.URL.Query().Get("returnTo")),
+			strings.TrimSpace(re.Request.URL.Query().Get("message")),
+			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		))
+	})
+
 	se.Router.GET("/api/pim/admin/procurement", func(re *core.RequestEvent) error {
 		if !authorizedAdminModule(re, cfg, "procurement") {
 			return re.ForbiddenError("当前账号没有采购模块权限。", nil)
@@ -1416,6 +1487,21 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 			return re.BadRequestError("批量创建 backend 分类失败："+err.Error(), nil)
 		}
 		message := fmt.Sprintf("已完成 %d 个分类的 backend 创建，其中成功 %d，失败 %d。", result.Requested, result.Published, result.Failed)
+		return re.JSON(http.StatusOK, map[string]any{
+			"message": message,
+			"result":  result,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/backend-release/cleanup-assets", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有发布准备权限。", nil)
+		}
+		result, err := service.CleanupBackendAssets(re.Request.Context())
+		if err != nil {
+			return re.BadRequestError("清理 backend 冗余图片失败："+err.Error(), nil)
+		}
+		message := fmt.Sprintf("已完成 backend 冗余图片清理：扫描 %d 个 PIM 图片，删除 %d 个未引用图片，失败 %d 个。", result.TaggedAssets, result.DeletedAssets, result.FailedAssets)
 		return re.JSON(http.StatusOK, map[string]any{
 			"message": message,
 			"result":  result,
@@ -1755,6 +1841,32 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 			"图片任务详情",
 			"任务详情页会异步加载任务进度、错误和最近日志。",
 			"/_/mrtang-admin/source/asset-jobs/detail",
+			true,
+			authorizedAdminModule(re, cfg, "procurement"),
+		))
+	})
+
+	se.Router.GET("/_/mrtang-admin/source/product-jobs", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
+		}
+		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+			"商品发布任务",
+			"商品发布与重试发布的历史任务、失败项和重跑入口都在这里查看。",
+			"/_/mrtang-admin/source/product-jobs",
+			true,
+			authorizedAdminModule(re, cfg, "procurement"),
+		))
+	})
+
+	se.Router.GET("/_/mrtang-admin/source/product-jobs/detail", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
+		}
+		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+			"商品发布任务详情",
+			"任务详情页会异步加载商品发布任务的进度、失败项和最近日志。",
+			"/_/mrtang-admin/source/product-jobs/detail",
 			true,
 			authorizedAdminModule(re, cfg, "procurement"),
 		))
@@ -2515,9 +2627,11 @@ func registerAdminSlashRedirect(se *core.ServeEvent, from string, to string) {
 func readSourceReviewFilter(re *core.RequestEvent) pim.SourceReviewFilter {
 	filter := pim.SourceReviewFilter{
 		CategoryKey:    strings.TrimSpace(re.Request.URL.Query().Get("categoryKey")),
+		CategoryKeys:   strings.TrimSpace(re.Request.URL.Query().Get("categoryKeys")),
 		ProductStatus:  strings.TrimSpace(re.Request.URL.Query().Get("productStatus")),
 		AssetStatus:    strings.TrimSpace(re.Request.URL.Query().Get("assetStatus")),
 		OriginalStatus: strings.TrimSpace(re.Request.URL.Query().Get("originalStatus")),
+		ProductIDs:     strings.TrimSpace(re.Request.URL.Query().Get("productIds")),
 		AssetIDs:       strings.TrimSpace(re.Request.URL.Query().Get("assetIds")),
 		SyncState:      strings.TrimSpace(re.Request.URL.Query().Get("syncState")),
 		Query:          strings.TrimSpace(re.Request.URL.Query().Get("q")),
@@ -2536,6 +2650,16 @@ func readSourceReviewFilter(re *core.RequestEvent) pim.SourceReviewFilter {
 
 func readSourceAssetJobFilter(re *core.RequestEvent) pim.SourceAssetJobFilter {
 	return pim.SourceAssetJobFilter{
+		JobType:  strings.TrimSpace(re.Request.URL.Query().Get("jobType")),
+		Status:   strings.TrimSpace(re.Request.URL.Query().Get("status")),
+		Query:    strings.TrimSpace(re.Request.URL.Query().Get("q")),
+		Page:     readQueryInt(re, "page", 1),
+		PageSize: readQueryInt(re, "pageSize", 20),
+	}
+}
+
+func readSourceProductJobFilter(re *core.RequestEvent) pim.SourceProductJobFilter {
+	return pim.SourceProductJobFilter{
 		JobType:  strings.TrimSpace(re.Request.URL.Query().Get("jobType")),
 		Status:   strings.TrimSpace(re.Request.URL.Query().Get("status")),
 		Query:    strings.TrimSpace(re.Request.URL.Query().Get("q")),

@@ -592,6 +592,31 @@ func buildMrtangAdminRecentActions(app core.App, source []pim.SourceActionLog, p
 			})
 		}
 	}
+	if productJobs, err := app.FindRecordsByFilter(pim.CollectionSourceProductJobs, "", "-created", 6, 0, nil); err == nil {
+		for _, record := range productJobs {
+			jobType := strings.TrimSpace(record.GetString("job_type"))
+			mode := strings.TrimSpace(record.GetString("mode"))
+			label := productJobActionLabel(jobType, mode)
+			message := strings.TrimSpace(record.GetString("error"))
+			if message == "" {
+				message = fmt.Sprintf("%s：成功 %d / 总数 %d，失败 %d", productJobModeLabel(mode), record.GetInt("processed"), record.GetInt("total"), record.GetInt("failed_count"))
+			}
+			target := strings.TrimSpace(record.GetString("current_item"))
+			if target == "" {
+				target = productJobTargetLabel(record)
+			}
+			items = append(items, mrtangAdminRecentAction{
+				Domain:  "商品任务",
+				Label:   label,
+				Target:  target,
+				Status:  strings.TrimSpace(record.GetString("status")),
+				Message: message,
+				Actor:   "系统",
+				Note:    "",
+				Created: strings.TrimSpace(record.GetString("created")),
+			})
+		}
+	}
 	for i := 0; i < len(items); i++ {
 		for j := i + 1; j < len(items); j++ {
 			if items[j].Created > items[i].Created {
@@ -672,6 +697,56 @@ func assetJobTargetLabel(record *core.Record) string {
 		}
 	}
 	return "图片批次"
+}
+
+func productJobActionLabel(jobType string, mode string) string {
+	switch strings.ToLower(strings.TrimSpace(jobType)) {
+	case "promote":
+		if strings.Contains(strings.ToLower(strings.TrimSpace(mode)), "selected") {
+			return "选中商品加入发布队列任务"
+		}
+		return "商品加入发布队列任务"
+	case "promote_sync":
+		if strings.Contains(strings.ToLower(strings.TrimSpace(mode)), "selected") {
+			return "选中商品加入发布队列并发布任务"
+		}
+		return "商品加入发布队列并发布任务"
+	case "retry_sync":
+		if strings.Contains(strings.ToLower(strings.TrimSpace(mode)), "selected") {
+			return "选中商品重试发布任务"
+		}
+		return "商品重试发布任务"
+	default:
+		return "商品任务"
+	}
+}
+
+func productJobModeLabel(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	switch mode {
+	case "selected":
+		return "选中项"
+	case "filtered":
+		return "当前筛选结果"
+	default:
+		return "全量"
+	}
+}
+
+func productJobTargetLabel(record *core.Record) string {
+	var ids []string
+	if err := json.Unmarshal([]byte(strings.TrimSpace(record.GetString("product_ids_json"))), &ids); err == nil {
+		count := 0
+		for _, item := range ids {
+			if strings.TrimSpace(item) != "" {
+				count++
+			}
+		}
+		if count > 0 {
+			return fmt.Sprintf("%d 个商品", count)
+		}
+	}
+	return "商品批次"
 }
 
 func buildMrtangAdminBacklog(data mrtangAdminMiniappData) []mrtangAdminBacklogItem {

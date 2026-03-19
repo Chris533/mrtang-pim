@@ -1552,7 +1552,7 @@ func (s *Service) syncTargetCategories(_ context.Context, app core.App, dataset 
 		scopeMap[node.Key] = node
 	}
 
-	categoryPathByKey, parentKeyByKey := buildCategoryTreeMeta(nodes)
+	categoryPathByKey, parentKeyByKey, _ := buildCategoryTreeMeta(nodes)
 	for _, node := range scopedNodes {
 		if tracker != nil {
 			_ = tracker.step(node.Label)
@@ -1638,12 +1638,12 @@ func (s *Service) syncTargetProducts(ctx context.Context, app core.App, dataset 
 	}
 
 	sections := buildCategorySectionLookup(dataset.CategoryPage.Sections)
-	_, parentByKey := buildCategoryTreeMeta(dataset.CategoryPage.Tree)
+	_, parentByKey, hasChildrenByKey := buildCategoryTreeMeta(dataset.CategoryPage.Tree)
 	for _, product := range products {
 		if tracker != nil {
 			_ = tracker.step(product.Summary.Name)
 		}
-		categoryKey, categoryPath, categoryKeys, observedCategoryKeys, observedCategoryPaths := productCategoryInfo(product, sections, parentByKey)
+		categoryKey, categoryPath, categoryKeys, observedCategoryKeys, observedCategoryPaths := productCategoryInfo(product, sections, parentByKey, hasChildrenByKey)
 		existing, _ := app.FindFirstRecordByFilter(CollectionSourceProducts, "product_id = {:product_id}", dbx.Params{"product_id": product.ID})
 		before := sourceProductSignature(existing)
 		created, err := s.upsertSourceProduct(ctx, app, product, categoryKey, categoryPath, categoryKeys, observedCategoryKeys, observedCategoryPaths)
@@ -1782,7 +1782,7 @@ func (s *Service) rebuildSourceProductCategoryAssignments(app core.App, scopeKey
 		return result, fmt.Errorf("当前范围没有可用于重建归属的商品来源")
 	}
 	tree := sourceCategoryTreeFromRecords(categoryRecords)
-	_, parentByKey := buildCategoryTreeMeta(tree)
+	_, parentByKey, hasChildrenByKey := buildCategoryTreeMeta(tree)
 
 	productRecords, err := app.FindAllRecords(CollectionSourceProducts)
 	if err != nil {
@@ -1819,7 +1819,7 @@ func (s *Service) rebuildSourceProductCategoryAssignments(app core.App, scopeKey
 			product = appendObservedCategorySection(product, section)
 			sectionsLookup[section.CategoryKey] = section
 		}
-		categoryKey, categoryPath, categoryKeys, observedCategoryKeys, observedCategoryPaths := productCategoryInfo(product, sectionsLookup, parentByKey)
+		categoryKey, categoryPath, categoryKeys, observedCategoryKeys, observedCategoryPaths := productCategoryInfo(product, sectionsLookup, parentByKey, hasChildrenByKey)
 		if err := setSourceProductCategoryAssignment(record, product, categoryKey, categoryPath, categoryKeys, observedCategoryKeys, observedCategoryPaths); err != nil {
 			return result, err
 		}
@@ -2813,10 +2813,10 @@ func filteredTargetProducts(dataset miniappmodel.Dataset, scopeKey string) []min
 		return append([]miniappmodel.ProductPage(nil), dataset.ProductPage.Products...)
 	}
 	sections := buildCategorySectionLookup(dataset.CategoryPage.Sections)
-	_, parentByKey := buildCategoryTreeMeta(dataset.CategoryPage.Tree)
+	_, parentByKey, hasChildrenByKey := buildCategoryTreeMeta(dataset.CategoryPage.Tree)
 	items := make([]miniappmodel.ProductPage, 0)
 	for _, product := range dataset.ProductPage.Products {
-		_, _, categoryKeys, _, _ := productCategoryInfo(product, sections, parentByKey)
+		_, _, categoryKeys, _, _ := productCategoryInfo(product, sections, parentByKey, hasChildrenByKey)
 		if slices.Contains(categoryKeys, strings.TrimSpace(scopeKey)) {
 			items = append(items, product)
 		}
@@ -2862,9 +2862,10 @@ func buildCategoryTopLevelLookup(nodes []miniappmodel.CategoryNode) map[string]s
 	return lookup
 }
 
-func buildCategoryTreeMeta(nodes []miniappmodel.CategoryNode) (map[string]string, map[string]string) {
+func buildCategoryTreeMeta(nodes []miniappmodel.CategoryNode) (map[string]string, map[string]string, map[string]bool) {
 	paths := make(map[string]string)
 	parents := make(map[string]string)
+	hasChildren := make(map[string]bool)
 	var walk func(list []miniappmodel.CategoryNode, parentPath string, parentKey string)
 	walk = func(list []miniappmodel.CategoryNode, parentPath string, parentKey string) {
 		for _, node := range list {
@@ -2875,12 +2876,13 @@ func buildCategoryTreeMeta(nodes []miniappmodel.CategoryNode) (map[string]string
 			paths[node.Key] = path
 			parents[node.Key] = parentKey
 			if len(node.Children) > 0 {
+				hasChildren[node.Key] = true
 				walk(node.Children, path, node.Key)
 			}
 		}
 	}
 	walk(nodes, "", "")
-	return paths, parents
+	return paths, parents, hasChildren
 }
 
 func findCategoryNode(nodes []miniappmodel.CategoryNode, key string) *miniappmodel.CategoryNode {
@@ -2902,7 +2904,7 @@ func findCategoryNode(nodes []miniappmodel.CategoryNode, key string) *miniappmod
 func targetCategoryDiff(tree []miniappmodel.CategoryNode, actual []*core.Record) ([]TargetCategoryDiffItem, int, int, int) {
 	expected := flattenCategoryNodes(tree)
 	expectedMap := make(map[string]miniappmodel.CategoryNode, len(expected))
-	pathMap, _ := buildCategoryTreeMeta(tree)
+	pathMap, _, _ := buildCategoryTreeMeta(tree)
 	for _, node := range expected {
 		expectedMap[node.Key] = node
 	}
@@ -3022,8 +3024,8 @@ func sourceProductSignature(record *core.Record) string {
 
 func expectedProductSignature(product miniappmodel.ProductPage, dataset miniappmodel.Dataset) string {
 	sections := buildCategorySectionLookup(dataset.CategoryPage.Sections)
-	_, parentByKey := buildCategoryTreeMeta(dataset.CategoryPage.Tree)
-	categoryKey, categoryPath, categoryKeys, observedCategoryKeys, observedCategoryPaths := productCategoryInfo(product, sections, parentByKey)
+	_, parentByKey, hasChildrenByKey := buildCategoryTreeMeta(dataset.CategoryPage.Tree)
+	categoryKey, categoryPath, categoryKeys, observedCategoryKeys, observedCategoryPaths := productCategoryInfo(product, sections, parentByKey, hasChildrenByKey)
 	return strings.Join([]string{
 		product.ID,
 		product.Summary.Name,

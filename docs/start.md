@@ -108,6 +108,7 @@ Miniapp 模块已经拆成明确分层：
 默认 `User-Agent` 是较新的 iPhone 微信小程序模板。
 
 如果要快速理解“源站 API、抓包归档、dataset 和本地接口”之间的关系，直接看 [source-api.md](./source-api.md)。
+如果要直接看 `mrtang-backend` shop API 经 `mrtang-pim` 代理后的分类树、分类商品和商品详情接口，也看 [source-api.md](./source-api.md) 里的 `Miniapp UI 代理链路`。
 如果要直接对接结算页，优先看 [checkout-api.md](./checkout-api.md)。
 如果要直接看源站抓取入库模块、运行记录和变更详情，见 [target-sync.md](./target-sync.md)。
 如果要直接操作 source 商品审核、图片处理和加入发布队列、同步，见 [source-review-workbench.md](./source-review-workbench.md)。
@@ -143,6 +144,7 @@ Miniapp 模块已经拆成明确分层：
 - `IMAGE_PROCESSOR=mock|webhook`
 - `VENDURE_ADMIN_API`
 - `VENDURE_ADMIN_TOKEN`
+- `VENDURE_SHOP_API`
 - `VENDURE_CF_VARIANT_SUPPLIER_CODE`
 - `VENDURE_CF_VARIANT_SUPPLIER_COST_PRICE`
 - `VENDURE_CF_VARIANT_CONVERSION_RATE`
@@ -258,6 +260,9 @@ Miniapp：
 - `POST /api/miniapp/cart-order/order/address/add`
 - `GET /api/miniapp/cart-order/order/freight-cost?scenario=preview|selected_delivery`
 - `GET /api/miniapp/cart-order/order/freight-summary`
+- `GET /api/miniapp-ui/collections/tree`
+- `GET /api/miniapp-ui/collections/products?slug=<collection-slug>&audience=B|C&skip=0&take=24`
+- `GET /api/miniapp-ui/products/detail?slug=<product-slug>&audience=B|C`
 - `POST /api/miniapp/cart-order/order/submit`
 - `GET /api/miniapp/cart-order/order/submit-summary`
 - `GET /api/miniapp/cart-order/checkout-summary`
