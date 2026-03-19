@@ -1,0 +1,25 @@
+{
+  "sourceProductId": "src-001",
+  "baseSKU": "sku-001",
+  "defaultUnit": "case",
+  "unitOptions": [
+    {
+      "unitName": "bag",
+      "price": 11,
+      "baseUnit": "bag",
+      "rate": 1,
+      "isDefault": false,
+      "stockQty": 6,
+      "stockText": "in_stock"
+    },
+    {
+      "unitName": "case",
+      "price": 105,
+      "baseUnit": "bag",
+      "rate": 10,
+      "isDefault": true,
+      "stockQty": 0.6,
+      "stockText": "in_stock"
+    }
+  ]
+}

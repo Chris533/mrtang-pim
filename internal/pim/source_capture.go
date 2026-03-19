@@ -2831,7 +2831,15 @@ func (s *Service) promoteSourceProductRecord(ctx context.Context, app core.App, 
 
 func sourceProductConversionRate(sourceRecord *core.Record) float64 {
 	unitOptions := make([]miniappmodel.UnitOption, 0)
-	if err := json.Unmarshal([]byte(sourceRecord.GetString("unit_options_json")), &unitOptions); err == nil {
+	raw := strings.TrimSpace(sourceRecord.GetString("unit_options_json"))
+	if raw == "" {
+		if value := sourceRecord.Get("unit_options_json"); value != nil {
+			if encoded, err := json.Marshal(value); err == nil {
+				raw = string(encoded)
+			}
+		}
+	}
+	if err := json.Unmarshal([]byte(raw), &unitOptions); err == nil {
 		defaultUnit := strings.TrimSpace(sourceRecord.GetString("default_unit"))
 		for _, option := range unitOptions {
 			if option.IsDefault && option.Rate > 0 {

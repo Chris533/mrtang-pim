@@ -47,12 +47,44 @@ type ProductPayload struct {
 	VendureProduct    string
 	VendureVariant    string
 	NeedColdChain     bool
+	Variants          []ProductVariantPayload
+}
+
+type ProductVariantPayload struct {
+	Key               string
+	Name              string
+	SKU               string
+	ConsumerPrice     int
+	BusinessPrice     int
+	ConversionRate    float64
+	DefaultStock      int
+	SalesUnit         string
+	VendureVariant    string
+	IsDefault         bool
+	SourceProductID   string
+	SourceType        string
+	SupplierCode      string
+	SupplierCostPrice int
+	CurrencyCode      string
+	OptionIDs         []string
+}
+
+type SyncedVariant struct {
+	Key              string  `json:"key"`
+	UnitName         string  `json:"unitName"`
+	Rate             float64 `json:"rate"`
+	SKU              string  `json:"sku"`
+	Price            int     `json:"price"`
+	BusinessPrice    int     `json:"businessPrice"`
+	IsDefault        bool    `json:"isDefault"`
+	VendureVariantID string  `json:"vendureVariantId"`
 }
 
 type SyncResult struct {
 	ProductID string
 	VariantID string
 	AssetID   string
+	Variants  []SyncedVariant
 }
 
 type AssetCleanupResult struct {
@@ -244,28 +276,72 @@ func (c *Client) SyncProduct(ctx context.Context, payload ProductPayload) (SyncR
 			return SyncResult{}, err
 		}
 		result.ProductID = productID
-
-		variantID, err := c.createVariant(ctx, payload, productID, primaryAssetID)
-		if err != nil {
-			return SyncResult{}, err
-		}
-		result.VariantID = variantID
-		return result, nil
+	} else {
+		result.ProductID = payload.VendureProduct
 	}
-
-	result.ProductID = payload.VendureProduct
-	result.VariantID = payload.VendureVariant
 
 	if err := c.updateProduct(ctx, payload, primaryAssetID, productAssetIDs, cEndAssetID); err != nil {
 		return SyncResult{}, err
 	}
 
-	if strings.TrimSpace(payload.VendureVariant) != "" {
-		if err := c.updateVariant(ctx, payload, result.AssetID); err != nil {
-			return SyncResult{}, err
-		}
+	variants := payloadVariants(payload)
+	productState, err := c.getProductSyncState(ctx, result.ProductID)
+	if err != nil {
+		return SyncResult{}, err
+	}
+	optionIDsByKey, err := c.ensureSalesUnitOptions(ctx, result.ProductID, variants, productState.OptionGroups)
+	if err != nil {
+		return SyncResult{}, err
+	}
+	for idx := range variants {
+		variants[idx].OptionIDs = optionIDsByKey[variants[idx].Key]
 	}
 
+	existingByKey := make(map[string]productVariantNode, len(productState.Variants))
+	for _, variant := range productState.Variants {
+		key := variantMatchKey(variant.CustomFields.SourceProductID, variant.CustomFields.SalesUnit, variant.CustomFields.ConversionRate)
+		if key == "" {
+			continue
+		}
+		existingByKey[key] = variant
+	}
+
+	syncedVariants := make([]SyncedVariant, 0, len(variants))
+	for _, variant := range variants {
+		if strings.TrimSpace(variant.VendureVariant) == "" {
+			if existing, ok := existingByKey[variant.Key]; ok {
+				variant.VendureVariant = existing.ID
+			}
+		}
+
+		if strings.TrimSpace(variant.VendureVariant) == "" {
+			variantID, err := c.createVariant(ctx, variant, result.ProductID, primaryAssetID)
+			if err != nil {
+				return SyncResult{}, err
+			}
+			variant.VendureVariant = variantID
+		} else {
+			if err := c.updateVariant(ctx, variant, primaryAssetID); err != nil {
+				return SyncResult{}, err
+			}
+		}
+
+		if variant.IsDefault {
+			result.VariantID = variant.VendureVariant
+		}
+		syncedVariants = append(syncedVariants, SyncedVariant{
+			Key:              variant.Key,
+			UnitName:         variant.SalesUnit,
+			Rate:             variant.ConversionRate,
+			SKU:              variant.SKU,
+			Price:            variant.ConsumerPrice,
+			BusinessPrice:    variant.BusinessPrice,
+			IsDefault:        variant.IsDefault,
+			VendureVariantID: variant.VendureVariant,
+		})
+	}
+
+	result.Variants = syncedVariants
 	return result, nil
 }
 
@@ -697,7 +773,7 @@ mutation CreateProduct($input: CreateProductInput!) {
 	return response.CreateProduct.ID, nil
 }
 
-func (c *Client) createVariant(ctx context.Context, payload ProductPayload, productID string, assetID string) (string, error) {
+func (c *Client) createVariant(ctx context.Context, variant ProductVariantPayload, productID string, assetID string) (string, error) {
 	mutation := `
 mutation CreateProductVariants($input: [CreateProductVariantInput!]!) {
   createProductVariants(input: $input) {
@@ -705,31 +781,7 @@ mutation CreateProductVariants($input: [CreateProductVariantInput!]!) {
   }
 }`
 
-	input := map[string]any{
-		"productId": productID,
-		"enabled":   true,
-		"translations": []map[string]any{
-			{
-				"languageCode": c.cfg.LanguageCode,
-				"name":         payload.Name,
-			},
-		},
-		"sku":         payload.SKU,
-		"price":       payload.ConsumerPrice,
-		"stockOnHand": payload.DefaultStock,
-		"prices": []map[string]any{
-			{
-				"currencyCode": payload.CurrencyCode,
-				"price":        payload.ConsumerPrice,
-			},
-		},
-		"customFields": c.buildVariantCustomFields(payload),
-	}
-
-	if assetID != "" {
-		input["featuredAssetId"] = assetID
-		input["assetIds"] = []string{assetID}
-	}
+	input := c.buildCreateVariantInput(variant, productID, assetID)
 
 	var response struct {
 		CreateProductVariants []graphQLNode `json:"createProductVariants"`
@@ -786,7 +838,7 @@ mutation UpdateProduct($input: UpdateProductInput!) {
 	return err
 }
 
-func (c *Client) updateVariant(ctx context.Context, payload ProductPayload, assetID string) error {
+func (c *Client) updateVariant(ctx context.Context, variant ProductVariantPayload, assetID string) error {
 	mutation := `
 mutation UpdateProductVariant($input: UpdateProductVariantInput!) {
   updateProductVariant(input: $input) {
@@ -794,31 +846,7 @@ mutation UpdateProductVariant($input: UpdateProductVariantInput!) {
   }
 }`
 
-	input := map[string]any{
-		"id":          payload.VendureVariant,
-		"enabled":     true,
-		"sku":         payload.SKU,
-		"price":       payload.ConsumerPrice,
-		"stockOnHand": payload.DefaultStock,
-		"translations": []map[string]any{
-			{
-				"languageCode": c.cfg.LanguageCode,
-				"name":         payload.Name,
-			},
-		},
-		"prices": []map[string]any{
-			{
-				"currencyCode": payload.CurrencyCode,
-				"price":        payload.ConsumerPrice,
-			},
-		},
-		"customFields": c.buildVariantCustomFields(payload),
-	}
-
-	if assetID != "" {
-		input["featuredAssetId"] = assetID
-		input["assetIds"] = []string{assetID}
-	}
+	input := c.buildUpdateVariantInput(variant, assetID)
 
 	var response struct {
 		UpdateProductVariant graphQLNode `json:"updateProductVariant"`
@@ -1109,29 +1137,436 @@ func (c *Client) buildProductCustomFields(payload ProductPayload, cEndAssetID st
 	return customFields
 }
 
-func (c *Client) buildVariantCustomFields(payload ProductPayload) map[string]any {
+func (c *Client) buildVariantCustomFields(variant ProductVariantPayload) map[string]any {
 	customFields := map[string]any{
-		"salesUnit": payload.SalesUnit,
-		"bPrice":    payload.BusinessPrice,
+		"salesUnit": variant.SalesUnit,
+		"bPrice":    variant.BusinessPrice,
 	}
 
-	if field := strings.TrimSpace(c.cfg.VariantSupplierCodeField); field != "" && strings.TrimSpace(payload.SupplierCode) != "" {
-		customFields[field] = payload.SupplierCode
+	if field := strings.TrimSpace(c.cfg.VariantSupplierCodeField); field != "" && strings.TrimSpace(variant.SupplierCode) != "" {
+		customFields[field] = variant.SupplierCode
 	}
-	if field := strings.TrimSpace(c.cfg.VariantSupplierCostField); field != "" && payload.SupplierCostPrice > 0 {
-		customFields[field] = payload.SupplierCostPrice
+	if field := strings.TrimSpace(c.cfg.VariantSupplierCostField); field != "" && variant.SupplierCostPrice > 0 {
+		customFields[field] = variant.SupplierCostPrice
 	}
-	if field := strings.TrimSpace(c.cfg.VariantConversionRateField); field != "" && payload.ConversionRate > 0 {
-		customFields[field] = payload.ConversionRate
+	if field := strings.TrimSpace(c.cfg.VariantConversionRateField); field != "" && variant.ConversionRate > 0 {
+		customFields[field] = variant.ConversionRate
 	}
-	if field := strings.TrimSpace(c.cfg.VariantSourceProductField); field != "" && strings.TrimSpace(payload.SourceProductID) != "" {
-		customFields[field] = payload.SourceProductID
+	if field := strings.TrimSpace(c.cfg.VariantSourceProductField); field != "" && strings.TrimSpace(variant.SourceProductID) != "" {
+		customFields[field] = variant.SourceProductID
 	}
-	if field := strings.TrimSpace(c.cfg.VariantSourceTypeField); field != "" && strings.TrimSpace(payload.SourceType) != "" {
-		customFields[field] = payload.SourceType
+	if field := strings.TrimSpace(c.cfg.VariantSourceTypeField); field != "" && strings.TrimSpace(variant.SourceType) != "" {
+		customFields[field] = variant.SourceType
 	}
 
 	return customFields
+}
+
+func (c *Client) buildCreateVariantInput(variant ProductVariantPayload, productID string, assetID string) map[string]any {
+	input := map[string]any{
+		"productId": productID,
+		"enabled":   true,
+		"translations": []map[string]any{
+			{
+				"languageCode": c.cfg.LanguageCode,
+				"name":         variant.Name,
+			},
+		},
+		"sku":         variant.SKU,
+		"price":       variant.ConsumerPrice,
+		"stockOnHand": variant.DefaultStock,
+		"prices": []map[string]any{
+			{
+				"currencyCode": variant.CurrencyCode,
+				"price":        variant.ConsumerPrice,
+			},
+		},
+		"customFields": c.buildVariantCustomFields(variant),
+	}
+
+	if optionIDs := uniqueNonEmptyStrings(variant.OptionIDs); len(optionIDs) > 0 {
+		input["optionIds"] = optionIDs
+	}
+	if assetID != "" {
+		input["featuredAssetId"] = assetID
+		input["assetIds"] = []string{assetID}
+	}
+
+	return input
+}
+
+func (c *Client) buildUpdateVariantInput(variant ProductVariantPayload, assetID string) map[string]any {
+	input := map[string]any{
+		"id":          variant.VendureVariant,
+		"enabled":     true,
+		"sku":         variant.SKU,
+		"price":       variant.ConsumerPrice,
+		"stockOnHand": variant.DefaultStock,
+		"translations": []map[string]any{
+			{
+				"languageCode": c.cfg.LanguageCode,
+				"name":         variant.Name,
+			},
+		},
+		"prices": []map[string]any{
+			{
+				"currencyCode": variant.CurrencyCode,
+				"price":        variant.ConsumerPrice,
+			},
+		},
+		"customFields": c.buildVariantCustomFields(variant),
+	}
+
+	if optionIDs := uniqueNonEmptyStrings(variant.OptionIDs); len(optionIDs) > 0 {
+		input["optionIds"] = optionIDs
+	}
+	if assetID != "" {
+		input["featuredAssetId"] = assetID
+		input["assetIds"] = []string{assetID}
+	}
+
+	return input
+}
+
+type productVariantNode struct {
+	ID           string `json:"id"`
+	SKU          string `json:"sku"`
+	CustomFields struct {
+		SalesUnit       string  `json:"salesUnit"`
+		ConversionRate  float64 `json:"conversionRate"`
+		SourceProductID string  `json:"sourceProductId"`
+	} `json:"customFields"`
+}
+
+type productOptionNode struct {
+	ID   string `json:"id"`
+	Code string `json:"code"`
+	Name string `json:"name"`
+}
+
+type productOptionGroupNode struct {
+	ID      string              `json:"id"`
+	Code    string              `json:"code"`
+	Name    string              `json:"name"`
+	Options []productOptionNode `json:"options"`
+}
+
+type productSyncState struct {
+	OptionGroups []productOptionGroupNode `json:"optionGroups"`
+	Variants     []productVariantNode     `json:"variants"`
+}
+
+func (c *Client) getProductSyncState(ctx context.Context, productID string) (*productSyncState, error) {
+	query := `
+query ProductVariants($id: ID!) {
+  product(id: $id) {
+    id
+    optionGroups {
+      id
+      code
+      name
+      options {
+        id
+        code
+        name
+      }
+    }
+    variants {
+      id
+      sku
+      customFields {
+        salesUnit
+        conversionRate
+        sourceProductId
+      }
+    }
+  }
+}`
+
+	var response struct {
+		Product *productSyncState `json:"product"`
+	}
+
+	if _, err := c.graphQL(ctx, query, map[string]any{"id": productID}, &response); err != nil {
+		return nil, err
+	}
+	if response.Product == nil {
+		return nil, fmt.Errorf("vendure product %s not found", productID)
+	}
+	return response.Product, nil
+}
+
+func (c *Client) listProductVariants(ctx context.Context, productID string) ([]productVariantNode, error) {
+	state, err := c.getProductSyncState(ctx, productID)
+	if err != nil {
+		return nil, err
+	}
+	return state.Variants, nil
+}
+
+func (c *Client) ensureSalesUnitOptions(ctx context.Context, productID string, variants []ProductVariantPayload, optionGroups []productOptionGroupNode) (map[string][]string, error) {
+	assignments := make(map[string][]string, len(variants))
+	units := salesUnitNames(variants)
+	if len(units) == 0 {
+		return assignments, nil
+	}
+
+	group := findSalesUnitOptionGroup(productID, optionGroups)
+	if len(units) == 1 && group == nil {
+		return assignments, nil
+	}
+
+	if group == nil {
+		groupCode := salesUnitOptionGroupCode(productID)
+		existingGroup, err := c.findProductOptionGroupByCode(ctx, groupCode)
+		if err != nil {
+			return nil, err
+		}
+		if existingGroup == nil {
+			createdGroup, err := c.createSalesUnitOptionGroup(ctx, productID, units)
+			if err != nil {
+				return nil, err
+			}
+			existingGroup = &createdGroup
+		}
+		if err := c.addOptionGroupToProduct(ctx, productID, existingGroup.ID); err != nil {
+			return nil, err
+		}
+		group = existingGroup
+	}
+
+	optionsByUnit := make(map[string]productOptionNode, len(group.Options))
+	for _, option := range group.Options {
+		if name := strings.TrimSpace(option.Name); name != "" {
+			optionsByUnit[name] = option
+		}
+	}
+
+	for _, unit := range units {
+		if _, ok := optionsByUnit[unit]; ok {
+			continue
+		}
+		option, err := c.createSalesUnitOption(ctx, group.ID, unit)
+		if err != nil {
+			return nil, err
+		}
+		optionsByUnit[unit] = option
+	}
+
+	for _, variant := range variants {
+		unit := strings.TrimSpace(variant.SalesUnit)
+		if unit == "" {
+			continue
+		}
+		option, ok := optionsByUnit[unit]
+		if !ok || strings.TrimSpace(option.ID) == "" {
+			return nil, fmt.Errorf("sales unit option not found for product %s unit %s", productID, unit)
+		}
+		assignments[variant.Key] = []string{option.ID}
+	}
+
+	return assignments, nil
+}
+
+func (c *Client) findProductOptionGroupByCode(ctx context.Context, code string) (*productOptionGroupNode, error) {
+	query := `
+query ProductOptionGroups {
+  productOptionGroups {
+    id
+    code
+    name
+    options {
+      id
+      code
+      name
+    }
+  }
+}`
+
+	var response struct {
+		ProductOptionGroups []productOptionGroupNode `json:"productOptionGroups"`
+	}
+
+	_, err := c.graphQL(ctx, query, map[string]any{}, &response)
+	if err != nil {
+		return nil, err
+	}
+
+	for idx := range response.ProductOptionGroups {
+		if strings.EqualFold(strings.TrimSpace(response.ProductOptionGroups[idx].Code), strings.TrimSpace(code)) {
+			return &response.ProductOptionGroups[idx], nil
+		}
+	}
+	return nil, nil
+}
+
+func (c *Client) createSalesUnitOptionGroup(ctx context.Context, productID string, units []string) (productOptionGroupNode, error) {
+	mutation := `
+mutation CreateProductOptionGroup($input: CreateProductOptionGroupInput!) {
+  createProductOptionGroup(input: $input) {
+    id
+    code
+    name
+    options {
+      id
+      code
+      name
+    }
+  }
+}`
+
+	options := make([]map[string]any, 0, len(units))
+	for _, unit := range units {
+		options = append(options, map[string]any{
+			"code":         salesUnitOptionCode(unit),
+			"translations": c.translatedNameInput(unit),
+		})
+	}
+
+	var response struct {
+		CreateProductOptionGroup productOptionGroupNode `json:"createProductOptionGroup"`
+	}
+
+	_, err := c.graphQL(ctx, mutation, map[string]any{
+		"input": map[string]any{
+			"code":         salesUnitOptionGroupCode(productID),
+			"translations": c.translatedNameInput(salesUnitOptionGroupName),
+			"options":      options,
+		},
+	}, &response)
+	return response.CreateProductOptionGroup, err
+}
+
+func (c *Client) addOptionGroupToProduct(ctx context.Context, productID string, optionGroupID string) error {
+	mutation := `
+mutation AddOptionGroupToProduct($productId: ID!, $optionGroupId: ID!) {
+  addOptionGroupToProduct(productId: $productId, optionGroupId: $optionGroupId) {
+    id
+  }
+}`
+
+	var response struct {
+		AddOptionGroupToProduct graphQLNode `json:"addOptionGroupToProduct"`
+	}
+
+	_, err := c.graphQL(ctx, mutation, map[string]any{
+		"productId":     productID,
+		"optionGroupId": optionGroupID,
+	}, &response)
+	return err
+}
+
+func (c *Client) createSalesUnitOption(ctx context.Context, optionGroupID string, unit string) (productOptionNode, error) {
+	mutation := `
+mutation CreateProductOption($input: CreateProductOptionInput!) {
+  createProductOption(input: $input) {
+    id
+    code
+    name
+  }
+}`
+
+	var response struct {
+		CreateProductOption productOptionNode `json:"createProductOption"`
+	}
+
+	_, err := c.graphQL(ctx, mutation, map[string]any{
+		"input": map[string]any{
+			"productOptionGroupId": optionGroupID,
+			"code":                 salesUnitOptionCode(unit),
+			"translations":         c.translatedNameInput(unit),
+		},
+	}, &response)
+	return response.CreateProductOption, err
+}
+
+func (c *Client) translatedNameInput(name string) []map[string]any {
+	return []map[string]any{
+		{
+			"languageCode": c.cfg.LanguageCode,
+			"name":         strings.TrimSpace(name),
+		},
+	}
+}
+
+func salesUnitNames(variants []ProductVariantPayload) []string {
+	units := make([]string, 0, len(variants))
+	for _, variant := range variants {
+		if unit := strings.TrimSpace(variant.SalesUnit); unit != "" {
+			units = append(units, unit)
+		}
+	}
+	return uniqueNonEmptyStrings(units)
+}
+
+func findSalesUnitOptionGroup(productID string, groups []productOptionGroupNode) *productOptionGroupNode {
+	targetCode := salesUnitOptionGroupCode(productID)
+	for idx := range groups {
+		if strings.EqualFold(strings.TrimSpace(groups[idx].Code), targetCode) {
+			return &groups[idx]
+		}
+	}
+	for idx := range groups {
+		name := strings.TrimSpace(groups[idx].Name)
+		code := strings.TrimSpace(groups[idx].Code)
+		if strings.EqualFold(name, salesUnitOptionGroupName) || strings.EqualFold(code, "sales-unit") {
+			return &groups[idx]
+		}
+	}
+	return nil
+}
+
+func salesUnitOptionGroupCode(productID string) string {
+	productID = strings.TrimSpace(productID)
+	if productID == "" {
+		return "pim-sales-unit"
+	}
+	return "pim-sales-unit-" + productID
+}
+
+func salesUnitOptionCode(unit string) string {
+	unit = strings.TrimSpace(unit)
+	if unit == "" {
+		return "pim-unit"
+	}
+	sum := sha1.Sum([]byte("sales-unit:" + unit))
+	return "pim-unit-" + hex.EncodeToString(sum[:6])
+}
+
+const salesUnitOptionGroupName = "销售单位"
+
+func payloadVariants(payload ProductPayload) []ProductVariantPayload {
+	if len(payload.Variants) > 0 {
+		return payload.Variants
+	}
+	return []ProductVariantPayload{
+		{
+			Key:               variantMatchKey(payload.SourceProductID, payload.SalesUnit, payload.ConversionRate),
+			Name:              payload.SalesUnit,
+			SKU:               payload.SKU,
+			ConsumerPrice:     payload.ConsumerPrice,
+			BusinessPrice:     payload.BusinessPrice,
+			ConversionRate:    payload.ConversionRate,
+			DefaultStock:      payload.DefaultStock,
+			SalesUnit:         payload.SalesUnit,
+			VendureVariant:    payload.VendureVariant,
+			IsDefault:         true,
+			SourceProductID:   payload.SourceProductID,
+			SourceType:        payload.SourceType,
+			SupplierCode:      payload.SupplierCode,
+			SupplierCostPrice: payload.SupplierCostPrice,
+			CurrencyCode:      payload.CurrencyCode,
+		},
+	}
+}
+
+func variantMatchKey(sourceProductID string, unitName string, rate float64) string {
+	sourceProductID = strings.TrimSpace(sourceProductID)
+	unitName = strings.TrimSpace(unitName)
+	if sourceProductID == "" || unitName == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s#%s#%.6f", sourceProductID, unitName, rate)
 }
 
 func (c *Client) uploadAsset(ctx context.Context, fileURL string, filename string) (string, error) {

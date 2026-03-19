@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"math"
 	"net/url"
 	"path"
@@ -1058,6 +1060,12 @@ func (s *Service) syncRecord(ctx context.Context, app core.App, record *core.Rec
 
 	record.Set("vendure_product_id", productID)
 	record.Set("vendure_variant_id", variantID)
+	if err := setJSONField(record, "vendure_variants_json", result.Variants); err != nil {
+		record.Set("last_sync_error", err.Error())
+		record.Set("sync_status", StatusError)
+		_ = app.Save(record)
+		return err
+	}
 	record.Set("last_sync_error", "")
 	record.Set("sync_status", StatusSynced)
 	record.Set("last_synced_at", time.Now().Format(time.RFC3339))
@@ -1071,31 +1079,35 @@ func (s *Service) buildVendurePayload(app core.App, record *core.Record) vendure
 	if assetURL == "" && len(assetURLs) > 0 {
 		assetURL = assetURLs[0]
 	}
+	variants := supplierRecordVariantPayloads(record, s.cfg.Workflow.DefaultStockOnHand)
+	defaultVariant := defaultVariantPayload(variants)
+
 	return vendure.ProductPayload{
 		Name:              displayTitle(record),
 		Slug:              slugify(record.GetString("supplier_code") + "-" + record.GetString("original_sku") + "-" + displayTitle(record)),
 		Description:       defaultString(record.GetString("marketing_description"), record.GetString("raw_description")),
-		SKU:               record.GetString("original_sku"),
+		SKU:               defaultVariant.SKU,
 		CurrencyCode:      defaultString(record.GetString("currency_code"), s.cfg.Vendure.CurrencyCode),
-		ConsumerPrice:     toMinorUnits(record.GetFloat("c_price")),
+		ConsumerPrice:     defaultVariant.ConsumerPrice,
 		AssetURL:          assetURL,
 		AssetName:         assetFileName(assetURL),
 		AssetURLs:         assetURLs,
 		AssetNames:        assetNames,
 		CEndAssetURL:      cEndAssetURL,
 		CEndAssetName:     assetFileName(cEndAssetURL),
-		BusinessPrice:     toMinorUnits(record.GetFloat("b_price")),
+		BusinessPrice:     defaultVariant.BusinessPrice,
 		SupplierCode:      record.GetString("supplier_code"),
 		SupplierCostPrice: toMinorUnits(record.GetFloat("cost_price")),
-		ConversionRate:    sourceConversionRateFromSupplierRecord(record),
+		ConversionRate:    defaultVariant.ConversionRate,
 		SourceProductID:   defaultString(record.GetString("source_product_id"), readJSONAttribute(record, "source_product_id")),
 		SourceType:        defaultString(record.GetString("source_type"), readJSONAttribute(record, "source_type")),
 		TargetAudience:    defaultString(record.GetString("target_audience"), "ALL"),
-		DefaultStock:      s.cfg.Workflow.DefaultStockOnHand,
-		SalesUnit:         defaultString(readJSONAttribute(record, "sales_unit"), "件"),
+		DefaultStock:      defaultVariant.DefaultStock,
+		SalesUnit:         defaultVariant.SalesUnit,
 		VendureProduct:    record.GetString("vendure_product_id"),
-		VendureVariant:    record.GetString("vendure_variant_id"),
+		VendureVariant:    defaultVariant.VendureVariant,
 		NeedColdChain:     strings.EqualFold(readJSONAttribute(record, "need_cold_chain"), "true"),
+		Variants:          variants,
 	}
 }
 
@@ -1944,6 +1956,7 @@ func (s *Service) PreviewBackendReleasePayload(_ context.Context, app core.App, 
 		"cEndAssetURL":      payload.CEndAssetURL,
 		"vendureProductId":  payload.VendureProduct,
 		"vendureVariantId":  payload.VendureVariant,
+		"variants":          payload.Variants,
 	}
 	return BackendReleasePayloadPreview{
 		RecordID: record.Id,
@@ -2652,6 +2665,230 @@ func readJSONArrayAttributes(record *core.Record, key string) []string {
 		}
 	}
 	return uniqueTrimmed(result)
+}
+
+type supplierPayloadUnitOption struct {
+	UnitName  string  `json:"unitName"`
+	Price     float64 `json:"price"`
+	BaseUnit  string  `json:"baseUnit"`
+	Rate      float64 `json:"rate"`
+	IsDefault bool    `json:"isDefault"`
+	StockQty  float64 `json:"stockQty"`
+	StockText string  `json:"stockText"`
+}
+
+type vendureVariantState struct {
+	Key              string  `json:"key"`
+	UnitName         string  `json:"unitName"`
+	Rate             float64 `json:"rate"`
+	SKU              string  `json:"sku"`
+	Price            int     `json:"price"`
+	BusinessPrice    int     `json:"businessPrice"`
+	IsDefault        bool    `json:"isDefault"`
+	VendureVariantID string  `json:"vendureVariantId"`
+}
+
+func supplierRecordVariantPayloads(record *core.Record, fallbackStock int) []vendure.ProductVariantPayload {
+	sourceProductID := defaultString(record.GetString("source_product_id"), readJSONAttribute(record, "source_product_id"))
+	sourceType := defaultString(record.GetString("source_type"), readJSONAttribute(record, "source_type"))
+	supplierCode := record.GetString("supplier_code")
+	currencyCode := defaultString(record.GetString("currency_code"), "CNY")
+	defaultUnit := defaultString(readJSONAttribute(record, "sales_unit"), "件")
+	defaultRate := sourceConversionRateFromSupplierRecord(record)
+	defaultConsumerPrice := toMinorUnits(record.GetFloat("c_price"))
+	defaultBusinessPrice := toMinorUnits(record.GetFloat("b_price"))
+	supplierCostPrice := toMinorUnits(record.GetFloat("cost_price"))
+	baseSKU := strings.TrimSpace(record.GetString("original_sku"))
+	storedVariants := supplierRecordVendureVariantStates(record)
+	storedByKey := make(map[string]vendureVariantState, len(storedVariants))
+	for _, item := range storedVariants {
+		if strings.TrimSpace(item.Key) == "" {
+			continue
+		}
+		storedByKey[item.Key] = item
+	}
+
+	unitOptions := supplierRecordUnitOptions(record)
+	if len(unitOptions) == 0 {
+		key := supplierVariantKey(sourceProductID, defaultUnit, defaultRate)
+		return []vendure.ProductVariantPayload{
+			{
+				Key:               key,
+				Name:              defaultUnit,
+				SKU:               baseSKU,
+				ConsumerPrice:     defaultConsumerPrice,
+				BusinessPrice:     positiveIntOr(defaultBusinessPrice, defaultConsumerPrice),
+				ConversionRate:    positiveFloatOr(defaultRate, 1),
+				DefaultStock:      fallbackStock,
+				SalesUnit:         defaultUnit,
+				VendureVariant:    record.GetString("vendure_variant_id"),
+				IsDefault:         true,
+				SourceProductID:   sourceProductID,
+				SourceType:        sourceType,
+				SupplierCode:      supplierCode,
+				SupplierCostPrice: supplierCostPrice,
+				CurrencyCode:      currencyCode,
+			},
+		}
+	}
+
+	variants := make([]vendure.ProductVariantPayload, 0, len(unitOptions))
+	for _, option := range unitOptions {
+		unitName := defaultString(option.UnitName, defaultUnit)
+		rate := positiveFloatOr(option.Rate, 1)
+		isDefault := option.IsDefault
+		if !isDefault && unitName == defaultUnit && rate == positiveFloatOr(defaultRate, 1) {
+			isDefault = true
+		}
+		price := toMinorUnits(option.Price)
+		if isDefault {
+			price = positiveIntOr(defaultConsumerPrice, price)
+		}
+		businessPrice := price
+		if isDefault {
+			businessPrice = positiveIntOr(defaultBusinessPrice, price)
+		}
+		key := supplierVariantKey(sourceProductID, unitName, rate)
+		stored := storedByKey[key]
+		vendureVariantID := strings.TrimSpace(stored.VendureVariantID)
+		if vendureVariantID == "" && isDefault {
+			vendureVariantID = strings.TrimSpace(record.GetString("vendure_variant_id"))
+		}
+		sku := defaultString(strings.TrimSpace(stored.SKU), variantSKU(baseSKU, key, isDefault))
+		variants = append(variants, vendure.ProductVariantPayload{
+			Key:               key,
+			Name:              unitName,
+			SKU:               sku,
+			ConsumerPrice:     positiveIntOr(price, defaultConsumerPrice),
+			BusinessPrice:     positiveIntOr(businessPrice, positiveIntOr(price, defaultBusinessPrice)),
+			ConversionRate:    rate,
+			DefaultStock:      unitStock(option.StockQty, fallbackStock),
+			SalesUnit:         unitName,
+			VendureVariant:    vendureVariantID,
+			IsDefault:         isDefault,
+			SourceProductID:   sourceProductID,
+			SourceType:        sourceType,
+			SupplierCode:      supplierCode,
+			SupplierCostPrice: supplierCostPrice,
+			CurrencyCode:      currencyCode,
+		})
+	}
+
+	if !hasDefaultVariant(variants) && len(variants) > 0 {
+		variants[0].IsDefault = true
+		if strings.TrimSpace(variants[0].VendureVariant) == "" {
+			variants[0].VendureVariant = strings.TrimSpace(record.GetString("vendure_variant_id"))
+		}
+	}
+	return variants
+}
+
+func supplierRecordUnitOptions(record *core.Record) []supplierPayloadUnitOption {
+	raw := strings.TrimSpace(record.GetString("supplier_payload"))
+	if raw == "" {
+		return nil
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return nil
+	}
+	value, ok := payload["unit_options"]
+	if !ok {
+		return nil
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	options := make([]supplierPayloadUnitOption, 0)
+	if err := json.Unmarshal(encoded, &options); err != nil {
+		return nil
+	}
+	slices.SortStableFunc(options, func(a, b supplierPayloadUnitOption) int {
+		if a.IsDefault == b.IsDefault {
+			return strings.Compare(strings.TrimSpace(a.UnitName), strings.TrimSpace(b.UnitName))
+		}
+		if a.IsDefault {
+			return -1
+		}
+		return 1
+	})
+	return options
+}
+
+func supplierRecordVendureVariantStates(record *core.Record) []vendureVariantState {
+	raw := strings.TrimSpace(record.GetString("vendure_variants_json"))
+	if raw == "" {
+		return nil
+	}
+	states := make([]vendureVariantState, 0)
+	if err := json.Unmarshal([]byte(raw), &states); err != nil {
+		return nil
+	}
+	return states
+}
+
+func defaultVariantPayload(variants []vendure.ProductVariantPayload) vendure.ProductVariantPayload {
+	for _, variant := range variants {
+		if variant.IsDefault {
+			return variant
+		}
+	}
+	if len(variants) > 0 {
+		return variants[0]
+	}
+	return vendure.ProductVariantPayload{}
+}
+
+func hasDefaultVariant(variants []vendure.ProductVariantPayload) bool {
+	for _, variant := range variants {
+		if variant.IsDefault {
+			return true
+		}
+	}
+	return false
+}
+
+func supplierVariantKey(sourceProductID string, unitName string, rate float64) string {
+	sourceProductID = strings.TrimSpace(sourceProductID)
+	unitName = strings.TrimSpace(unitName)
+	if sourceProductID == "" || unitName == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s#%s#%.6f", sourceProductID, unitName, rate)
+}
+
+func variantSKU(baseSKU string, unitKey string, isDefault bool) string {
+	baseSKU = strings.TrimSpace(baseSKU)
+	if isDefault || baseSKU == "" {
+		return baseSKU
+	}
+	hasher := fnv.New64a()
+	_, _ = hasher.Write([]byte(unitKey))
+	sum := hasher.Sum(nil)
+	return baseSKU + "__unit_" + strings.ToLower(hex.EncodeToString(sum[:4]))
+}
+
+func unitStock(stockQty float64, fallback int) int {
+	if stockQty > 0 {
+		return int(math.Ceil(stockQty))
+	}
+	return fallback
+}
+
+func positiveIntOr(value int, fallback int) int {
+	if value > 0 {
+		return value
+	}
+	return fallback
+}
+
+func positiveFloatOr(value float64, fallback float64) float64 {
+	if value > 0 {
+		return value
+	}
+	return fallback
 }
 
 func supplierRecordReleaseCategoryKey(record *core.Record) string {
