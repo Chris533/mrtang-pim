@@ -1,4 +1,5 @@
 .env
+.env.production
 .cache/
 .debug/
 pb_data/

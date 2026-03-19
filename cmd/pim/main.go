@@ -21,6 +21,9 @@ func main() {
 	_ = godotenv.Load()
 
 	cfg := config.Load()
+	if err := config.ValidateRuntime(cfg); err != nil {
+		log.Fatal(err)
+	}
 	applyDefaultServeHTTPAddr(cfg.App.HTTPAddr)
 	applyDefaultServeDataDir(cfg.App.DataDir)
 

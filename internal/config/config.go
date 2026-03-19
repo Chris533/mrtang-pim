@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -183,6 +184,82 @@ func Load() Config {
 			ProductCEndAssetField:      strings.TrimSpace(os.Getenv("VENDURE_CF_PRODUCT_C_END_FEATURED_ASSET")),
 		},
 	}
+}
+
+func ValidateRuntime(cfg Config) error {
+	if !isProductionEnv() {
+		return nil
+	}
+
+	var problems []string
+
+	if strings.TrimSpace(os.Getenv("MRTANG_PIM_ENCRYPTION_KEY")) == "" {
+		problems = append(problems, "MRTANG_PIM_ENCRYPTION_KEY is required in production")
+	}
+	if strings.TrimSpace(cfg.Security.APIKey) == "" {
+		problems = append(problems, "PIM_API_KEY is required in production")
+	}
+	if strings.TrimSpace(cfg.MiniApp.AuthorizedAccountID) == "" {
+		problems = append(problems, "MINIAPP_AUTH_ACCOUNT_ID is required in production")
+	}
+	publicURL := strings.ToLower(strings.TrimSpace(cfg.App.PublicURL))
+	if strings.HasPrefix(publicURL, "http://127.0.0.1") || strings.HasPrefix(publicURL, "http://localhost") {
+		problems = append(problems, "PIM_PUBLIC_URL must be a public HTTPS origin in production")
+	}
+
+	switch strings.ToLower(strings.TrimSpace(cfg.MiniApp.SourceMode)) {
+	case "", "snapshot":
+		for _, path := range []string{
+			cfg.MiniApp.HomepageSnapshotFile,
+			cfg.MiniApp.CategorySnapshotFile,
+			cfg.MiniApp.ProductSnapshotFile,
+			cfg.MiniApp.CartOrderSnapshotFile,
+		} {
+			if strings.TrimSpace(path) == "" {
+				problems = append(problems, "miniapp snapshot paths must not be empty in production")
+				continue
+			}
+			if _, err := os.Stat(path); err != nil {
+				problems = append(problems, fmt.Sprintf("snapshot path not found: %s", path))
+			}
+		}
+	case "raw":
+		if strings.TrimSpace(cfg.MiniApp.SourceURL) == "" {
+			problems = append(problems, "MINIAPP_SOURCE_URL is required when MINIAPP_SOURCE_MODE=raw")
+		}
+		if strings.TrimSpace(cfg.MiniApp.RawOpenID) == "" {
+			problems = append(problems, "MINIAPP_RAW_OPEN_ID is required when MINIAPP_SOURCE_MODE=raw")
+		}
+		if strings.TrimSpace(cfg.MiniApp.RawCustomerID) == "" {
+			problems = append(problems, "MINIAPP_RAW_CUSTOMER_ID is required when MINIAPP_SOURCE_MODE=raw")
+		}
+	default:
+		problems = append(problems, fmt.Sprintf("unsupported MINIAPP_SOURCE_MODE in production: %s", cfg.MiniApp.SourceMode))
+	}
+
+	if strings.EqualFold(strings.TrimSpace(cfg.Supplier.Connector), "file") {
+		if strings.TrimSpace(cfg.Supplier.FilePath) == "" {
+			problems = append(problems, "SUPPLIER_FILE is required when SUPPLIER_CONNECTOR=file")
+		} else if _, err := os.Stat(cfg.Supplier.FilePath); err != nil {
+			problems = append(problems, fmt.Sprintf("supplier file not found: %s", cfg.Supplier.FilePath))
+		}
+	}
+
+	if strings.EqualFold(strings.TrimSpace(cfg.Image.Processor), "webhook") &&
+		strings.TrimSpace(cfg.Image.WebhookURL) == "" {
+		problems = append(problems, "IMAGE_WEBHOOK_URL is required when IMAGE_PROCESSOR=webhook")
+	}
+
+	if len(problems) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf("invalid production configuration:\n- %s", strings.Join(problems, "\n- "))
+}
+
+func isProductionEnv() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
+	return value == "prod" || value == "production"
 }
 
 func defaultVendureShopEndpoint(adminEndpoint string) string {
