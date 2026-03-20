@@ -221,13 +221,59 @@ func (s *miniappCartOrderSubmitter) submitSupplierSummary(ctx context.Context, a
 		stringFromAny(data["id"]),
 		summary.ExternalRef,
 	)
-	return supplier.PurchaseOrderResult{
+	var detailResponse any
+	var detailErr error
+	if strings.TrimSpace(externalRef) != "" {
+		if progress != nil {
+			progress("submit_order_progress", "running", "verifying supplier order detail", map[string]any{
+				"supplierCode": supplierSummary.SupplierCode,
+				"billId":       externalRef,
+			})
+		}
+		detailResponse, detailErr = s.fetchSubmittedOrderDetail(ctx, externalRef)
+	}
+	result := supplier.PurchaseOrderResult{
 		SupplierCode: supplierSummary.SupplierCode,
 		ExternalRef:  externalRef,
 		Mode:         "miniapp_cart_order",
 		Accepted:     true,
 		Message:      firstNonEmptyString(message, "submitted via supplier cart-order"),
-	}, nil
+	}
+	result.VerificationStatus, result.VerificationMessage, result.Details = buildMiniappSubmitVerification(
+		summary,
+		supplierSummary,
+		targetLines,
+		cartIDs,
+		deliveryMethodID,
+		goodsAmount,
+		freight,
+		submitBody,
+		submitResponse.Response,
+		detailResponse,
+		detailErr,
+	)
+	if progress != nil {
+		status := "success"
+		if !strings.EqualFold(strings.TrimSpace(result.VerificationStatus), "verified") {
+			status = "warning"
+		}
+		progress("submit_order_progress", status, result.VerificationMessage, result.Details)
+	}
+	return result, nil
+}
+
+func (s *miniappCartOrderSubmitter) fetchSubmittedOrderDetail(ctx context.Context, billID string) (any, error) {
+	operation, err := s.miniapp.ExecuteOrderOperation(ctx, "detail", map[string]any{
+		"id":              billID,
+		"fromShareCorpId": "",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("load supplier order detail: %w", err)
+	}
+	if operation == nil {
+		return nil, fmt.Errorf("supplier order detail response is empty")
+	}
+	return operation.Response, nil
 }
 
 func (s *miniappCartOrderSubmitter) loadSupplierLines(ctx context.Context, app core.App, supplierSummary ProcurementSupplierSummary) ([]miniappCartOrderLine, error) {
@@ -719,6 +765,246 @@ func rawResponseEnvelope(response any) (string, string, map[string]any) {
 	message := stringFromAny(mapped["message"])
 	data, _ := mapped["data"].(map[string]any)
 	return code, message, data
+}
+
+func buildMiniappSubmitVerification(
+	summary ProcurementSummary,
+	supplierSummary ProcurementSupplierSummary,
+	targetLines []miniappCartOrderLine,
+	cartIDs []string,
+	deliveryMethodID string,
+	goodsAmount float64,
+	freight float64,
+	submitBody map[string]any,
+	submitResponse any,
+	detailResponse any,
+	detailErr error,
+) (string, string, map[string]any) {
+	code, message, data := rawResponseEnvelope(submitResponse)
+	expectedDue := roundMiniappNumber(goodsAmount + freight)
+	actualDue := roundMiniappNumber(floatFromAny(data["dueMoney"]))
+	billID := firstNonEmptyString(stringFromAny(data["billId"]), stringFromAny(data["id"]))
+	customerName := stringFromAny(data["customerName"])
+	requiresPayment := boolFromAny(data["whetherOpenWxPay"])
+	deadlineTime := int64(floatFromAny(data["deadlineTime"]))
+	paymentOptions := extractMiniappPaymentOptions(data["openWxPayList"])
+
+	issues := make([]string, 0, 4)
+	if billID == "" {
+		issues = append(issues, "supplier response missing billId")
+	}
+	if !miniappMoneyMatches(expectedDue, actualDue) {
+		issues = append(issues, fmt.Sprintf("due amount mismatch: expected %.2f got %.2f", expectedDue, actualDue))
+	}
+	if expectedDue > 0 && !requiresPayment && len(paymentOptions) == 0 {
+		issues = append(issues, "payment info missing for payable order")
+	}
+	if strings.TrimSpace(message) == "" {
+		issues = append(issues, "supplier response message is empty")
+	}
+	detailSummary, detailIssues := verifyMiniappSubmittedOrderDetail(summary, supplierSummary, targetLines, deliveryMethodID, expectedDue, detailResponse, detailErr)
+	issues = append(issues, detailIssues...)
+
+	verificationStatus := "verified"
+	verificationMessage := "supplier submit response verified"
+	if len(issues) > 0 {
+		verificationStatus = "warning"
+		verificationMessage = strings.Join(issues, "; ")
+	}
+
+	lineDetails := make([]map[string]any, 0, len(targetLines))
+	for _, line := range targetLines {
+		lineDetails = append(lineDetails, map[string]any{
+			"originalSku": line.OriginalSKU,
+			"spuId":       line.SpuID,
+			"skuId":       line.SkuID,
+			"skuName":     line.SkuName,
+			"salesUnit":   line.SalesUnit,
+			"unitId":      line.UnitID,
+			"unitRate":    numericValue(line.UnitRate),
+			"quantity":    numericValue(line.Quantity),
+			"freightQty":  numericValue(line.FreightQty),
+			"unitPrice":   numericValue(line.UnitPrice),
+		})
+	}
+
+	details := map[string]any{
+		"request": map[string]any{
+			"externalRef":       summary.ExternalRef,
+			"supplierCode":      supplierSummary.SupplierCode,
+			"cartIdCount":       len(cartIDs),
+			"cartIds":           cartIDs,
+			"deliveryMethodId":  deliveryMethodID,
+			"goodsAmount":       numericValue(goodsAmount),
+			"freightAmount":     numericValue(freight),
+			"expectedDueAmount": numericValue(expectedDue),
+			"itemCount":         supplierSummary.ItemCount,
+			"totalQty":          numericValue(supplierSummary.TotalQty),
+			"lines":             lineDetails,
+			"submitBody":        cloneMiniappMap(submitBody),
+		},
+		"submit": map[string]any{
+			"code":             code,
+			"message":          message,
+			"billId":           billID,
+			"customerName":     customerName,
+			"dueAmount":        numericValue(actualDue),
+			"requiresPayment":  requiresPayment,
+			"deadlineTime":     deadlineTime,
+			"paymentOptions":   paymentOptions,
+			"paymentOptionCnt": len(paymentOptions),
+			"rawData":          cloneMiniappMap(data),
+		},
+		"detail": detailSummary,
+		"verification": map[string]any{
+			"status": verificationStatus,
+			"issues": issues,
+		},
+	}
+	return verificationStatus, verificationMessage, details
+}
+
+func extractMiniappPaymentOptions(value any) []map[string]any {
+	items, _ := value.([]any)
+	options := make([]map[string]any, 0, len(items))
+	for _, raw := range items {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		options = append(options, map[string]any{
+			"name":         stringFromAny(item["name"]),
+			"type":         int(floatFromAny(item["type"])),
+			"payRecommend": int(floatFromAny(item["payRecommend"])),
+		})
+	}
+	return options
+}
+
+func miniappMoneyMatches(expected float64, actual float64) bool {
+	return math.Abs(roundMiniappNumber(expected)-roundMiniappNumber(actual)) < 0.01
+}
+
+func verifyMiniappSubmittedOrderDetail(
+	summary ProcurementSummary,
+	supplierSummary ProcurementSupplierSummary,
+	targetLines []miniappCartOrderLine,
+	deliveryMethodID string,
+	expectedDue float64,
+	detailResponse any,
+	detailErr error,
+) (map[string]any, []string) {
+	detailSummary := map[string]any{}
+	if detailErr != nil {
+		return map[string]any{
+			"fetched": false,
+			"error":   detailErr.Error(),
+		}, []string{detailErr.Error()}
+	}
+	code, message, data := rawResponseEnvelope(detailResponse)
+	detailSummary["fetched"] = detailResponse != nil
+	detailSummary["code"] = code
+	detailSummary["message"] = message
+	if len(data) == 0 {
+		return detailSummary, []string{"supplier order detail response is empty"}
+	}
+	detailSummary["billId"] = firstNonEmptyString(stringFromAny(data["id"]), stringFromAny(data["billId"]))
+	detailSummary["billNo"] = stringFromAny(data["billNo"])
+	detailSummary["flowStatus"] = int(floatFromAny(data["flowStatus"]))
+	detailSummary["status"] = int(floatFromAny(data["status"]))
+	detailSummary["payStatus"] = int(floatFromAny(data["payStatus"]))
+	detailSummary["dueAmount"] = numericValue(floatFromAny(data["dueMoney"]))
+	detailSummary["goodsTypeCount"] = int(floatFromAny(data["goodsTypeCount"]))
+	detailSummary["goodsCount"] = numericValue(floatFromAny(data["goodsCount"]))
+	detailSummary["remark"] = stringFromAny(data["remark"])
+	detailSummary["buyerRemark"] = stringFromAny(data["buyerRemark"])
+
+	issues := make([]string, 0, 6)
+	detailDue := roundMiniappNumber(floatFromAny(data["dueMoney"]))
+	if !miniappMoneyMatches(expectedDue, detailDue) {
+		issues = append(issues, fmt.Sprintf("detail due amount mismatch: expected %.2f got %.2f", expectedDue, detailDue))
+	}
+	if got := int(floatFromAny(data["goodsTypeCount"])); got != len(targetLines) {
+		issues = append(issues, fmt.Sprintf("detail goods type count mismatch: expected %d got %d", len(targetLines), got))
+	}
+	expectedQty := roundMiniappNumber(supplierSummary.TotalQty)
+	if got := roundMiniappNumber(floatFromAny(data["goodsCount"])); !miniappMoneyMatches(expectedQty, got) {
+		issues = append(issues, fmt.Sprintf("detail goods count mismatch: expected %.2f got %.2f", expectedQty, got))
+	}
+	receiveAddress, _ := data["receiveAddressInfo"].(map[string]any)
+	detailSummary["receiveAddress"] = cloneMiniappMap(receiveAddress)
+	if got := stringFromAny(receiveAddress["deliveryMethodId"]); deliveryMethodID != "" && !strings.EqualFold(strings.TrimSpace(got), strings.TrimSpace(deliveryMethodID)) {
+		issues = append(issues, fmt.Sprintf("detail delivery method mismatch: expected %s got %s", deliveryMethodID, got))
+	}
+	expectedRemark := "vendure-order:" + strings.TrimSpace(summary.ExternalRef)
+	if expectedRemark != "vendure-order:" && !containsAnyFold(
+		[]string{stringFromAny(data["remark"]), stringFromAny(data["buyerRemark"])},
+		expectedRemark,
+	) {
+		issues = append(issues, "detail remark does not contain backend order code")
+	}
+
+	orderGoods, _ := data["orderGoods"].([]any)
+	goodsDetails := make([]map[string]any, 0, len(orderGoods))
+	expectedLines := make(map[string]miniappCartOrderLine, len(targetLines))
+	for _, line := range targetLines {
+		expectedLines[strings.TrimSpace(line.SkuID)] = line
+	}
+	for _, raw := range orderGoods {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		skuID := stringFromAny(item["skuId"])
+		goodsDetails = append(goodsDetails, map[string]any{
+			"spuId":         stringFromAny(item["spuId"]),
+			"skuId":         skuID,
+			"spuName":       stringFromAny(item["spuName"]),
+			"skuName":       stringFromAny(item["skuName"]),
+			"unitId":        stringFromAny(item["unitId"]),
+			"unitName":      stringFromAny(item["unitName"]),
+			"originalPrice": numericValue(floatFromAny(item["originalPrice"])),
+			"subTotal":      numericValue(normalizeMiniappPriceNumber(floatFromAny(item["subTotal"]))),
+			"unitRate":      numericValue(floatFromAny(item["unitRate"])),
+		})
+		expected, ok := expectedLines[skuID]
+		if !ok {
+			issues = append(issues, fmt.Sprintf("detail contains unexpected sku %s", skuID))
+			continue
+		}
+		if expected.UnitID != "" && !strings.EqualFold(strings.TrimSpace(stringFromAny(item["unitId"])), strings.TrimSpace(expected.UnitID)) {
+			issues = append(issues, fmt.Sprintf("detail unit mismatch for sku %s", skuID))
+		}
+		if !miniappMoneyMatches(expected.UnitPrice, floatFromAny(item["originalPrice"])) {
+			issues = append(issues, fmt.Sprintf("detail unit price mismatch for sku %s", skuID))
+		}
+		delete(expectedLines, skuID)
+	}
+	for skuID := range expectedLines {
+		issues = append(issues, fmt.Sprintf("detail missing expected sku %s", skuID))
+	}
+	detailSummary["orderGoods"] = goodsDetails
+	return detailSummary, issues
+}
+
+func normalizeMiniappPriceNumber(value float64) float64 {
+	if math.Abs(value) >= 1000000 {
+		return roundMiniappNumber(value / 100000000)
+	}
+	return roundMiniappNumber(value)
+}
+
+func containsAnyFold(values []string, target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	for _, value := range values {
+		if strings.Contains(strings.ToLower(strings.TrimSpace(value)), strings.ToLower(target)) {
+			return true
+		}
+	}
+	return false
 }
 
 func totalMiniappQty(items []map[string]any, key string) float64 {

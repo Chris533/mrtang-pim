@@ -509,6 +509,16 @@ func (s *RawSource) ExecuteOrderOperation(ctx context.Context, id string, reques
 			return nil, err
 		}
 		return &model.OperationSnapshot{ContractID: "raw_order_submit", RequestBody: body, Response: response}, nil
+	case "detail":
+		body := requestBody
+		if body == nil {
+			return nil, fmt.Errorf("raw order detail requires explicit request body")
+		}
+		response, err := s.fetchRawResponse(ctx, http.MethodPost, "/gateway/billservice/api/v1/wx/sale_bill/detail", nil, body)
+		if err != nil {
+			return nil, err
+		}
+		return &model.OperationSnapshot{ContractID: "raw_order_detail", RequestBody: body, Response: response}, nil
 	default:
 		return nil, nil
 	}

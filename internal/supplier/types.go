@@ -43,11 +43,14 @@ type PurchaseOrder struct {
 }
 
 type PurchaseOrderResult struct {
-	SupplierCode string `json:"supplierCode"`
-	ExternalRef  string `json:"externalRef,omitempty"`
-	Mode         string `json:"mode"`
-	Accepted     bool   `json:"accepted"`
-	Message      string `json:"message,omitempty"`
+	SupplierCode        string         `json:"supplierCode"`
+	ExternalRef         string         `json:"externalRef,omitempty"`
+	Mode                string         `json:"mode"`
+	Accepted            bool           `json:"accepted"`
+	Message             string         `json:"message,omitempty"`
+	VerificationStatus  string         `json:"verificationStatus,omitempty"`
+	VerificationMessage string         `json:"verificationMessage,omitempty"`
+	Details             map[string]any `json:"details,omitempty"`
 }
 
 type Connector interface {
