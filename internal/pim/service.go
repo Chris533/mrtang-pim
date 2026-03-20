@@ -75,6 +75,7 @@ type Result struct {
 type ProcurementItemRequest struct {
 	SupplierCode string  `json:"supplierCode"`
 	OriginalSKU  string  `json:"originalSku"`
+	SalesUnit    string  `json:"salesUnit,omitempty"`
 	Quantity     float64 `json:"quantity"`
 }
 
@@ -194,6 +195,8 @@ type ProcurementActionActor struct {
 	Email string `json:"email"`
 	Name  string `json:"name"`
 }
+
+type ProcurementProgressLogger func(actionType string, status string, message string, details any)
 
 type ProcurementActionLog struct {
 	ID          string `json:"id"`
@@ -408,6 +411,7 @@ type BackendCategoryPublishBatchResult struct {
 type Service struct {
 	cfg               config.Config
 	connector         supplier.Connector
+	miniappCartOrder  *miniappCartOrderSubmitter
 	processor         image.Processor
 	vendure           *vendure.Client
 	lock              sync.Mutex
@@ -425,6 +429,19 @@ func NewService(cfg config.Config) *Service {
 	switch strings.ToLower(cfg.Supplier.Connector) {
 	case "file":
 		connector = supplier.NewFileConnector(cfg.Supplier.FilePath, cfg.Supplier.Code)
+	case "http":
+		connector = supplier.NewHTTPConnector(supplier.HTTPConnectorConfig{
+			BaseURL:       cfg.Supplier.HTTPBaseURL,
+			SubmitPath:    cfg.Supplier.HTTPSubmitPath,
+			FetchPath:     cfg.Supplier.HTTPFetchPath,
+			Token:         cfg.Supplier.HTTPToken,
+			APIKey:        cfg.Supplier.HTTPAPIKey,
+			SupplierCode:  cfg.Supplier.Code,
+			Timeout:       cfg.Supplier.HTTPTimeout,
+			SkipTLSVerify: cfg.Supplier.HTTPSkipTLSVerify,
+		})
+	case "miniapp_cart_order":
+		connector = supplier.NewFileConnector(cfg.Supplier.FilePath, cfg.Supplier.Code)
 	default:
 		connector = supplier.NewFileConnector(cfg.Supplier.FilePath, cfg.Supplier.Code)
 	}
@@ -432,6 +449,7 @@ func NewService(cfg config.Config) *Service {
 	return &Service{
 		cfg:               cfg,
 		connector:         connector,
+		miniappCartOrder:  newMiniappCartOrderSubmitter(cfg),
 		processor:         image.NewProcessor(cfg.Image),
 		vendure:           vendure.NewClient(cfg.Vendure),
 		activeTargetSyncs: make(map[string]string),
@@ -442,6 +460,9 @@ func NewService(cfg config.Config) *Service {
 }
 
 func (s *Service) ConnectorCapabilities() supplier.ConnectorCapabilities {
+	if s.miniappCartOrder != nil {
+		return s.miniappCartOrder.Capabilities()
+	}
 	return s.connector.Capabilities()
 }
 
@@ -453,7 +474,7 @@ func (s *Service) ProcurementSummary(ctx context.Context, app core.App, req Proc
 
 	summary := buildProcurementSummary(
 		s.cfg.Supplier.Connector,
-		s.connector.Capabilities(),
+		s.ConnectorCapabilities(),
 		defaultProcurementExternalRef(req.ExternalRef),
 		strings.TrimSpace(req.DeliveryAddress),
 		strings.TrimSpace(req.Notes),
@@ -494,44 +515,101 @@ func (s *Service) SubmitProcurement(ctx context.Context, app core.App, req Procu
 		return ProcurementSubmitResponse{}, err
 	}
 
-	results := make([]supplier.PurchaseOrderResult, 0, len(summary.Suppliers))
-	for _, supplierSummary := range summary.Suppliers {
-		order := supplier.PurchaseOrder{
-			SupplierCode:    supplierSummary.SupplierCode,
-			ExternalRef:     summary.ExternalRef,
-			DeliveryAddress: summary.DeliveryAddress,
-			Notes:           summary.Notes,
-			Items:           make([]supplier.PurchaseOrderItem, 0, len(supplierSummary.Items)),
-		}
+	submitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 90*time.Second)
+	defer cancel()
 
-		for _, item := range supplierSummary.Items {
-			order.Items = append(order.Items, supplier.PurchaseOrderItem{
-				SupplierCode: item.SupplierCode,
-				OriginalSKU:  item.OriginalSKU,
-				Quantity:     item.Quantity,
-				SalesUnit:    item.SalesUnit,
-			})
-		}
-
-		result, submitErr := s.connector.SubmitPurchaseOrder(ctx, order)
-		if submitErr != nil {
-			results = append(results, supplier.PurchaseOrderResult{
-				SupplierCode: supplierSummary.SupplierCode,
-				ExternalRef:  summary.ExternalRef,
-				Mode:         "error",
-				Accepted:     false,
-				Message:      submitErr.Error(),
-			})
-			continue
-		}
-
-		results = append(results, result)
-	}
+	results := s.submitProcurementSummary(submitCtx, app, summary, nil)
 
 	return ProcurementSubmitResponse{
 		Summary: summary,
 		Results: results,
 	}, nil
+}
+
+func (s *Service) SubmitProcurementOrder(ctx context.Context, app core.App, id string, note string) (ProcurementOrder, error) {
+	return s.SubmitProcurementOrderWithAudit(ctx, app, id, note, ProcurementActionActor{})
+}
+
+func (s *Service) SubmitProcurementOrderWithAudit(ctx context.Context, app core.App, id string, note string, actor ProcurementActionActor) (ProcurementOrder, error) {
+	record, err := app.FindRecordById(CollectionProcurementOrders, id)
+	if err != nil {
+		return ProcurementOrder{}, err
+	}
+
+	currentStatus := strings.TrimSpace(record.GetString("status"))
+	if currentStatus == "" {
+		currentStatus = ProcurementStatusDraft
+	}
+	if currentStatus == ProcurementStatusReceived || currentStatus == ProcurementStatusCanceled {
+		s.logProcurementAction(app, record, "submit_order", "error", fmt.Sprintf("procurement order in status %s cannot be submitted", currentStatus), actor, strings.TrimSpace(note), map[string]any{
+			"status": currentStatus,
+		})
+		return ProcurementOrder{}, fmt.Errorf("procurement order in status %s cannot be submitted", currentStatus)
+	}
+
+	summary, err := decodeProcurementSummary(record.GetString("summary_json"))
+	if err != nil {
+		s.logProcurementAction(app, record, "submit_order", "error", "decode procurement summary failed", actor, strings.TrimSpace(note), map[string]any{
+			"error": err.Error(),
+		})
+		return ProcurementOrder{}, err
+	}
+
+	results := s.submitProcurementSummary(ctx, app, summary, func(actionType string, status string, message string, details any) {
+		s.logProcurementAction(app, record, actionType, status, message, actor, strings.TrimSpace(note), details)
+	})
+	if err := setJSONField(record, "results_json", results); err != nil {
+		s.logProcurementAction(app, record, "submit_order", "error", "persist procurement results failed", actor, strings.TrimSpace(note), map[string]any{
+			"error": err.Error(),
+		})
+		return ProcurementOrder{}, err
+	}
+
+	accepted := 0
+	for _, item := range results {
+		if item.Accepted {
+			accepted++
+		}
+	}
+
+	nextStatus := currentStatus
+	if accepted > 0 {
+		nextStatus = ProcurementStatusOrdered
+	} else if currentStatus == ProcurementStatusDraft || currentStatus == ProcurementStatusReviewed {
+		nextStatus = ProcurementStatusExported
+	}
+
+	normalizedNote := strings.TrimSpace(note)
+	if normalizedNote == "" {
+		if accepted > 0 {
+			normalizedNote = fmt.Sprintf("submitted to supplier: %d/%d accepted", accepted, len(results))
+		} else {
+			normalizedNote = "supplier submission attempted; no supplier accepted order, keep manual follow-up"
+		}
+	}
+
+	if err := applyProcurementStatus(record, nextStatus, normalizedNote); err != nil {
+		s.logProcurementAction(app, record, "submit_order", "error", "apply procurement status failed", actor, strings.TrimSpace(note), map[string]any{
+			"error":  err.Error(),
+			"status": nextStatus,
+		})
+		return ProcurementOrder{}, err
+	}
+
+	if err := app.Save(record); err != nil {
+		s.logProcurementAction(app, record, "submit_order", "error", "save procurement order failed", actor, strings.TrimSpace(note), map[string]any{
+			"error":  err.Error(),
+			"status": nextStatus,
+		})
+		return ProcurementOrder{}, err
+	}
+	s.logProcurementAction(app, record, "submit_order", "success", "submitted procurement order to supplier connector", actor, normalizedNote, map[string]any{
+		"accepted": accepted,
+		"total":    len(results),
+		"status":   nextStatus,
+	})
+
+	return procurementOrderFromRecord(record)
 }
 
 func (s *Service) CreateProcurementOrder(ctx context.Context, app core.App, req ProcurementRequest) (ProcurementOrder, error) {
@@ -571,6 +649,67 @@ func (s *Service) CreateProcurementOrder(ctx context.Context, app core.App, req 
 	})
 
 	return procurementOrderFromRecord(record)
+}
+
+func (s *Service) submitProcurementSummary(ctx context.Context, app core.App, summary ProcurementSummary, progress ProcurementProgressLogger) []supplier.PurchaseOrderResult {
+	if s.miniappCartOrder != nil {
+		return s.miniappCartOrder.Submit(ctx, app, summary, progress)
+	}
+	results := make([]supplier.PurchaseOrderResult, 0, len(summary.Suppliers))
+	for _, supplierSummary := range summary.Suppliers {
+		if progress != nil {
+			progress("submit_order_progress", "running", "submitting purchase order via connector", map[string]any{
+				"supplierCode": supplierSummary.SupplierCode,
+				"itemCount":    len(supplierSummary.Items),
+			})
+		}
+		order := supplier.PurchaseOrder{
+			SupplierCode:    supplierSummary.SupplierCode,
+			ExternalRef:     summary.ExternalRef,
+			DeliveryAddress: summary.DeliveryAddress,
+			Notes:           summary.Notes,
+			Items:           make([]supplier.PurchaseOrderItem, 0, len(supplierSummary.Items)),
+		}
+
+		for _, item := range supplierSummary.Items {
+			order.Items = append(order.Items, supplier.PurchaseOrderItem{
+				SupplierCode: item.SupplierCode,
+				OriginalSKU:  item.OriginalSKU,
+				Quantity:     item.Quantity,
+				SalesUnit:    item.SalesUnit,
+			})
+		}
+
+		result, submitErr := s.connector.SubmitPurchaseOrder(ctx, order)
+		if submitErr != nil {
+			if progress != nil {
+				progress("submit_order_progress", "error", submitErr.Error(), map[string]any{
+					"supplierCode": supplierSummary.SupplierCode,
+				})
+			}
+			results = append(results, supplier.PurchaseOrderResult{
+				SupplierCode: supplierSummary.SupplierCode,
+				ExternalRef:  summary.ExternalRef,
+				Mode:         "error",
+				Accepted:     false,
+				Message:      submitErr.Error(),
+			})
+			continue
+		}
+		if strings.TrimSpace(result.SupplierCode) == "" {
+			result.SupplierCode = supplierSummary.SupplierCode
+		}
+		if strings.TrimSpace(result.ExternalRef) == "" {
+			result.ExternalRef = summary.ExternalRef
+		}
+		if progress != nil {
+			progress("submit_order_progress", "success", "supplier connector returned result", result)
+		}
+
+		results = append(results, result)
+	}
+
+	return results
 }
 
 func (s *Service) ListProcurementOrders(_ context.Context, app core.App, limit int, status string) ([]ProcurementOrder, error) {
@@ -1998,17 +2137,27 @@ func (s *Service) resolveProcurementItems(_ context.Context, app core.App, reque
 			return nil, fmt.Errorf("load procurement item %s/%s: %w", supplierCode, sku, err)
 		}
 
+		requestedSalesUnit := strings.TrimSpace(requestItem.SalesUnit)
+		unitOption := supplierRecordUnitOption(record, requestedSalesUnit)
+		salesUnit := defaultString(requestedSalesUnit, defaultString(unitOption.UnitName, defaultString(readJSONAttribute(record, "sales_unit"), "件")))
+		basePrice := positiveOr(unitOption.Price, record.GetFloat("b_price"))
+		if basePrice <= 0 {
+			basePrice = record.GetFloat("c_price")
+		}
+
 		items = append(items, procurementCatalogItem{
 			SupplierCode:       supplierCode,
 			OriginalSKU:        sku,
 			Title:              displayTitle(record),
 			NormalizedCategory: defaultString(record.GetString("normalized_category"), record.GetString("raw_category")),
 			Quantity:           quantity,
-			SalesUnit:          defaultString(readJSONAttribute(record, "sales_unit"), "件"),
-			CostPrice:          record.GetFloat("cost_price"),
-			BusinessPrice:      record.GetFloat("b_price"),
-			ConsumerPrice:      record.GetFloat("c_price"),
-			NeedColdChain:      strings.EqualFold(readJSONAttribute(record, "need_cold_chain"), "true"),
+			SalesUnit:          salesUnit,
+			// Historical source capture sets cost_price to 0 for many records.
+			// Fallback to b_price to avoid zero-cost procurement summaries.
+			CostPrice:     positiveOr(record.GetFloat("cost_price"), basePrice),
+			BusinessPrice: positiveOr(basePrice, record.GetFloat("b_price")),
+			ConsumerPrice: positiveOr(basePrice, record.GetFloat("c_price")),
+			NeedColdChain: strings.EqualFold(readJSONAttribute(record, "need_cold_chain"), "true"),
 		})
 	}
 
@@ -2140,7 +2289,7 @@ func isAllowedProcurementTransition(current string, next string) bool {
 
 	switch current {
 	case ProcurementStatusDraft:
-		return next == ProcurementStatusReviewed || next == ProcurementStatusExported || next == ProcurementStatusCanceled
+		return next == ProcurementStatusReviewed || next == ProcurementStatusExported || next == ProcurementStatusOrdered || next == ProcurementStatusCanceled
 	case ProcurementStatusReviewed:
 		return next == ProcurementStatusExported || next == ProcurementStatusOrdered || next == ProcurementStatusCanceled
 	case ProcurementStatusExported:
@@ -2496,6 +2645,16 @@ func defaultProcurementExternalRef(value string) string {
 	return fmt.Sprintf("procurement-%d", time.Now().UnixMilli())
 }
 
+func positiveOr(value float64, fallback float64) float64 {
+	if value > 0 {
+		return value
+	}
+	if fallback > 0 {
+		return fallback
+	}
+	return 0
+}
+
 func procurementMarginRatio(costPrice float64, consumerPrice float64) float64 {
 	if consumerPrice <= 0 {
 		return 0
@@ -2677,6 +2836,17 @@ type supplierPayloadUnitOption struct {
 	StockText string  `json:"stockText"`
 }
 
+type supplierPayloadOrderUnit struct {
+	UnitID      string  `json:"unitId"`
+	UnitName    string  `json:"unitName"`
+	Rate        float64 `json:"rate"`
+	IsBase      bool    `json:"isBase"`
+	IsDefault   bool    `json:"isDefault"`
+	AllowOrder  bool    `json:"allowOrder"`
+	MinOrderQty float64 `json:"minOrderQty"`
+	MaxOrderQty float64 `json:"maxOrderQty"`
+}
+
 type vendureVariantState struct {
 	Key              string  `json:"key"`
 	UnitName         string  `json:"unitName"`
@@ -2815,6 +2985,88 @@ func supplierRecordUnitOptions(record *core.Record) []supplierPayloadUnitOption 
 		return 1
 	})
 	return options
+}
+
+func supplierRecordUnitOption(record *core.Record, unitName string) supplierPayloadUnitOption {
+	unitName = strings.TrimSpace(unitName)
+	options := supplierRecordUnitOptions(record)
+	if unitName != "" {
+		for _, option := range options {
+			if strings.EqualFold(strings.TrimSpace(option.UnitName), unitName) {
+				return option
+			}
+		}
+	}
+	for _, option := range options {
+		if option.IsDefault {
+			return option
+		}
+	}
+	if len(options) > 0 {
+		return options[0]
+	}
+	return supplierPayloadUnitOption{}
+}
+
+func supplierRecordOrderUnits(record *core.Record) []supplierPayloadOrderUnit {
+	raw := strings.TrimSpace(record.GetString("order_units_json"))
+	units := make([]supplierPayloadOrderUnit, 0)
+	if raw != "" {
+		if err := json.Unmarshal([]byte(raw), &units); err != nil {
+			return nil
+		}
+	} else {
+		payloadRaw := strings.TrimSpace(record.GetString("supplier_payload"))
+		if payloadRaw == "" {
+			return nil
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(payloadRaw), &payload); err != nil {
+			return nil
+		}
+		value, ok := payload["order_units"]
+		if !ok {
+			return nil
+		}
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil
+		}
+		if err := json.Unmarshal(encoded, &units); err != nil {
+			return nil
+		}
+	}
+	slices.SortStableFunc(units, func(a, b supplierPayloadOrderUnit) int {
+		if a.IsDefault == b.IsDefault {
+			return strings.Compare(strings.TrimSpace(a.UnitName), strings.TrimSpace(b.UnitName))
+		}
+		if a.IsDefault {
+			return -1
+		}
+		return 1
+	})
+	return units
+}
+
+func supplierRecordOrderUnit(record *core.Record, unitName string) supplierPayloadOrderUnit {
+	unitName = strings.TrimSpace(unitName)
+	units := supplierRecordOrderUnits(record)
+	if unitName != "" {
+		for _, unit := range units {
+			if strings.EqualFold(strings.TrimSpace(unit.UnitName), unitName) {
+				return unit
+			}
+		}
+	}
+	for _, unit := range units {
+		if unit.IsDefault {
+			return unit
+		}
+	}
+	if len(units) > 0 {
+		return units[0]
+	}
+	return supplierPayloadOrderUnit{}
 }
 
 func supplierRecordVendureVariantStates(record *core.Record) []vendureVariantState {
@@ -2960,4 +3212,52 @@ func (s *Service) listRecentProcurementActions(app core.App, limit int) ([]Procu
 		})
 	}
 	return items, nil
+}
+
+func (s *Service) ListProcurementActions(app core.App, orderID string, limit int) ([]ProcurementActionLog, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	filter := ""
+	params := dbx.Params{}
+	orderID = strings.TrimSpace(orderID)
+	if orderID != "" {
+		filter = "order_id = {:order_id}"
+		params["order_id"] = orderID
+	}
+	sortExpr, err := procurementActionSortExpr(app)
+	if err != nil {
+		return nil, err
+	}
+	records, err := app.FindRecordsByFilter(CollectionProcurementActionLogs, filter, sortExpr, limit, 0, params)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]ProcurementActionLog, 0, len(records))
+	for _, record := range records {
+		items = append(items, ProcurementActionLog{
+			ID:          record.Id,
+			OrderID:     record.GetString("order_id"),
+			ExternalRef: record.GetString("external_ref"),
+			ActionType:  record.GetString("action_type"),
+			Status:      record.GetString("status"),
+			Message:     record.GetString("message"),
+			ActorEmail:  record.GetString("actor_email"),
+			ActorName:   record.GetString("actor_name"),
+			Note:        record.GetString("note"),
+			Created:     record.GetString("created"),
+		})
+	}
+	return items, nil
+}
+
+func procurementActionSortExpr(app core.App) (string, error) {
+	collection, err := app.FindCollectionByNameOrId(CollectionProcurementActionLogs)
+	if err != nil {
+		return "", err
+	}
+	if collection.Fields.GetByName("created") != nil {
+		return "-created", nil
+	}
+	return "-id", nil
 }

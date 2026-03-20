@@ -3,7 +3,9 @@
 .cache/
 .debug/
 pb_data/
-docs/rr/
+docs/rr/**
+!docs/rr/**/
+!docs/rr/**/README.md
 cmd/pim/__debug_bin*.exe
 .adminapp-vendor/
 adminapp_vendor/

@@ -59,9 +59,16 @@ type MiniAppConfig struct {
 }
 
 type SupplierConfig struct {
-	Connector string
-	Code      string
-	FilePath  string
+	Connector         string
+	Code              string
+	FilePath          string
+	HTTPBaseURL       string
+	HTTPSubmitPath    string
+	HTTPFetchPath     string
+	HTTPToken         string
+	HTTPAPIKey        string
+	HTTPTimeout       time.Duration
+	HTTPSkipTLSVerify bool
 }
 
 type ImageConfig struct {
@@ -142,9 +149,16 @@ func Load() Config {
 			UserAgent:             getEnv("MINIAPP_USER_AGENT", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.53(0x18003537) NetType/WIFI Language/zh_CN miniProgram"),
 		},
 		Supplier: SupplierConfig{
-			Connector: getEnv("SUPPLIER_CONNECTOR", "file"),
-			Code:      getEnv("SUPPLIER_CODE", "SUP_A"),
-			FilePath:  getEnv("SUPPLIER_FILE", "./datasets/mock_supplier_products.json"),
+			Connector:         getEnv("SUPPLIER_CONNECTOR", "file"),
+			Code:              getEnv("SUPPLIER_CODE", "SUP_A"),
+			FilePath:          getEnv("SUPPLIER_FILE", "./datasets/mock_supplier_products.json"),
+			HTTPBaseURL:       strings.TrimSpace(os.Getenv("SUPPLIER_HTTP_BASE_URL")),
+			HTTPSubmitPath:    getEnv("SUPPLIER_HTTP_SUBMIT_PATH", "/purchase-orders"),
+			HTTPFetchPath:     strings.TrimSpace(os.Getenv("SUPPLIER_HTTP_FETCH_PATH")),
+			HTTPToken:         strings.TrimSpace(os.Getenv("SUPPLIER_HTTP_TOKEN")),
+			HTTPAPIKey:        strings.TrimSpace(os.Getenv("SUPPLIER_HTTP_API_KEY")),
+			HTTPTimeout:       getEnvDuration("SUPPLIER_HTTP_TIMEOUT", 15*time.Second),
+			HTTPSkipTLSVerify: getEnvBool("SUPPLIER_HTTP_SKIP_TLS_VERIFY", false),
 		},
 		Image: ImageConfig{
 			Processor:            getEnv("IMAGE_PROCESSOR", "mock"),
@@ -242,6 +256,25 @@ func ValidateRuntime(cfg Config) error {
 			problems = append(problems, "SUPPLIER_FILE is required when SUPPLIER_CONNECTOR=file")
 		} else if _, err := os.Stat(cfg.Supplier.FilePath); err != nil {
 			problems = append(problems, fmt.Sprintf("supplier file not found: %s", cfg.Supplier.FilePath))
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(cfg.Supplier.Connector), "http") {
+		if strings.TrimSpace(cfg.Supplier.HTTPBaseURL) == "" {
+			problems = append(problems, "SUPPLIER_HTTP_BASE_URL is required when SUPPLIER_CONNECTOR=http")
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(cfg.Supplier.Connector), "miniapp_cart_order") {
+		if !strings.EqualFold(strings.TrimSpace(cfg.MiniApp.SourceMode), "raw") {
+			problems = append(problems, "MINIAPP_SOURCE_MODE=raw is required when SUPPLIER_CONNECTOR=miniapp_cart_order")
+		}
+		if strings.TrimSpace(cfg.MiniApp.SourceURL) == "" {
+			problems = append(problems, "MINIAPP_SOURCE_URL is required when SUPPLIER_CONNECTOR=miniapp_cart_order")
+		}
+		if strings.TrimSpace(cfg.MiniApp.RawCustomerID) == "" {
+			problems = append(problems, "MINIAPP_RAW_CUSTOMER_ID is required when SUPPLIER_CONNECTOR=miniapp_cart_order")
+		}
+		if strings.TrimSpace(cfg.MiniApp.RawOpenID) == "" {
+			problems = append(problems, "MINIAPP_RAW_OPEN_ID is required when SUPPLIER_CONNECTOR=miniapp_cart_order")
 		}
 	}
 

@@ -74,6 +74,23 @@ func registerProcurementRoutes(se *core.ServeEvent, cfg config.Config, service *
 		return re.JSON(http.StatusOK, order)
 	})
 
+	se.Router.GET("/api/pim/procurement/actions", func(re *core.RequestEvent) error {
+		if !authorized(re, cfg.Security.APIKey) {
+			return re.UnauthorizedError("missing or invalid api key", nil)
+		}
+
+		orderID := strings.TrimSpace(re.Request.URL.Query().Get("orderId"))
+		actions, err := service.ListProcurementActions(re.App, orderID, readIntQuery(re, "limit", 20))
+		if err != nil {
+			return re.BadRequestError("load procurement actions failed", err)
+		}
+
+		return re.JSON(http.StatusOK, map[string]any{
+			"items": actions,
+			"count": len(actions),
+		})
+	})
+
 	se.Router.POST("/api/pim/procurement/orders", func(re *core.RequestEvent) error {
 		if !authorized(re, cfg.Security.APIKey) {
 			return re.UnauthorizedError("missing or invalid api key", nil)
@@ -128,6 +145,36 @@ func registerProcurementRoutes(se *core.ServeEvent, cfg config.Config, service *
 		order, err := service.ExportProcurementOrder(re.Request.Context(), re.App, id)
 		if err != nil {
 			return re.BadRequestError("export procurement order failed", err)
+		}
+
+		return re.JSON(http.StatusOK, order)
+	})
+
+	se.Router.POST("/api/pim/procurement/order/submit", func(re *core.RequestEvent) error {
+		if !authorized(re, cfg.Security.APIKey) {
+			return re.UnauthorizedError("missing or invalid api key", nil)
+		}
+
+		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
+		if id == "" {
+			return re.BadRequestError("missing procurement order id", nil)
+		}
+
+		update, err := readProcurementStatusUpdateRequest(re)
+		if err != nil {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"message": "invalid procurement submit request",
+				"error":   err.Error(),
+			})
+		}
+
+		order, err := service.SubmitProcurementOrder(re.Request.Context(), re.App, id, update.Note)
+		if err != nil {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"message": "submit procurement order failed",
+				"error":   err.Error(),
+				"id":      id,
+			})
 		}
 
 		return re.JSON(http.StatusOK, order)

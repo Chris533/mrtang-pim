@@ -142,6 +142,32 @@ func (s *Service) Product(ctx context.Context, id string) (*model.ProductPage, e
 	return s.importer.Product(dataset, id), nil
 }
 
+func (s *Service) ResolveProduct(ctx context.Context, spuID string, skuID string) (*model.ProductPage, error) {
+	var resolverErr error
+	if resolver, ok := s.source.(api.ProductResolverSource); ok {
+		product, err := resolver.ResolveProduct(ctx, spuID, skuID)
+		if err == nil && product != nil {
+			return product, nil
+		}
+		resolverErr = err
+	}
+
+	dataset, err := s.Dataset(ctx)
+	if err != nil {
+		if resolverErr != nil {
+			return nil, resolverErr
+		}
+		return nil, err
+	}
+	if product := findProductByIDs(dataset.ProductPage.Products, spuID, skuID); product != nil {
+		return product, nil
+	}
+	if resolverErr != nil {
+		return nil, resolverErr
+	}
+	return nil, nil
+}
+
 func (s *Service) ProductCoverage(ctx context.Context) ([]model.ProductCoverage, error) {
 	dataset, err := s.Dataset(ctx)
 	if err != nil {
@@ -236,6 +262,17 @@ func (s *Service) CartListSummary(ctx context.Context) (model.CartListSummary, e
 	}
 
 	return s.importer.CartListSummary(dataset), nil
+}
+
+func findProductByIDs(products []model.ProductPage, spuID string, skuID string) *model.ProductPage {
+	for _, product := range products {
+		if product.SpuID != spuID || product.SkuID != skuID {
+			continue
+		}
+		cloned := product
+		return &cloned
+	}
+	return nil
 }
 
 func (s *Service) OrderSubmitSummary(ctx context.Context) (model.OrderSubmitSummary, error) {

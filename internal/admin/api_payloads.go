@@ -119,6 +119,18 @@ type SourceProductJobDetailAPIData struct {
 	FlashError   string                     `json:"flashError"`
 }
 
+type SourceLogsAPIData struct {
+	Data         SourceLogsPageData `json:"data"`
+	FlashMessage string             `json:"flashMessage"`
+	FlashError   string             `json:"flashError"`
+}
+
+type AuditAPIData struct {
+	Data         AuditPageData `json:"data"`
+	FlashMessage string        `json:"flashMessage"`
+	FlashError   string        `json:"flashError"`
+}
+
 type ProcurementDetailAPIData struct {
 	Order        pim.ProcurementOrder `json:"order"`
 	ReturnTo     string               `json:"returnTo"`
@@ -301,6 +313,32 @@ func BuildSourceProductJobDetailAPIData(detail pim.SourceProductJobDetail, retur
 	return SourceProductJobDetailAPIData{
 		Detail:       detail,
 		ReturnTo:     strings.TrimSpace(returnTo),
+		FlashMessage: strings.TrimSpace(flashMessage),
+		FlashError:   strings.TrimSpace(flashError),
+	}
+}
+
+func BuildSourceLogsAPIData(data SourceLogsPageData, flashMessage string, flashError string) SourceLogsAPIData {
+	return SourceLogsAPIData{
+		Data:         data,
+		FlashMessage: strings.TrimSpace(flashMessage),
+		FlashError:   strings.TrimSpace(flashError),
+	}
+}
+
+func BuildAuditAPIData(
+	ctx context.Context,
+	app core.App,
+	cfg config.Config,
+	pimService *pim.Service,
+	miniappService *miniappservice.Service,
+	filter AuditFilter,
+	flashMessage string,
+	flashError string,
+) AuditAPIData {
+	pageData := buildMrtangAdminPageData(ctx, app, cfg, pimService, miniappService)
+	return AuditAPIData{
+		Data:         filterAuditActions(pageData.RecentActions, filter),
 		FlashMessage: strings.TrimSpace(flashMessage),
 		FlashError:   strings.TrimSpace(flashError),
 	}

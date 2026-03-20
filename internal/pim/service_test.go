@@ -312,3 +312,35 @@ func TestSupplierRecordVariantPayloadsReusesStoredVariantMapping(t *testing.T) {
 		t.Fatalf("expected stored sku to be reused, got %q", bagVariant.SKU)
 	}
 }
+
+func TestSupplierRecordUnitOptionPrefersRequestedSalesUnit(t *testing.T) {
+	record := core.NewRecord(core.NewBaseCollection("supplier_products"))
+	record.Set("supplier_payload", `{"sales_unit":"件","unit_options":[{"unitName":"件","price":30,"rate":10,"isDefault":true},{"unitName":"袋","price":4,"rate":1,"isDefault":false}]}`)
+
+	option := supplierRecordUnitOption(record, "袋")
+	if option.UnitName != "袋" {
+		t.Fatalf("expected requested unit 袋, got %q", option.UnitName)
+	}
+	if option.Price != 4 {
+		t.Fatalf("expected requested unit price 4, got %v", option.Price)
+	}
+}
+
+func TestSupplierRecordOrderUnitPrefersRequestedSalesUnit(t *testing.T) {
+	record := core.NewRecord(core.NewBaseCollection("supplier_products"))
+	record.Set("order_units_json", `[{"unitId":"unit-default","unitName":"件","rate":10,"isDefault":true},{"unitId":"unit-bag","unitName":"袋","rate":1,"isDefault":false}]`)
+
+	unit := supplierRecordOrderUnit(record, "袋")
+	if unit.UnitID != "unit-bag" {
+		t.Fatalf("expected unit-bag, got %q", unit.UnitID)
+	}
+	if unit.UnitName != "袋" {
+		t.Fatalf("expected 袋, got %q", unit.UnitName)
+	}
+}
+
+func TestIsAllowedProcurementTransitionAllowsDraftToOrdered(t *testing.T) {
+	if !isAllowedProcurementTransition(ProcurementStatusDraft, ProcurementStatusOrdered) {
+		t.Fatal("expected draft -> ordered to be allowed for direct auto submit flow")
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -26,6 +27,20 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		return re.JSON(http.StatusOK, map[string]any{
 			"service": "mrtang-pim",
 			"status":  "ok",
+			"runtime": map[string]any{
+				"appEnv":        strings.TrimSpace(os.Getenv("APP_ENV")),
+				"sourceMode":    strings.TrimSpace(cfg.MiniApp.SourceMode),
+				"sourceURL":     strings.TrimSpace(cfg.MiniApp.SourceURL),
+				"connector":     strings.TrimSpace(cfg.Supplier.Connector),
+				"capabilities":  service.ConnectorCapabilities(),
+				"apiKeyEnabled": strings.TrimSpace(cfg.Security.APIKey) != "",
+				"codeMarkers": map[string]any{
+					"submitOrderProgressLogs": true,
+					"resolveProductHydration": true,
+					"fallbackContextGuard":    true,
+					"healthSchemaVersion":     "2026-03-20.1",
+				},
+			},
 		})
 	})
 
@@ -78,6 +93,38 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 20*time.Second)
 		defer cancel()
 		return re.JSON(http.StatusOK, admin.BuildDashboardMiniappAPIData(loadCtx, re.App, cfg, service, miniappService))
+	})
+
+	se.Router.GET("/api/pim/admin/audit", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "dashboard") {
+			return re.ForbiddenError("当前账号没有后台总览权限。", nil)
+		}
+		return re.JSON(http.StatusOK, admin.BuildAuditAPIData(
+			re.Request.Context(),
+			re.App,
+			cfg,
+			service,
+			miniappService,
+			admin.AuditFilter{
+				Domain:   strings.TrimSpace(re.Request.URL.Query().Get("domain")),
+				Status:   strings.TrimSpace(re.Request.URL.Query().Get("status")),
+				Query:    strings.TrimSpace(re.Request.URL.Query().Get("q")),
+				Page:     readQueryInt(re, "page", 1),
+				PageSize: readQueryInt(re, "pageSize", 20),
+			},
+			strings.TrimSpace(re.Request.URL.Query().Get("message")),
+			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		))
+	})
+
+	se.Router.GET("/api/pim/admin/access", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "dashboard") {
+			return re.ForbiddenError("当前账号没有后台总览权限。", nil)
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"canAccessSource":      authorizedAdminModule(re, cfg, "source"),
+			"canAccessProcurement": authorizedAdminModule(re, cfg, "procurement"),
+		})
 	})
 
 	se.Router.GET("/api/pim/admin/target-sync", func(re *core.RequestEvent) error {
@@ -1075,6 +1122,32 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		})
 	})
 
+	se.Router.POST("/api/pim/admin/procurement/order/submit", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "procurement") {
+			return re.ForbiddenError("当前账号没有采购模块权限。", nil)
+		}
+		id := strings.TrimSpace(re.Request.FormValue("id"))
+		note := strings.TrimSpace(re.Request.FormValue("note"))
+		if id == "" {
+			return re.JSON(http.StatusBadRequest, map[string]any{
+				"ok":      false,
+				"message": "缺少采购单 ID。",
+			})
+		}
+		order, err := service.SubmitProcurementOrderWithAudit(re.Request.Context(), re.App, id, note, procurementActionActor(re))
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "提交采购单失败：" + err.Error(),
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": "采购单已提交到供应商连接器。",
+			"order":   order,
+		})
+	})
+
 	se.Router.POST("/api/pim/admin/procurement/order/status", func(re *core.RequestEvent) error {
 		if !authorizedAdminModule(re, cfg, "procurement") {
 			return re.ForbiddenError("当前账号没有采购模块权限。", nil)
@@ -1360,6 +1433,25 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		))
 	})
 
+	se.Router.GET("/api/pim/admin/source/logs", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		data, err := buildSourceLogsPageData(re)
+		if err != nil {
+			return re.JSON(http.StatusOK, admin.BuildSourceLogsAPIData(
+				admin.SourceLogsPageData{},
+				strings.TrimSpace(re.Request.URL.Query().Get("message")),
+				"加载源数据日志失败："+err.Error(),
+			))
+		}
+		return re.JSON(http.StatusOK, admin.BuildSourceLogsAPIData(
+			data,
+			strings.TrimSpace(re.Request.URL.Query().Get("message")),
+			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		))
+	})
+
 	se.Router.GET("/api/pim/admin/procurement", func(re *core.RequestEvent) error {
 		if !authorizedAdminModule(re, cfg, "procurement") {
 			return re.ForbiddenError("当前账号没有采购模块权限。", nil)
@@ -1524,10 +1616,6 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	})
 
 	se.Router.GET("/_/mrtang-admin", func(re *core.RequestEvent) error {
-		if !authorizedAdminModule(re, cfg, "dashboard") {
-			return re.ForbiddenError("当前账号没有后台总览权限。", nil)
-		}
-
 		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
 			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
 				"总览",
@@ -1552,6 +1640,15 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	})
 
 	se.Router.GET("/_/mrtang-admin/audit", func(re *core.RequestEvent) error {
+		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
+			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+				"审计",
+				"统一审计入口，汇总源数据和采购动作并支持筛选。",
+				"/_/mrtang-admin/audit",
+				authorizedAdminModule(re, cfg, "source"),
+				authorizedAdminModule(re, cfg, "procurement"),
+			))
+		}
 		if !authorizedAdminModule(re, cfg, "dashboard") {
 			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无后台总览权限", "当前账号没有后台总览权限。", "/_/"))
 		}
@@ -1574,18 +1671,17 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	})
 
 	se.Router.GET("/_/mrtang-admin/target-sync", func(re *core.RequestEvent) error {
-		if !authorizedAdminModule(re, cfg, "source") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无抓取入库权限", "当前账号没有抓取入库权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
-
 		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
 			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
 				"抓取入库",
 				"先开页面，再异步拉 summary、矩阵和最近写操作；raw 慢时也只影响局部。",
 				"/_/mrtang-admin/target-sync",
-				true,
+				authorizedAdminModule(re, cfg, "source"),
 				authorizedAdminModule(re, cfg, "procurement"),
 			))
+		}
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无抓取入库权限", "当前账号没有抓取入库权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
 		}
 
 		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 4*time.Second)
@@ -1633,18 +1729,17 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	})
 
 	se.Router.GET("/_/mrtang-admin/source", func(re *core.RequestEvent) error {
-		if !authorizedAdminModule(re, cfg, "source") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
-
 		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
 			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
 				"源数据",
 				"先看 source 模块概览，再分流到商品、图片和日志；数据异步加载，不阻塞整页。",
 				"/_/mrtang-admin/source",
-				true,
+				authorizedAdminModule(re, cfg, "source"),
 				authorizedAdminModule(re, cfg, "procurement"),
 			))
+		}
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
 		}
 
 		summary, err := service.SourceReviewWorkbench(re.Request.Context(), re.App, 6, 6, pim.SourceReviewFilter{PageSize: 6})
@@ -1660,46 +1755,37 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	})
 
 	se.Router.GET("/_/mrtang-admin/source/categories", func(re *core.RequestEvent) error {
-		if !authorizedAdminModule(re, cfg, "source") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
-
 		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
 			"源数据分类",
 			"分类树同步结果和已落库分类列表都在这里查看；页面先开壳，再异步加载。",
 			"/_/mrtang-admin/source/categories",
-			true,
+			authorizedAdminModule(re, cfg, "source"),
 			authorizedAdminModule(re, cfg, "procurement"),
 		))
 	})
 
 	se.Router.GET("/_/mrtang-admin/backend-release", func(re *core.RequestEvent) error {
-		if !authorizedAdminModule(re, cfg, "source") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无发布准备权限", "当前账号没有发布准备权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
-
 		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
 			"发布准备",
 			"先看 Vendure 字段准备度、分类映射和商品 payload 预览，再决定何时正式同步。",
 			"/_/mrtang-admin/backend-release",
-			true,
+			authorizedAdminModule(re, cfg, "source"),
 			authorizedAdminModule(re, cfg, "procurement"),
 		))
 	})
 
 	se.Router.GET("/_/mrtang-admin/source/products", func(re *core.RequestEvent) error {
-		if !authorizedAdminModule(re, cfg, "source") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
-
 		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
 			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
 				"源数据商品",
 				"商品审核、桥接、同步重试改成前端异步列表；现有动作端点继续复用。",
 				"/_/mrtang-admin/source/products",
-				true,
+				authorizedAdminModule(re, cfg, "source"),
 				authorizedAdminModule(re, cfg, "procurement"),
 			))
+		}
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
 		}
 
 		filter := readSourceReviewFilter(re)
@@ -1719,18 +1805,17 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	})
 
 	se.Router.GET("/_/mrtang-admin/source/products/detail", func(re *core.RequestEvent) error {
-		if !authorizedAdminModule(re, cfg, "source") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
-
 		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
 			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
 				"商品详情",
 				"详情页也切到前端异步渲染，动作端点继续复用现有 POST 路由。",
 				"/_/mrtang-admin/source/products/detail",
-				true,
+				authorizedAdminModule(re, cfg, "source"),
 				authorizedAdminModule(re, cfg, "procurement"),
 			))
+		}
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
 		}
 		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
 		if id == "" {
@@ -1753,18 +1838,17 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	})
 
 	se.Router.GET("/_/mrtang-admin/source/assets", func(re *core.RequestEvent) error {
-		if !authorizedAdminModule(re, cfg, "source") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
-
 		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
 			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
 				"源数据图片",
 				"图片状态、失败聚合和批量处理改成前端异步列表；现有动作端点继续复用。",
 				"/_/mrtang-admin/source/assets",
-				true,
+				authorizedAdminModule(re, cfg, "source"),
 				authorizedAdminModule(re, cfg, "procurement"),
 			))
+		}
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
 		}
 
 		filter := readSourceReviewFilter(re)
@@ -1785,18 +1869,17 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	})
 
 	se.Router.GET("/_/mrtang-admin/source/assets/detail", func(re *core.RequestEvent) error {
-		if !authorizedAdminModule(re, cfg, "source") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
-
 		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
 			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
 				"图片详情",
 				"详情页也切到前端异步渲染，动作端点继续复用现有 POST 路由。",
 				"/_/mrtang-admin/source/assets/detail",
-				true,
+				authorizedAdminModule(re, cfg, "source"),
 				authorizedAdminModule(re, cfg, "procurement"),
 			))
+		}
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
 		}
 		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
 		if id == "" {
@@ -1819,60 +1902,55 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	})
 
 	se.Router.GET("/_/mrtang-admin/source/asset-jobs", func(re *core.RequestEvent) error {
-		if !authorizedAdminModule(re, cfg, "source") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
-
 		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
 			"图片任务",
 			"原图下载和图片处理的历史任务、重试入口和最近日志都在这里查看。",
 			"/_/mrtang-admin/source/asset-jobs",
-			true,
+			authorizedAdminModule(re, cfg, "source"),
 			authorizedAdminModule(re, cfg, "procurement"),
 		))
 	})
 
 	se.Router.GET("/_/mrtang-admin/source/asset-jobs/detail", func(re *core.RequestEvent) error {
-		if !authorizedAdminModule(re, cfg, "source") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
-
 		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
 			"图片任务详情",
 			"任务详情页会异步加载任务进度、错误和最近日志。",
 			"/_/mrtang-admin/source/asset-jobs/detail",
-			true,
+			authorizedAdminModule(re, cfg, "source"),
 			authorizedAdminModule(re, cfg, "procurement"),
 		))
 	})
 
 	se.Router.GET("/_/mrtang-admin/source/product-jobs", func(re *core.RequestEvent) error {
-		if !authorizedAdminModule(re, cfg, "source") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
 		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
 			"商品发布任务",
 			"商品发布与重试发布的历史任务、失败项和重跑入口都在这里查看。",
 			"/_/mrtang-admin/source/product-jobs",
-			true,
+			authorizedAdminModule(re, cfg, "source"),
 			authorizedAdminModule(re, cfg, "procurement"),
 		))
 	})
 
 	se.Router.GET("/_/mrtang-admin/source/product-jobs/detail", func(re *core.RequestEvent) error {
-		if !authorizedAdminModule(re, cfg, "source") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
 		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
 			"商品发布任务详情",
 			"任务详情页会异步加载商品发布任务的进度、失败项和最近日志。",
 			"/_/mrtang-admin/source/product-jobs/detail",
-			true,
+			authorizedAdminModule(re, cfg, "source"),
 			authorizedAdminModule(re, cfg, "procurement"),
 		))
 	})
 
 	se.Router.GET("/_/mrtang-admin/source/logs", func(re *core.RequestEvent) error {
+		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
+			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+				"日志",
+				"源数据操作日志统一走前端异步加载，和其他模块保持一致。",
+				"/_/mrtang-admin/source/logs",
+				authorizedAdminModule(re, cfg, "source"),
+				authorizedAdminModule(re, cfg, "procurement"),
+			))
+		}
 		if !authorizedAdminModule(re, cfg, "source") {
 			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
 		}
@@ -2430,18 +2508,17 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	})
 
 	se.Router.GET("/_/mrtang-admin/procurement", func(re *core.RequestEvent) error {
-		if !authorizedAdminModule(re, cfg, "procurement") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无采购模块权限", "当前账号没有采购模块权限，请联系管理员配置 `PIM_PROCUREMENT_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
-
 		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
 			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
 				"采购",
 				"采购列表、风险筛选和最近动作改成前端异步加载；详情页先继续复用现有服务端版本。",
 				"/_/mrtang-admin/procurement",
 				authorizedAdminModule(re, cfg, "source"),
-				true,
+				authorizedAdminModule(re, cfg, "procurement"),
 			))
+		}
+		if !authorizedAdminModule(re, cfg, "procurement") {
+			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无采购模块权限", "当前账号没有采购模块权限，请联系管理员配置 `PIM_PROCUREMENT_ADMIN_EMAILS`。", "/_/mrtang-admin"))
 		}
 
 		summary, err := service.ProcurementWorkbenchSummaryFiltered(
@@ -2461,18 +2538,17 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	})
 
 	se.Router.GET("/_/mrtang-admin/procurement/detail", func(re *core.RequestEvent) error {
-		if !authorizedAdminModule(re, cfg, "procurement") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无采购模块权限", "当前账号没有采购模块权限，请联系管理员配置 `PIM_PROCUREMENT_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
-
 		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
 			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
 				"采购详情",
 				"详情页也切到前端异步渲染，风险商品和原始摘要不再阻塞整页。",
 				"/_/mrtang-admin/procurement/detail",
 				authorizedAdminModule(re, cfg, "source"),
-				true,
+				authorizedAdminModule(re, cfg, "procurement"),
 			))
+		}
+		if !authorizedAdminModule(re, cfg, "procurement") {
+			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无采购模块权限", "当前账号没有采购模块权限，请联系管理员配置 `PIM_PROCUREMENT_ADMIN_EMAILS`。", "/_/mrtang-admin"))
 		}
 		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
 		if id == "" {
@@ -2709,6 +2785,9 @@ func authorizedAdminModule(re *core.RequestEvent, cfg config.Config, module stri
 	if re.Auth == nil {
 		return true
 	}
+	if re.Auth.IsSuperuser() {
+		return true
+	}
 	email := strings.ToLower(strings.TrimSpace(re.Auth.GetString("email")))
 	if email == "" {
 		return true
@@ -2721,7 +2800,9 @@ func authorizedAdminModule(re *core.RequestEvent, cfg config.Config, module stri
 	case "procurement":
 		allowed = cfg.Admin.ProcurementAdmins
 	case "dashboard":
-		allowed = append(append([]string{}, cfg.Admin.SourceAdmins...), cfg.Admin.ProcurementAdmins...)
+		// 总览页作为登录入口，不再强制邮箱白名单。
+		// 具体模块权限（source/procurement）仍由对应白名单控制。
+		return true
 	default:
 		return true
 	}

@@ -18,6 +18,10 @@ type TargetSyncProductSource interface {
 	FetchTargetSyncProductsFromSections(ctx context.Context, sections []model.CategorySection, scopeKey string) (*model.Dataset, error)
 }
 
+type ProductResolverSource interface {
+	ResolveProduct(ctx context.Context, spuID string, skuID string) (*model.ProductPage, error)
+}
+
 type StatusSource interface {
 	RawAuthStatus() model.RawAuthStatus
 }

@@ -1,5 +1,9 @@
 # Miniapp Source API 总览
 
+> 重要：本文件描述的是 `mrtang-pim` 的 source/cart-order 数据适配接口。  
+> 生产小程序（`mrtang-ui`）购物车与下单主链路走 `mrtang-backend` 的 shop-api GraphQL（activeOrder / addItemToOrder / transitionOrderToState / addPaymentToOrder），
+> 不是本文件中的 `/api/miniapp/cart-order/*`。
+
 这份文档只回答四个问题：
 
 1. 源站原始 API 是什么

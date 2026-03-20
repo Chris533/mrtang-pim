@@ -256,6 +256,37 @@ func (s *RawSource) FetchTargetSyncProductsFromSections(ctx context.Context, sec
 	return &dataset, nil
 }
 
+func (s *RawSource) ResolveProduct(ctx context.Context, spuID string, skuID string) (*model.ProductPage, error) {
+	if err := s.ensureWarmup(ctx, false); err != nil {
+		return nil, err
+	}
+
+	product := model.ProductPage{
+		ID:         strings.TrimSpace(spuID) + "_" + strings.TrimSpace(skuID),
+		SpuID:      strings.TrimSpace(spuID),
+		SkuID:      strings.TrimSpace(skuID),
+		SourceType: "raw_detail",
+		Summary: model.HomepageProduct{
+			ProductID: strings.TrimSpace(spuID) + "_" + strings.TrimSpace(skuID),
+			SpuID:     strings.TrimSpace(spuID),
+			SkuID:     strings.TrimSpace(skuID),
+		},
+	}
+
+	info, err := s.fetchProductInfo(ctx, product.SpuID, product.SkuID)
+	if err != nil {
+		return nil, fmt.Errorf("fetch raw product info %s/%s: %w", product.SpuID, product.SkuID, err)
+	}
+	priceList, _ := s.fetchProductPriceList(ctx, product.SpuID, product.SkuID, info.UnitID)
+	packageData, _ := s.fetchProductPackage(ctx, product.SpuID, product.SkuID)
+	cartSummary, _ := s.fetchCartTotal(ctx)
+	chooseData, _ := s.fetchCartChoose(ctx, product.SkuID)
+	addCartSummary, _ := s.fetchAddCartTotal(ctx, product.SpuID)
+
+	resolved := mergeRawProductDetail(product, info, priceList, packageData, cartSummary, chooseData, addCartSummary)
+	return &resolved, nil
+}
+
 func (s *RawSource) fetchRawCartOrder(ctx context.Context, fallback model.CartOrderAggregate) (model.CartOrderAggregate, error) {
 	result := fallback
 
@@ -372,7 +403,7 @@ func (s *RawSource) fetchRawCartOrder(ctx context.Context, fallback model.CartOr
 }
 
 func (s *RawSource) ExecuteCartOperation(ctx context.Context, id string, requestBody any) (*model.OperationSnapshot, error) {
-	fallback, err := s.fallback.FetchDataset(ctx)
+	fallback, err := s.fallback.FetchDataset(context.WithoutCancel(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("load fallback cart dataset: %w", err)
 	}
@@ -428,7 +459,7 @@ func (s *RawSource) ExecuteCartOperation(ctx context.Context, id string, request
 }
 
 func (s *RawSource) ExecuteOrderOperation(ctx context.Context, id string, requestBody any) (*model.OperationSnapshot, error) {
-	fallback, err := s.fallback.FetchDataset(ctx)
+	fallback, err := s.fallback.FetchDataset(context.WithoutCancel(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("load fallback order dataset: %w", err)
 	}
@@ -484,7 +515,7 @@ func (s *RawSource) ExecuteOrderOperation(ctx context.Context, id string, reques
 }
 
 func (s *RawSource) ExecuteFreightScenario(ctx context.Context, scenario string, requestBody any) (*model.ScenarioAction, error) {
-	fallback, err := s.fallback.FetchDataset(ctx)
+	fallback, err := s.fallback.FetchDataset(context.WithoutCancel(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("load fallback freight dataset: %w", err)
 	}

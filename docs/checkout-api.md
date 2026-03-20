@@ -1,5 +1,8 @@
 # Checkout API
 
+> 说明：本文件是 `mrtang-pim` 的 checkout 契约/样本适配接口说明。  
+> 小程序线上真实购物车与下单主链路走 `mrtang-backend` 的 shop-api GraphQL。
+
 这份文档只描述结算页应直接依赖的本地接口，不重复讲源站抓包映射。
 
 目标：

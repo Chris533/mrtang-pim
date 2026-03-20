@@ -18,7 +18,17 @@ import (
 )
 
 func main() {
-	_ = godotenv.Load()
+	// Load environment variables from potential locations (only in non-production by default)
+	appEnv := strings.ToLower(os.Getenv("APP_ENV"))
+	if appEnv != "prod" && appEnv != "production" {
+		_ = godotenv.Overload()                  // Try local .env
+		_ = godotenv.Overload("mrtang-pim/.env") // Fallback for root-level execution
+	}
+
+	// Always allow explicit override via PIM_ENV_FILE if provided
+	if envPath := os.Getenv("PIM_ENV_FILE"); envPath != "" {
+		_ = godotenv.Overload(envPath)
+	}
 
 	cfg := config.Load()
 	if err := config.ValidateRuntime(cfg); err != nil {

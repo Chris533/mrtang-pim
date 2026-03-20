@@ -46,7 +46,10 @@ function withExportedKeys(value) {
 }
 
 async function fetchJSON(url) {
-  const response = await fetch(url, { headers: { Accept: "application/json" }, credentials: "same-origin" });
+  const response = await fetch(url, {
+    headers: buildAuthHeaders({ Accept: "application/json" }),
+    credentials: "same-origin",
+  });
   if (!response.ok) throw new Error((await response.text()) || `HTTP ${response.status}`);
   return withExportedKeys(await response.json());
 }
@@ -59,10 +62,10 @@ async function postForm(url, values) {
   });
   const response = await fetch(url, {
     method: "POST",
-    headers: {
+    headers: buildAuthHeaders({
       Accept: "application/json",
       "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-    },
+    }),
     credentials: "same-origin",
     body,
   });
@@ -80,6 +83,27 @@ async function postForm(url, values) {
     throw error;
   }
   return withExportedKeys(data || {});
+}
+
+function readPocketBaseAuthToken() {
+  try {
+    const raw = window.localStorage.getItem("__pb_superuser_auth__");
+    if (!raw) return "";
+    const parsed = JSON.parse(raw);
+    const token = typeof parsed?.token === "string" ? parsed.token.trim() : "";
+    return token;
+  } catch {
+    return "";
+  }
+}
+
+function buildAuthHeaders(baseHeaders) {
+  const headers = { ...(baseHeaders || {}) };
+  const token = readPocketBaseAuthToken();
+  if (token) {
+    headers.Authorization = token;
+  }
+  return headers;
 }
 
 function useResource(url, deps = []) {
@@ -411,18 +435,27 @@ function MetricCard({ eyebrow, value, detail }) {
   return html`<div class="metric-card"><div class="metric-kicker">${eyebrow}</div><div class="metric-value">${value}</div>${detail ? html`<div class="small" style="margin-top:8px;">${detail}</div>` : null}</div>`;
 }
 
-function AppLayout({ title, subtitle, currentPath, children }) {
+function AppLayout({ title, subtitle, currentPath, canAccessSource, canAccessProcurement, children }) {
+  const showSourceNav =
+    !!canAccessSource ||
+    currentPath.startsWith("/_/mrtang-admin/source") ||
+    currentPath.startsWith("/_/mrtang-admin/target-sync") ||
+    currentPath.startsWith("/_/mrtang-admin/backend-release");
+  const showProcurementNav =
+    !!canAccessProcurement ||
+    currentPath.startsWith("/_/mrtang-admin/procurement");
+
   const navItems = [
     { href: "/_/mrtang-admin", label: "总览", visible: true },
-    { href: "/_/mrtang-admin/target-sync", label: "抓取入库", visible: !!boot.canAccessSource },
-    { href: "/_/mrtang-admin/source", label: "源数据", visible: !!boot.canAccessSource },
-    { href: "/_/mrtang-admin/backend-release", label: "发布准备", visible: !!boot.canAccessSource },
-    { href: "/_/mrtang-admin/procurement", label: "采购", visible: !!boot.canAccessProcurement },
+    { href: "/_/mrtang-admin/target-sync", label: "抓取入库", visible: showSourceNav },
+    { href: "/_/mrtang-admin/source", label: "源数据", visible: showSourceNav },
+    { href: "/_/mrtang-admin/backend-release", label: "发布准备", visible: showSourceNav },
+    { href: "/_/mrtang-admin/procurement", label: "采购", visible: showProcurementNav },
     { href: "/_/mrtang-admin/audit", label: "审计", visible: true },
   ].filter((item) => item.visible);
   const topLinks = [
     ...navItems,
-    ...(boot.canAccessSource ? [
+    ...(showSourceNav ? [
       { href: "/_/mrtang-admin/source/categories", label: "分类" },
       { href: "/_/mrtang-admin/source/products", label: "商品" },
       { href: "/_/mrtang-admin/source/product-jobs", label: "发布任务" },
@@ -1360,7 +1393,9 @@ function TargetSyncPage() {
 }
 
 function routePath(pathname) {
+  if ((pathname || "").startsWith("/_/mrtang-admin/audit")) return "audit";
   if ((pathname || "").startsWith("/_/mrtang-admin/backend-release")) return "backend-release";
+  if ((pathname || "").startsWith("/_/mrtang-admin/source/logs")) return "source-logs";
   if ((pathname || "").startsWith("/_/mrtang-admin/source/categories")) return "source-categories";
   if ((pathname || "").startsWith("/_/mrtang-admin/source/products/detail")) return "source-product-detail";
   if ((pathname || "").startsWith("/_/mrtang-admin/source/product-jobs/detail")) return "source-product-job-detail";
@@ -1388,6 +1423,8 @@ function routePath(pathname) {
   if (pathname === "/_/mrtang-admin/procurement/detail") return "procurement-detail";
   if (pathname === "/_/mrtang-admin/target-sync") return "target-sync";
   if (pathname === "/_/mrtang-admin/backend-release") return "backend-release";
+  if (pathname === "/_/mrtang-admin/source/logs") return "source-logs";
+  if (pathname === "/_/mrtang-admin/audit") return "audit";
   return "dashboard";
 }
 
@@ -2884,6 +2921,7 @@ function ProcurementPage() {
                   <input type="text" value=${notes[item.ID || ""] || ""} onInput=${(event) => setOrderNote(item.ID || "", event.currentTarget.value)} placeholder="操作备注" />
                   <button class="btn secondary" type="button" disabled=${actionState.busy === `review:${item.ID || ""}`} onClick=${() => procurementAction("/api/pim/admin/procurement/order/review", { id: item.ID || "", note: notes[item.ID || ""] || "" }, "确认复核这张采购单吗？", `review:${item.ID || ""}`, "采购单已复核。")}>${actionState.busy === `review:${item.ID || ""}` ? "处理中..." : "复核"}</button>
                   <button class="btn secondary" type="button" disabled=${actionState.busy === `export:${item.ID || ""}`} onClick=${() => procurementAction("/api/pim/admin/procurement/order/export", { id: item.ID || "", note: notes[item.ID || ""] || "" }, "确认导出这张采购单的 CSV 吗？", `export:${item.ID || ""}`, "采购单已导出。")}>${actionState.busy === `export:${item.ID || ""}` ? "处理中..." : "导出"}</button>
+                  <button class="btn secondary" type="button" disabled=${actionState.busy === `submit:${item.ID || ""}`} onClick=${() => procurementAction("/api/pim/admin/procurement/order/submit", { id: item.ID || "", note: notes[item.ID || ""] || "" }, "确认提交到供应商连接器吗？", `submit:${item.ID || ""}`, "采购单已提交。")}>${actionState.busy === `submit:${item.ID || ""}` ? "处理中..." : "提交"}</button>
                 </div>
               </td>
             </tr>
@@ -3129,6 +3167,7 @@ function ProcurementDetailPage() {
           <button class="btn secondary" type="button" disabled=${actionState.busy === "review"} onClick=${() => procurementDetailAction("/api/pim/admin/procurement/order/review", { id: order.ID || "", note: reviewNote }, "确认复核这张采购单吗？", "review", "采购单已复核。")}>${actionState.busy === "review" ? "处理中..." : "复核"}</button>
           <input type="text" value=${exportNote} onInput=${(event) => setExportNote(event.currentTarget.value)} placeholder="导出备注" />
           <button class="btn secondary" type="button" disabled=${actionState.busy === "export"} onClick=${() => procurementDetailAction("/api/pim/admin/procurement/order/export", { id: order.ID || "", note: exportNote }, "确认导出这张采购单吗？", "export", "采购单已导出。")}>${actionState.busy === "export" ? "处理中..." : "导出"}</button>
+          <button class="btn secondary" type="button" disabled=${actionState.busy === "submit"} onClick=${() => procurementDetailAction("/api/pim/admin/procurement/order/submit", { id: order.ID || "", note: exportNote }, "确认提交到供应商连接器吗？", "submit", "采购单已提交。")}>${actionState.busy === "submit" ? "处理中..." : "提交"}</button>
         </div>
       </div></section>
       <section class="card"><div class="card-body">
@@ -3147,12 +3186,107 @@ function ProcurementDetailPage() {
   `;
 }
 
+function SourceLogsPage() {
+  const query = new URLSearchParams(window.location.search);
+  const resource = useResource(buildURL("/api/pim/admin/source/logs", {
+    actionType: query.get("actionType") || "",
+    status: query.get("status") || "",
+    targetType: query.get("targetType") || "",
+    actor: query.get("actor") || "",
+    q: query.get("q") || "",
+    page: query.get("page") || "",
+    pageSize: query.get("pageSize") || "",
+  }));
+  if (resource.loading) return html`<${LoadingSection} label="源数据日志" />`;
+  if (resource.error) return html`<${ErrorSection} error=${resource.error} />`;
+  const payload = resource.data || {};
+  const data = payload.data || {};
+  const items = data.Items || data.items || [];
+  return html`
+    <section class="section card"><div class="card-body">
+      <div class="card-kicker">源数据日志</div>
+      <h2 class="card-title">操作追踪</h2>
+      ${(payload.flashError) ? html`<div class="flash error">${payload.flashError}</div>` : null}
+      ${(payload.flashMessage) ? html`<div class="flash ok">${payload.flashMessage}</div>` : null}
+      <div class="inline-pills">
+        <span class="pill">总数 <code>${data.Total || data.total || 0}</code></span>
+        <span class="pill">成功 <code>${data.SuccessCount || data.successCount || 0}</code></span>
+        <span class="pill">失败 <code>${data.FailedCount || data.failedCount || 0}</code></span>
+        <span class="pill">分页 <code>${data.Page || data.page || 1}/${data.Pages || data.pages || 1}</code></span>
+      </div>
+    </div></section>
+    <section class="section table-card"><div class="table-card"><table>
+      <thead><tr><th>动作</th><th>目标</th><th>状态</th><th>操作人</th><th>说明</th><th>时间</th></tr></thead>
+      <tbody>
+        ${items.length ? items.map((item) => html`<tr>
+          <td>${item.ActionType || item.actionType || "-"}</td>
+          <td>${item.TargetType || item.targetType || "-"} / ${item.TargetLabel || item.targetLabel || "-"}</td>
+          <td><${StatusBadge} label=${item.Status || item.status || "-"} currentTone=${tone(item.Status || item.status || "")} /></td>
+          <td>${item.ActorName || item.actorName || item.ActorEmail || item.actorEmail || "系统"}</td>
+          <td class="small">${item.Message || item.message || "-"}${(item.Note || item.note) ? ` / 备注: ${item.Note || item.note}` : ""}</td>
+          <td class="small">${item.Created || item.created || "-"}</td>
+        </tr>`) : html`<tr><td colspan="6" class="small">暂无日志记录</td></tr>`}
+      </tbody>
+    </table></div></section>
+  `;
+}
+
+function AuditPage() {
+  const query = new URLSearchParams(window.location.search);
+  const resource = useResource(buildURL("/api/pim/admin/audit", {
+    domain: query.get("domain") || "",
+    status: query.get("status") || "",
+    q: query.get("q") || "",
+    page: query.get("page") || "",
+    pageSize: query.get("pageSize") || "",
+  }));
+  if (resource.loading) return html`<${LoadingSection} label="审计" />`;
+  if (resource.error) return html`<${ErrorSection} error=${resource.error} />`;
+  const payload = resource.data || {};
+  const data = payload.data || {};
+  const items = data.Items || data.items || [];
+  return html`
+    <section class="section card"><div class="card-body">
+      <div class="card-kicker">统一审计</div>
+      <h2 class="card-title">源数据与采购动作</h2>
+      ${(payload.flashError) ? html`<div class="flash error">${payload.flashError}</div>` : null}
+      ${(payload.flashMessage) ? html`<div class="flash ok">${payload.flashMessage}</div>` : null}
+      <div class="inline-pills">
+        <span class="pill">总数 <code>${data.Total || data.total || 0}</code></span>
+        <span class="pill">成功 <code>${data.SuccessCount || data.successCount || 0}</code></span>
+        <span class="pill">失败 <code>${data.FailedCount || data.failedCount || 0}</code></span>
+      </div>
+    </div></section>
+    <section class="section table-card"><div class="table-card"><table>
+      <thead><tr><th>模块</th><th>动作</th><th>目标</th><th>状态</th><th>操作人</th><th>说明</th><th>时间</th></tr></thead>
+      <tbody>
+        ${items.length ? items.map((item) => html`<tr>
+          <td>${item.Domain || item.domain || "-"}</td>
+          <td>${item.Label || item.label || "-"}</td>
+          <td>${item.Target || item.target || "-"}</td>
+          <td><${StatusBadge} label=${item.Status || item.status || "-"} currentTone=${tone(item.Status || item.status || "")} /></td>
+          <td>${item.Actor || item.actor || "系统"}</td>
+          <td class="small">${item.Message || item.message || "-"}${(item.Note || item.note) ? ` / 备注: ${item.Note || item.note}` : ""}</td>
+          <td class="small">${item.Created || item.created || "-"}</td>
+        </tr>`) : html`<tr><td colspan="7" class="small">暂无审计记录</td></tr>`}
+      </tbody>
+    </table></div></section>
+  `;
+}
+
 function App() {
   const currentPath = window.location.pathname;
   const currentRoute = routePath(currentPath);
+  const accessResource = useResource("/api/pim/admin/access");
+  const canAccessSource = accessResource.data && typeof accessResource.data.canAccessSource === "boolean"
+    ? accessResource.data.canAccessSource
+    : !!boot.canAccessSource;
+  const canAccessProcurement = accessResource.data && typeof accessResource.data.canAccessProcurement === "boolean"
+    ? accessResource.data.canAccessProcurement
+    : !!boot.canAccessProcurement;
   return html`
     <${AppLayout}
-      title=${currentRoute === "backend-release" ? "发布准备" : currentRoute === "target-sync" ? "抓取入库" : currentRoute === "source" ? "源数据" : currentRoute === "source-categories" ? "源数据分类" : currentRoute === "source-products" ? "源数据商品" : currentRoute === "source-product-detail" ? "商品详情" : currentRoute === "source-product-jobs" ? "商品发布任务" : currentRoute === "source-product-job-detail" ? "商品发布任务详情" : currentRoute === "source-assets" ? "源数据图片" : currentRoute === "source-asset-detail" ? "图片详情" : currentRoute === "source-asset-jobs" ? "图片任务" : currentRoute === "source-asset-job-detail" ? "图片任务详情" : currentRoute === "procurement" ? "采购" : currentRoute === "procurement-detail" ? "采购详情" : "总览"}
+      title=${currentRoute === "backend-release" ? "发布准备" : currentRoute === "target-sync" ? "抓取入库" : currentRoute === "source" ? "源数据" : currentRoute === "source-categories" ? "源数据分类" : currentRoute === "source-products" ? "源数据商品" : currentRoute === "source-product-detail" ? "商品详情" : currentRoute === "source-product-jobs" ? "商品发布任务" : currentRoute === "source-product-job-detail" ? "商品发布任务详情" : currentRoute === "source-assets" ? "源数据图片" : currentRoute === "source-asset-detail" ? "图片详情" : currentRoute === "source-asset-jobs" ? "图片任务" : currentRoute === "source-asset-job-detail" ? "图片任务详情" : currentRoute === "source-logs" ? "日志" : currentRoute === "procurement" ? "采购" : currentRoute === "procurement-detail" ? "采购详情" : currentRoute === "audit" ? "审计" : "总览"}
       subtitle=${currentRoute === "target-sync"
         ? "先开页面，再异步拉抓取摘要、来源矩阵和最近写操作；“当前源站结果”只代表本次实际读到的数据。"
         : currentRoute === "backend-release"
@@ -3181,8 +3315,14 @@ function App() {
                   ? "采购列表、风险筛选和最近动作改成前端异步加载；详情页也已接入同一前端壳子。"
                   : currentRoute === "procurement-detail"
                     ? "详情页也切到前端异步渲染，风险商品和原始摘要不再阻塞整页。"
+                    : currentRoute === "source-logs"
+                      ? "源数据日志已切换到统一前端壳子，样式与模块结构保持一致。"
+                      : currentRoute === "audit"
+                        ? "统一审计页面已切换到前端异步渲染，和其他模块一致。"
               : "后台首页先秒开壳子，再异步拉 coverage、source capture 和最近动作。"}
       currentPath=${currentPath}
+      canAccessSource=${canAccessSource}
+      canAccessProcurement=${canAccessProcurement}
     >
       ${currentRoute === "target-sync"
         ? html`<${TargetSyncPage} />`
@@ -3208,10 +3348,14 @@ function App() {
           ? html`<${SourceAssetJobsPage} />`
         : currentRoute === "source-asset-job-detail"
           ? html`<${SourceAssetJobDetailPage} />`
+        : currentRoute === "source-logs"
+          ? html`<${SourceLogsPage} />`
         : currentRoute === "procurement"
           ? html`<${ProcurementPage} />`
         : currentRoute === "procurement-detail"
           ? html`<${ProcurementDetailPage} />`
+        : currentRoute === "audit"
+          ? html`<${AuditPage} />`
         : html`<${DashboardPage} />`}
     </${AppLayout}>
   `;

@@ -141,6 +141,14 @@ func (s *SnapshotSource) FetchTargetSyncProductsFromSections(ctx context.Context
 	return &copied, nil
 }
 
+func (s *SnapshotSource) ResolveProduct(ctx context.Context, spuID string, skuID string) (*model.ProductPage, error) {
+	dataset, err := s.FetchDataset(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return findDatasetProduct(dataset, spuID, skuID), nil
+}
+
 func buildSnapshotProductSkeleton(product model.HomepageProduct, section model.CategorySection) model.ProductPage {
 	return model.ProductPage{
 		ID:                    strings.TrimSpace(product.ProductID),
@@ -155,6 +163,25 @@ func buildSnapshotProductSkeleton(product model.HomepageProduct, section model.C
 		ObservedCategoryPaths: []string{section.CategoryPath},
 		Summary:               product,
 	}
+}
+
+func findDatasetProduct(dataset *model.Dataset, spuID string, skuID string) *model.ProductPage {
+	if dataset == nil {
+		return nil
+	}
+	spuID = strings.TrimSpace(spuID)
+	skuID = strings.TrimSpace(skuID)
+	if spuID == "" || skuID == "" {
+		return nil
+	}
+	for _, product := range dataset.ProductPage.Products {
+		if strings.TrimSpace(product.SpuID) != spuID || strings.TrimSpace(product.SkuID) != skuID {
+			continue
+		}
+		cloned := product
+		return &cloned
+	}
+	return nil
 }
 
 func (s *SnapshotSource) loadHomepageSnapshot() (model.Dataset, error) {

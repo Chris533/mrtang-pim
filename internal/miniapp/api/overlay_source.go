@@ -70,6 +70,38 @@ func (s *OverlaySource) FetchTargetSyncDataset(ctx context.Context, entityType s
 	return s.FetchDataset(ctx)
 }
 
+func (s *OverlaySource) ResolveProduct(ctx context.Context, spuID string, skuID string) (*model.ProductPage, error) {
+	if productSource, ok := s.base.(ProductResolverSource); ok {
+		return productSource.ResolveProduct(ctx, spuID, skuID)
+	}
+	dataset, err := s.FetchDataset(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return findDatasetProduct(dataset, spuID, skuID), nil
+}
+
+func (s *OverlaySource) ExecuteCartOperation(ctx context.Context, id string, requestBody any) (*model.OperationSnapshot, error) {
+	if actionSource, ok := s.base.(ActionSource); ok {
+		return actionSource.ExecuteCartOperation(ctx, id, requestBody)
+	}
+	return nil, nil
+}
+
+func (s *OverlaySource) ExecuteOrderOperation(ctx context.Context, id string, requestBody any) (*model.OperationSnapshot, error) {
+	if actionSource, ok := s.base.(ActionSource); ok {
+		return actionSource.ExecuteOrderOperation(ctx, id, requestBody)
+	}
+	return nil, nil
+}
+
+func (s *OverlaySource) ExecuteFreightScenario(ctx context.Context, scenario string, requestBody any) (*model.ScenarioAction, error) {
+	if actionSource, ok := s.base.(ActionSource); ok {
+		return actionSource.ExecuteFreightScenario(ctx, scenario, requestBody)
+	}
+	return nil, nil
+}
+
 func normalizeCartOrderFlow(dataset *model.Dataset) {
 	if dataset == nil {
 		return

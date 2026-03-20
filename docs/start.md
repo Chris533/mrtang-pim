@@ -141,6 +141,10 @@ Miniapp 模块已经拆成明确分层：
 - `MINIAPP_USER_AGENT`
 - `SUPPLIER_CONNECTOR=file`
 - `SUPPLIER_FILE=./datasets/mock_supplier_products.json`
+- `SUPPLIER_HTTP_BASE_URL`
+- `SUPPLIER_HTTP_SUBMIT_PATH=/purchase-orders`
+- `SUPPLIER_HTTP_TOKEN`
+- `SUPPLIER_HTTP_API_KEY`
 - `IMAGE_PROCESSOR=mock|webhook`
 - `VENDURE_ADMIN_API`
 - `VENDURE_ADMIN_TOKEN`
@@ -178,6 +182,12 @@ go run ./cmd/pim serve
 - Source Review Workbench: `http://127.0.0.1:26228/_/source-review-workbench`（兼容保留）
 - Procurement Workbench: `http://127.0.0.1:26228/_/procurement-workbench`（兼容保留）
 - Health: `http://127.0.0.1:26228/api/pim/healthz`
+
+生产环境访问策略：
+
+- 默认仅允许 PocketBase 超级管理员登录后访问 `/_/mrtang-admin/*`
+- 默认关闭 localhost 绕过（`ADMIN_ALLOW_LOOPBACK_BYPASS=false`）
+- 本地开发可保留绕过（`ADMIN_ALLOW_LOOPBACK_BYPASS=true`）
 
 ## Source Workbench 状态流
 
@@ -273,4 +283,18 @@ Miniapp：
 
 1. `internal/miniapp/repository` 的真实入库实现
 2. 真实上游 miniapp source 返回结果到本地数据库的同步任务
+
+## 说明：cart-order 与采购自动下单是两条链路
+
+- `cart-order`（小程序购物车到提交订单）已经实现，接口与样本见：
+  - `docs/source-api.md` 中 `购物车与下单链路`
+  - `docs/rr/cart-order/README.md`
+- 但 `mrtang-ui` 线上真实下单主链路是：`mrtang-ui -> mrtang-backend shop-api(GraphQL)`。
+- 履约链路是：`backend 订单 -> (可选) PIM 采购单 -> (可选) 供应商下单`。
+- 其中第二段是否执行由开关决定：全局开关 + 用户开关。
+- 排查顺序建议：
+  1. 先确认 `mrtang-ui -> backend` 下单成功（订单已生成）。
+  2. 再确认 backend 订单是否生成 `pimProcurementOrderId`。
+  3. 然后确认 PIM 采购单状态与 `results_json`。
+  4. 最后确认供应商侧是否落单（按 `externalRef=backend order code` 对账）。
 
