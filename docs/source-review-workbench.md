@@ -19,6 +19,7 @@
 - 新后台默认使用模块化入口
 - `/_/source-review-workbench` 现在是兼容保留的统一工作台
 - 推荐优先从 `/_/mrtang-admin/source` 进入
+- 兼容入口矩阵见 [admin-legacy-compat-matrix.md](./admin-legacy-compat-matrix.md)
 
 ## 作用边界
 

@@ -182,6 +182,98 @@ function syncStatusLabel(status) {
   return status || "-";
 }
 
+function formatDateTime(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "-";
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return raw;
+  return parsed.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
+function pickField(record, ...keys) {
+  if (!record) return "";
+  for (const key of keys) {
+    const value = record[key];
+    if (value !== undefined && value !== null && value !== "") {
+      return value;
+    }
+  }
+  return "";
+}
+
+function numberValue(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function procurementSummaryData(order) {
+  return pickField(order, "summary", "Summary") || {};
+}
+
+function procurementSuppliers(order) {
+  const summary = procurementSummaryData(order);
+  return summary.suppliers || summary.Suppliers || [];
+}
+
+function procurementItems(order) {
+  const items = [];
+  procurementSuppliers(order).forEach((supplier) => {
+    const supplierCode = pickField(supplier, "supplierCode", "SupplierCode") || "-";
+    const supplierItems = pickField(supplier, "items", "Items") || [];
+    supplierItems.forEach((item) => {
+      items.push({ ...item, __supplierCode: supplierCode });
+    });
+  });
+  return items.sort((left, right) => {
+    const riskWeight = (value) => {
+      const normalized = String(value || "").toLowerCase();
+      if (normalized === "loss") return 3;
+      if (normalized === "warning") return 2;
+      return 1;
+    };
+    const byRisk = riskWeight(pickField(right, "riskLevel", "RiskLevel")) - riskWeight(pickField(left, "riskLevel", "RiskLevel"));
+    if (byRisk !== 0) return byRisk;
+    return String(pickField(left, "title", "Title") || "").localeCompare(String(pickField(right, "title", "Title") || ""), "zh-CN");
+  });
+}
+
+function procurementResults(order) {
+  return pickField(order, "results", "Results") || [];
+}
+
+function procurementTimeEntries(order) {
+  return [
+    { label: "下单", value: pickField(order, "orderedAt", "OrderedAt") },
+    { label: "导出", value: pickField(order, "exportedAt", "ExportedAt") },
+    { label: "复核", value: pickField(order, "reviewedAt", "ReviewedAt") },
+    { label: "收货", value: pickField(order, "receivedAt", "ReceivedAt") },
+    { label: "取消", value: pickField(order, "canceledAt", "CanceledAt") },
+  ];
+}
+
+function procurementPrimaryTime(order) {
+  return procurementTimeEntries(order).find((item) => String(item.value || "").trim()) || { label: "时间", value: "" };
+}
+
+function procurementSortValue(order) {
+  const primary = procurementPrimaryTime(order);
+  return String(primary.value || "").trim();
+}
+
+function compareProcurementOrders(left, right) {
+  const byPrimaryTime = procurementSortValue(right).localeCompare(procurementSortValue(left));
+  if (byPrimaryTime !== 0) return byPrimaryTime;
+  return String(pickField(right, "id", "ID") || "").localeCompare(String(pickField(left, "id", "ID") || ""));
+}
+
 function targetSyncRunFailedBranches(run) {
   const details = (run && run.Details) || [];
   const entityType = String((run && (run.EntityType || run.entityType)) || "").toLowerCase();
@@ -431,6 +523,61 @@ function StatusBadge({ label, currentTone }) {
   return html`<span class=${`status-badge ${currentTone}`}>${label}</span>`;
 }
 
+function categoryWarningStatusLabel(status) {
+  const normalized = (status || "").toLowerCase();
+  if (normalized === "skipped") return "已跳过";
+  if (normalized === "fallback") return "已回退";
+  return status || "异常";
+}
+
+function categoryWarningTone(status) {
+  return (status || "").toLowerCase() === "skipped" ? "danger" : "warning";
+}
+
+function categoryWarningRunBusyKey(item) {
+  return `run:category_sources:${(item && item.Key) || ""}`;
+}
+
+function categoryWarningCategoryHref(item) {
+  return buildURL("/_/mrtang-admin/source/categories", { q: (item && item.Key) || "" });
+}
+
+function categoryWarningProductsHref(item) {
+  return buildURL("/_/mrtang-admin/source/products", { categoryKeys: (item && item.Key) || "" });
+}
+
+function CategoryWarningList({ items, compact = false, onRunSourceSync, actionBusy = "" }) {
+  const list = Array.isArray(items) ? items.filter(Boolean) : [];
+  if (!list.length) return null;
+  const visibleItems = list.slice(0, compact ? 4 : 8);
+  const remaining = list.length - visibleItems.length;
+  return html`
+    <div style="margin-top:12px; display:grid; gap:10px;">
+      ${visibleItems.map((item) => html`
+        <div style="border:1px solid rgba(255,255,255,.1); border-radius:14px; padding:12px 14px; background:rgba(7,18,31,.45);">
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <${StatusBadge} label=${categoryWarningStatusLabel(item.Status)} currentTone=${categoryWarningTone(item.Status)} />
+            <strong>${item.Label || item.Key || "-"}</strong>
+            ${item.Key ? html`<span class="small"><code>${item.Key}</code></span>` : null}
+          </div>
+          ${item.Note ? html`<div class="small" style="margin-top:8px;">${item.Note}</div>` : null}
+          <div class="action-row" style="margin-top:10px;">
+            ${onRunSourceSync && item.Key ? html`<button
+              class="btn secondary"
+              type="button"
+              disabled=${actionBusy === categoryWarningRunBusyKey(item)}
+              onClick=${() => onRunSourceSync(item)}
+            >${actionBusy === categoryWarningRunBusyKey(item) ? "启动中..." : "重刷该分类来源"}</button>` : null}
+            <a class="btn secondary" href=${categoryWarningCategoryHref(item)}>查看分类落库</a>
+            <a class="btn secondary" href=${categoryWarningProductsHref(item)}>查看该分类商品</a>
+          </div>
+        </div>
+      `)}
+      ${remaining > 0 ? html`<div class="small">其余 ${remaining} 个分类已省略，可到抓取入库页查看完整提示。</div>` : null}
+    </div>
+  `;
+}
+
 function MetricCard({ eyebrow, value, detail }) {
   return html`<div class="metric-card"><div class="metric-kicker">${eyebrow}</div><div class="metric-value">${value}</div>${detail ? html`<div class="small" style="margin-top:8px;">${detail}</div>` : null}</div>`;
 }
@@ -600,6 +747,12 @@ function DashboardPage() {
           <div><strong>${miniappErrorInfo.title}</strong></div>
           <div class="small" style="margin-top:8px;">${miniappErrorInfo.detail}</div>
           <div class="small" style="margin-top:8px;"><code>${miniappErrorInfo.raw || miniappError}</code></div>
+        </div>` : null}
+        ${miniapp.CategoryWarningSummary ? html`<div class="flash warning" style="margin-top:14px;">
+          <div><strong>分类抓取存在缺口</strong></div>
+          <div class="small" style="margin-top:8px;">${miniapp.CategoryWarningSummary}</div>
+          <div class="small" style="margin-top:8px;">跳过 ${miniapp.CategorySkippedCount || 0} 个分类，回退 ${miniapp.CategoryFallbackCount || 0} 个分类。</div>
+          <${CategoryWarningList} items=${miniapp.CategoryWarningItems || []} compact=${true} />
         </div>` : null}
         ${miniapp.UsedStoredData ? html`<div class="flash ok" style="margin-top:14px;">当前默认展示已落库分类/商品/图片结果，不会自动刷新源站。只有点“刷新实时摘要”时才会请求实时源站。</div>` : null}
         ${miniapp.RawAuthStatus && miniapp.RawAuthStatus.Enabled ? html`<div class=${`flash ${((miniapp.RawAuthStatus.Status || "").toLowerCase() === "failed" ? "error" : "ok")}`} style="margin-top:14px;">
@@ -1017,13 +1170,15 @@ function confirmSubmit(message, event) {
 }
 
 function TargetSyncPage() {
+  const pageQuery = useMemo(() => new URLSearchParams(window.location.search), []);
+  const initialRunId = pageQuery.get("id") || "";
   const [reloadKey, setReloadKey] = useState(0);
   const [liveReloadKey, setLiveReloadKey] = useState(0);
   const [checkoutReloadKey, setCheckoutReloadKey] = useState(0);
   const [liveEnabled, setLiveEnabled] = useState(false);
   const [checkoutEnabled, setCheckoutEnabled] = useState(false);
   const [actionState, setActionState] = useState({ busy: "", message: "", error: "", href: "", hrefLabel: "" });
-  const [activeRunId, setActiveRunId] = useState("");
+  const [activeRunId, setActiveRunId] = useState(initialRunId);
   const [activeRun, setActiveRun] = useState(null);
   const [activeRunError, setActiveRunError] = useState("");
   const resource = useResource("/api/pim/admin/target-sync", [reloadKey]);
@@ -1139,7 +1294,7 @@ function TargetSyncPage() {
         busy: "",
         message: result.message || "抓取入库任务已启动。",
         error: "",
-        href: run && run.ID ? buildURL("/_/mrtang-admin/target-sync/run", { id: run.ID }) : "",
+        href: run && run.ID ? buildURL("/_/mrtang-admin/target-sync", { id: run.ID }) : "",
         hrefLabel: run && run.ID ? "查看运行详情" : "",
       });
       setReloadKey((value) => value + 1);
@@ -1153,7 +1308,7 @@ function TargetSyncPage() {
           busy: "",
           message: "已有同类抓取任务在执行中，已切换到当前任务进度。",
           error: "",
-          href: buildURL("/_/mrtang-admin/target-sync/run", { id: payloadRun.ID }),
+          href: buildURL("/_/mrtang-admin/target-sync", { id: payloadRun.ID }),
           hrefLabel: "查看运行详情",
         });
         setReloadKey((value) => value + 1);
@@ -1162,6 +1317,18 @@ function TargetSyncPage() {
       setActionState({ busy: "", message: "", error: error.message || "执行抓取入库失败", href: "", hrefLabel: "" });
       setReloadKey((value) => value + 1);
     }
+  }
+
+  async function rerunCategoryWarning(item) {
+    if (!item || !item.Key) return;
+    const label = item.Label || item.Key;
+    const statusLabel = categoryWarningStatusLabel(item.Status);
+    await runJob(
+      "category_sources",
+      item.Key,
+      label,
+      `确认重新抓取分类「${label}」的商品来源吗？当前状态：${statusLabel}。`
+    );
   }
 
   async function retryFailedBranches(run) {
@@ -1181,7 +1348,7 @@ function TargetSyncPage() {
         busy: "",
         message: result.message || retryFailedBranchesStartedMessage(run, runs.length),
         error: "",
-        href: firstRun && firstRun.ID ? buildURL("/_/mrtang-admin/target-sync/run", { id: firstRun.ID }) : "",
+        href: firstRun && firstRun.ID ? buildURL("/_/mrtang-admin/target-sync", { id: firstRun.ID }) : "",
         hrefLabel: firstRun && firstRun.ID ? "查看首个重跑任务" : "",
       });
       if (firstRun && firstRun.ID) {
@@ -1259,6 +1426,12 @@ function TargetSyncPage() {
           <div><strong>${liveErrorInfo.title}</strong></div>
           <div class="small" style="margin-top:8px;">${liveErrorInfo.detail}</div>
           <div class="small" style="margin-top:8px;"><code>${liveErrorInfo.raw || liveError}</code></div>
+        </div>` : null}
+        ${liveSummary.CategoryWarningSummary ? html`<div class="flash warning" style="margin-top:14px;">
+          <div><strong>分类抓取存在缺口</strong></div>
+          <div class="small" style="margin-top:8px;">${liveSummary.CategoryWarningSummary}</div>
+          <div class="small" style="margin-top:8px;">跳过 ${liveSummary.CategorySkippedCount || 0} 个分类，回退 ${liveSummary.CategoryFallbackCount || 0} 个分类。建议稍后重刷实时摘要，或直接查看 logs / 抓取入库运行详情。</div>
+          <${CategoryWarningList} items=${liveSummary.CategoryWarningItems || []} onRunSourceSync=${rerunCategoryWarning} actionBusy=${actionState.busy || ""} />
         </div>` : null}
         ${liveSummary.UsedStoredData ? html`<div class="flash ok" style="margin-top:14px;">当前范围摘要已自动回退到已落库分类/商品/图片结果。若分类商品来源已存在，商品归属会优先复用已保存来源，不必每次重新实时读取全部分类商品列表。</div>` : null}
       </div></section>
@@ -1372,7 +1545,7 @@ function TargetSyncPage() {
           const total = run.ProgressTotal || run.ScopedNodeCount || 0;
           const done = run.ProgressDone || 0;
           return html`<tr>
-            <td><a href=${buildURL("/_/mrtang-admin/target-sync/run", { id: run.ID })}>${run.JobName || "-"}</a><div class="small">${run.EntityType || "-"}</div></td>
+            <td><a href=${buildURL("/_/mrtang-admin/target-sync", { id: run.ID })}>${run.JobName || "-"}</a><div class="small">${run.EntityType || "-"}</div></td>
             <td><${StatusBadge} label=${syncStatusLabel(run.Status)} currentTone=${tone(run.Status)} /></td>
             <td>${run.ScopeLabel || "-"}</td>
             <td class="small">${done} / ${total || "-"}</td>
@@ -2828,8 +3001,8 @@ function ProcurementPage() {
   if (resource.error) return html`<${ErrorSection} error=${resource.error} />`;
   const payload = resource.data || {};
   const summary = payload.summary || {};
-  const orders = summary.RecentOrders || [];
-  const recentActions = summary.RecentActions || [];
+  const orders = [...(summary.RecentOrders || summary.recentOrders || [])].sort(compareProcurementOrders);
+  const recentActions = summary.RecentActions || summary.recentActions || [];
 
   function setOrderNote(id, value) {
     setNotes((current) => ({ ...current, [id]: value }));
@@ -2907,25 +3080,26 @@ function ProcurementPage() {
       <section class="table-card"><div class="table-card"><div class="card-body">
         <div class="card-kicker">列表</div>
         <h2 class="card-title">采购单</h2>
-        <div class="table-wrap section"><table><thead><tr><th>外部单号</th><th>状态</th><th>商品</th><th>金额</th><th>风险</th><th>说明</th><th>动作</th></tr></thead><tbody>
+        <div class="table-wrap section"><table><thead><tr><th>外部单号</th><th>状态</th><th>商品</th><th>金额</th><th>风险</th><th>说明</th><th>时间</th><th>动作</th></tr></thead><tbody>
           ${orders.length ? orders.map((item) => html`
             <tr>
-              <td><strong>${item.ExternalRef || "-"}</strong><div class="small">${item.ID || "-"}</div><div class="small"><a href=${`/_/mrtang-admin/procurement/detail?id=${encodeURIComponent(item.ID || "")}&returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`}>查看详情</a></div></td>
-              <td><${StatusBadge} label=${item.Status || "-"} currentTone=${item.RiskyItemCount > 0 ? "warning" : tone(item.Status)} /></td>
-              <td>${item.ItemCount || 0} 项 / ${(item.TotalQty || 0).toFixed ? item.TotalQty.toFixed(2) : item.TotalQty}<div class="small">${item.SupplierCount || 0} 个供应商</div></td>
-              <td>成本 ${typeof item.TotalCostAmount === "number" ? item.TotalCostAmount.toFixed(2) : item.TotalCostAmount || "0.00"}</td>
-              <td>${item.RiskyItemCount > 0 ? html`<span class="small">${item.RiskyItemCount} 个风险项</span>` : html`<span class="small">正常</span>`}</td>
-              <td><div>${item.LastActionNote || "-"}</div><div class="small">${item.Updated || "-"}</div></td>
+              <td><strong>${pickField(item, "externalRef", "ExternalRef") || "-"}</strong><div class="small">${pickField(item, "id", "ID") || "-"}</div><div class="small"><a href=${`/_/mrtang-admin/procurement/detail?id=${encodeURIComponent(pickField(item, "id", "ID") || "")}&returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`}>查看详情</a></div></td>
+              <td><${StatusBadge} label=${pickField(item, "status", "Status") || "-"} currentTone=${numberValue(pickField(item, "riskyItemCount", "RiskyItemCount")) > 0 ? "warning" : tone(pickField(item, "status", "Status"))} /></td>
+              <td>${numberValue(pickField(item, "itemCount", "ItemCount"))} 项 / ${numberValue(pickField(item, "totalQty", "TotalQty")).toFixed(2)}<div class="small">${numberValue(pickField(item, "supplierCount", "SupplierCount"))} 个供应商</div></td>
+              <td>成本 ${numberValue(pickField(item, "totalCostAmount", "TotalCostAmount")).toFixed(2)}</td>
+              <td>${numberValue(pickField(item, "riskyItemCount", "RiskyItemCount")) > 0 ? html`<span class="small">${numberValue(pickField(item, "riskyItemCount", "RiskyItemCount"))} 个风险项</span>` : html`<span class="small">正常</span>`}</td>
+              <td><div>${pickField(item, "lastActionNote", "LastActionNote") || "-"}</div></td>
+              <td>${(() => { const primaryTime = procurementPrimaryTime(item); return html`<div class="small">${primaryTime.label}：${formatDateTime(primaryTime.value)}</div>${procurementTimeEntries(item).filter((entry) => entry.label !== primaryTime.label && String(entry.value || "").trim()).slice(0, 2).map((entry) => html`<div class="small">${entry.label}：${formatDateTime(entry.value)}</div>`)}`; })()}</td>
               <td>
                 <div class="action-row">
-                  <input type="text" value=${notes[item.ID || ""] || ""} onInput=${(event) => setOrderNote(item.ID || "", event.currentTarget.value)} placeholder="操作备注" />
-                  <button class="btn secondary" type="button" disabled=${actionState.busy === `review:${item.ID || ""}`} onClick=${() => procurementAction("/api/pim/admin/procurement/order/review", { id: item.ID || "", note: notes[item.ID || ""] || "" }, "确认复核这张采购单吗？", `review:${item.ID || ""}`, "采购单已复核。")}>${actionState.busy === `review:${item.ID || ""}` ? "处理中..." : "复核"}</button>
-                  <button class="btn secondary" type="button" disabled=${actionState.busy === `export:${item.ID || ""}`} onClick=${() => procurementAction("/api/pim/admin/procurement/order/export", { id: item.ID || "", note: notes[item.ID || ""] || "" }, "确认导出这张采购单的 CSV 吗？", `export:${item.ID || ""}`, "采购单已导出。")}>${actionState.busy === `export:${item.ID || ""}` ? "处理中..." : "导出"}</button>
-                  <button class="btn secondary" type="button" disabled=${actionState.busy === `submit:${item.ID || ""}`} onClick=${() => procurementAction("/api/pim/admin/procurement/order/submit", { id: item.ID || "", note: notes[item.ID || ""] || "" }, "确认提交到供应商连接器吗？", `submit:${item.ID || ""}`, "采购单已提交。")}>${actionState.busy === `submit:${item.ID || ""}` ? "处理中..." : "提交"}</button>
+                  <input type="text" value=${notes[pickField(item, "id", "ID") || ""] || ""} onInput=${(event) => setOrderNote(pickField(item, "id", "ID") || "", event.currentTarget.value)} placeholder="操作备注" />
+                  <button class="btn secondary" type="button" disabled=${actionState.busy === `review:${pickField(item, "id", "ID") || ""}`} onClick=${() => procurementAction("/api/pim/admin/procurement/order/review", { id: pickField(item, "id", "ID") || "", note: notes[pickField(item, "id", "ID") || ""] || "" }, "确认复核这张采购单吗？", `review:${pickField(item, "id", "ID") || ""}`, "采购单已复核。")}>${actionState.busy === `review:${pickField(item, "id", "ID") || ""}` ? "处理中..." : "复核"}</button>
+                  <button class="btn secondary" type="button" disabled=${actionState.busy === `export:${pickField(item, "id", "ID") || ""}`} onClick=${() => procurementAction("/api/pim/admin/procurement/order/export", { id: pickField(item, "id", "ID") || "", note: notes[pickField(item, "id", "ID") || ""] || "" }, "确认导出这张采购单的 CSV 吗？", `export:${pickField(item, "id", "ID") || ""}`, "采购单已导出。")}>${actionState.busy === `export:${pickField(item, "id", "ID") || ""}` ? "处理中..." : "导出"}</button>
+                  <button class="btn secondary" type="button" disabled=${actionState.busy === `submit:${pickField(item, "id", "ID") || ""}`} onClick=${() => procurementAction("/api/pim/admin/procurement/order/submit", { id: pickField(item, "id", "ID") || "", note: notes[pickField(item, "id", "ID") || ""] || "" }, "确认提交到供应商连接器吗？", `submit:${pickField(item, "id", "ID") || ""}`, "采购单已提交。")}>${actionState.busy === `submit:${pickField(item, "id", "ID") || ""}` ? "处理中..." : "提交"}</button>
                 </div>
               </td>
             </tr>
-          `) : html`<tr><td colspan="7" class="small">暂无采购单。</td></tr>`}
+          `) : html`<tr><td colspan="8" class="small">暂无采购单。</td></tr>`}
         </tbody></table></div>
       </div></div></section>
 
@@ -2935,10 +3109,10 @@ function ProcurementPage() {
         <div class="table-wrap section"><table><thead><tr><th>动作</th><th>结果</th><th>操作人</th><th>时间</th></tr></thead><tbody>
           ${recentActions.length ? recentActions.map((item) => html`
             <tr>
-              <td><strong>${item.ActionType || "-"}</strong><div class="small">${item.ExternalRef || item.OrderID || "-"}</div></td>
-              <td><${StatusBadge} label=${item.Status || "-"} currentTone=${tone(item.Status)} /><div class="small">${item.Message || "-"}</div></td>
-              <td>${item.ActorName || item.ActorEmail || "-"}</td>
-              <td class="small">${item.Created || "-"}</td>
+              <td><strong>${pickField(item, "actionType", "ActionType") || "-"}</strong><div class="small">${pickField(item, "externalRef", "ExternalRef", "orderId", "OrderID") || "-"}</div></td>
+              <td><${StatusBadge} label=${pickField(item, "status", "Status") || "-"} currentTone=${tone(pickField(item, "status", "Status"))} /><div class="small">${pickField(item, "message", "Message") || "-"}</div></td>
+              <td>${pickField(item, "actorName", "ActorName", "actorEmail", "ActorEmail") || "-"}</td>
+              <td class="small">${formatDateTime(pickField(item, "created", "Created"))}</td>
             </tr>
           `) : html`<tr><td colspan="4" class="small">还没有最近采购动作。</td></tr>`}
         </tbody></table></div>
@@ -3133,8 +3307,13 @@ function ProcurementDetailPage() {
   const payload = resource.data || {};
   const order = payload.order || {};
   const backHref = payload.returnTo || returnTo;
-  const suppliers = (order.Summary && order.Summary.Suppliers) || [];
-  const riskyItems = suppliers.flatMap((supplier) => (supplier.Items || []).filter((item) => ["loss", "warning"].includes((item.RiskLevel || "").toLowerCase())));
+  const suppliers = procurementSuppliers(order);
+  const items = procurementItems(order);
+  const riskyItems = items.filter((item) => ["loss", "warning"].includes(String(pickField(item, "riskLevel", "RiskLevel") || "").toLowerCase()));
+  const results = procurementResults(order);
+  const timeEntries = procurementTimeEntries(order).filter((item) => String(item.value || "").trim());
+  const primaryTime = procurementPrimaryTime(order);
+  const summary = procurementSummaryData(order);
 
   async function procurementDetailAction(url, values, confirmMessage, busyKey, successMessage) {
     if (confirmMessage && !window.confirm(confirmMessage)) return;
@@ -3152,37 +3331,97 @@ function ProcurementDetailPage() {
     <section class="section split-grid">
       <section class="card"><div class="card-body">
         <div class="card-kicker">采购详情</div>
-        <h2 class="card-title">${order.ExternalRef || "-"}</h2>
+        <h2 class="card-title">${pickField(order, "externalRef", "ExternalRef") || "-"}</h2>
         ${(payload.flashError) ? html`<div class="flash error" style="margin-top:14px;">${payload.flashError}</div>` : null}
         <${ActionNotice} state=${actionState} />
         <div class="inline-pills">
-          <span class="pill">id: <code>${order.ID || "-"}</code></span>
-          <${StatusBadge} label=${order.Status || "-"} currentTone=${tone(order.Status)} />
-          <span class="pill">风险项 <code>${order.RiskyItemCount || 0}</code></span>
+          <span class="pill">id: <code>${pickField(order, "id", "ID") || "-"}</code></span>
+          <${StatusBadge} label=${pickField(order, "status", "Status") || "-"} currentTone=${tone(pickField(order, "status", "Status"))} />
+          <span class="pill">风险项 <code>${numberValue(pickField(order, "riskyItemCount", "RiskyItemCount"))}</code></span>
+          <span class="pill">${primaryTime.label}: <code>${formatDateTime(primaryTime.value)}</code></span>
         </div>
-        <div class="small" style="margin-top:12px;">商品 ${order.ItemCount || 0} 项 / 数量 ${typeof order.TotalQty === "number" ? order.TotalQty.toFixed(2) : order.TotalQty || "0.00"} / 成本 ${typeof order.TotalCostAmount === "number" ? order.TotalCostAmount.toFixed(2) : order.TotalCostAmount || "0.00"}</div>
+        <div class="metric-grid section">
+          <${MetricCard} eyebrow="商品数" value=${numberValue(pickField(order, "itemCount", "ItemCount"))} />
+          <${MetricCard} eyebrow="总数量" value=${numberValue(pickField(order, "totalQty", "TotalQty")).toFixed(2)} />
+          <${MetricCard} eyebrow="总成本" value=${numberValue(pickField(order, "totalCostAmount", "TotalCostAmount")).toFixed(2)} />
+          <${MetricCard} eyebrow="供应商" value=${numberValue(pickField(order, "supplierCount", "SupplierCount"))} />
+        </div>
+        <div class="small" style="margin-top:12px;">${pickField(order, "lastActionNote", "LastActionNote") || "暂无最新备注"}</div>
         <div class="action-row">
           <a class="btn secondary" href=${backHref}>返回上一页</a>
           <input type="text" value=${reviewNote} onInput=${(event) => setReviewNote(event.currentTarget.value)} placeholder="复核备注" />
-          <button class="btn secondary" type="button" disabled=${actionState.busy === "review"} onClick=${() => procurementDetailAction("/api/pim/admin/procurement/order/review", { id: order.ID || "", note: reviewNote }, "确认复核这张采购单吗？", "review", "采购单已复核。")}>${actionState.busy === "review" ? "处理中..." : "复核"}</button>
+          <button class="btn secondary" type="button" disabled=${actionState.busy === "review"} onClick=${() => procurementDetailAction("/api/pim/admin/procurement/order/review", { id: pickField(order, "id", "ID") || "", note: reviewNote }, "确认复核这张采购单吗？", "review", "采购单已复核。")}>${actionState.busy === "review" ? "处理中..." : "复核"}</button>
           <input type="text" value=${exportNote} onInput=${(event) => setExportNote(event.currentTarget.value)} placeholder="导出备注" />
-          <button class="btn secondary" type="button" disabled=${actionState.busy === "export"} onClick=${() => procurementDetailAction("/api/pim/admin/procurement/order/export", { id: order.ID || "", note: exportNote }, "确认导出这张采购单吗？", "export", "采购单已导出。")}>${actionState.busy === "export" ? "处理中..." : "导出"}</button>
-          <button class="btn secondary" type="button" disabled=${actionState.busy === "submit"} onClick=${() => procurementDetailAction("/api/pim/admin/procurement/order/submit", { id: order.ID || "", note: exportNote }, "确认提交到供应商连接器吗？", "submit", "采购单已提交。")}>${actionState.busy === "submit" ? "处理中..." : "提交"}</button>
+          <button class="btn secondary" type="button" disabled=${actionState.busy === "export"} onClick=${() => procurementDetailAction("/api/pim/admin/procurement/order/export", { id: pickField(order, "id", "ID") || "", note: exportNote }, "确认导出这张采购单吗？", "export", "采购单已导出。")}>${actionState.busy === "export" ? "处理中..." : "导出"}</button>
+          <button class="btn secondary" type="button" disabled=${actionState.busy === "submit"} onClick=${() => procurementDetailAction("/api/pim/admin/procurement/order/submit", { id: pickField(order, "id", "ID") || "", note: exportNote }, "确认提交到供应商连接器吗？", "submit", "采购单已提交。")}>${actionState.busy === "submit" ? "处理中..." : "提交"}</button>
         </div>
       </div></section>
+      <section class="card"><div class="card-body">
+        <div class="card-kicker">状态时间线</div>
+        <h2 class="card-title">推进记录</h2>
+        ${timeEntries.length ? html`<div class="ops-grid section">
+          ${timeEntries.map((entry) => html`<div class="action-card"><div class="card-kicker">${entry.label}</div><div class="card-title">${formatDateTime(entry.value)}</div></div>`)}
+        </div>` : html`<div class="small">当前采购单还没有业务时间节点。</div>`}
+      </div></section>
+    </section>
+
+    <section class="section split-grid">
+      <section class="table-card"><div class="table-card"><div class="card-body">
+        <div class="card-kicker">供应商提交结果</div>
+        <h2 class="card-title">提交与校验</h2>
+        <div class="table-wrap section"><table><thead><tr><th>供应商</th><th>提交</th><th>校验</th><th>外部单号</th><th>说明</th></tr></thead><tbody>
+          ${results.length ? results.map((item) => {
+            const details = pickField(item, "details", "Details") || {};
+            const submit = details.submit || details.Submit || {};
+            const detail = details.detail || details.Detail || {};
+            const orderNo = pickField(submit, "billNo", "billNo") || pickField(detail, "billNo", "billNo") || pickField(item, "externalRef", "ExternalRef");
+            const dueAmount = pickField(submit, "dueAmount", "DueAmount") || pickField(detail, "dueAmount", "DueAmount");
+            return html`<tr>
+              <td>${pickField(item, "supplierCode", "SupplierCode") || "-"}</td>
+              <td><${StatusBadge} label=${pickField(item, "accepted", "Accepted") ? "accepted" : "rejected"} currentTone=${pickField(item, "accepted", "Accepted") ? "ok" : "error"} />${dueAmount !== "" && dueAmount !== undefined ? html`<div class="small">应付 ${dueAmount}</div>` : null}</td>
+              <td><${StatusBadge} label=${pickField(item, "verificationStatus", "VerificationStatus") || "-"} currentTone=${tone(pickField(item, "verificationStatus", "VerificationStatus"))} /></td>
+              <td><div>${orderNo || "-"}</div><div class="small">${pickField(item, "externalRef", "ExternalRef") || "-"}</div></td>
+              <td class="small">${pickField(item, "verificationMessage", "VerificationMessage") || pickField(item, "message", "Message") || "-"}</td>
+            </tr>`;
+          }) : html`<tr><td colspan="5" class="small">当前采购单还没有提交结果。</td></tr>`}
+        </tbody></table></div>
+      </div></div></section>
+
       <section class="card"><div class="card-body">
         <div class="card-kicker">风险商品</div>
         <h2 class="card-title">优先处理</h2>
         ${riskyItems.length ? html`<div class="ops-grid section">
-          ${riskyItems.map((item) => html`<div class="action-card"><div class="card-kicker">${item.RiskLevel || "-"}</div><div class="card-title">${item.Title || "-"}</div><div class="card-desc">${item.OriginalSKU || "-"} / ${item.SupplierCode || "-"}</div><div class="small">数量 ${typeof item.Quantity === "number" ? item.Quantity.toFixed(2) : item.Quantity || "0"} ${item.SalesUnit || ""} / 成本 ${typeof item.CostPrice === "number" ? item.CostPrice.toFixed(2) : item.CostPrice || "0.00"} / C价 ${typeof item.ConsumerPrice === "number" ? item.ConsumerPrice.toFixed(2) : item.ConsumerPrice || "0.00"}</div></div>`)}
+          ${riskyItems.map((item) => html`<div class="action-card"><div class="card-kicker">${pickField(item, "riskLevel", "RiskLevel") || "-"}</div><div class="card-title">${pickField(item, "title", "Title") || "-"}</div><div class="card-desc">${pickField(item, "originalSku", "OriginalSKU") || "-"} / ${item.__supplierCode || "-"}</div><div class="small">数量 ${numberValue(pickField(item, "quantity", "Quantity")).toFixed(2)} ${pickField(item, "salesUnit", "SalesUnit") || ""} / 成本 ${numberValue(pickField(item, "costPrice", "CostPrice")).toFixed(2)} / C价 ${numberValue(pickField(item, "consumerPrice", "ConsumerPrice")).toFixed(2)}</div></div>`)}
         </div>` : html`<div class="small">当前采购单没有风险商品。</div>`}
       </div></section>
     </section>
 
     <section class="section table-card"><div class="table-card"><div class="card-body">
-      <div class="card-kicker">摘要</div>
-      <pre>${JSON.stringify(order.Summary || {}, null, 2)}</pre>
+      <div class="card-kicker">商品明细</div>
+      <h2 class="card-title">采购项</h2>
+      <div class="table-wrap section"><table><thead><tr><th>商品</th><th>供应商 / SKU</th><th>数量</th><th>价格</th><th>风险</th></tr></thead><tbody>
+        ${items.length ? items.map((item) => html`<tr>
+          <td><strong>${pickField(item, "title", "Title") || "-"}</strong><div class="small">${pickField(item, "normalizedCategory", "NormalizedCategory") || "-"}</div></td>
+          <td>${item.__supplierCode || "-"}<div class="small">${pickField(item, "originalSku", "OriginalSKU") || "-"}</div></td>
+          <td>${numberValue(pickField(item, "quantity", "Quantity")).toFixed(2)} ${pickField(item, "salesUnit", "SalesUnit") || ""}</td>
+          <td class="small">成本 ${numberValue(pickField(item, "costPrice", "CostPrice")).toFixed(2)} / B ${numberValue(pickField(item, "businessPrice", "BusinessPrice")).toFixed(2)} / C ${numberValue(pickField(item, "consumerPrice", "ConsumerPrice")).toFixed(2)}</td>
+          <td><${StatusBadge} label=${pickField(item, "riskLevel", "RiskLevel") || "normal"} currentTone=${tone(pickField(item, "riskLevel", "RiskLevel") || "normal")} /><div class="small">毛利 ${(numberValue(pickField(item, "marginRatio", "MarginRatio")) * 100).toFixed(1)}%</div></td>
+        </tr>`) : html`<tr><td colspan="5" class="small">当前采购单没有商品明细。</td></tr>`}
+      </tbody></table></div>
     </div></div></section>
+
+    <section class="section card"><div class="card-body">
+      <div class="card-kicker">调试信息</div>
+      <h2 class="card-title">原始摘要</h2>
+      <details>
+        <summary>展开查看 summary JSON</summary>
+        <pre>${JSON.stringify(summary || {}, null, 2)}</pre>
+      </details>
+      <details class="section">
+        <summary>展开查看 results JSON</summary>
+        <pre>${JSON.stringify(results || [], null, 2)}</pre>
+      </details>
+    </div></section>
   `;
 }
 

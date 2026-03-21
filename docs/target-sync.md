@@ -5,7 +5,7 @@
 入口：
 
 - `/_/mrtang-admin/target-sync`
-- `/_/mrtang-admin/target-sync/run?id=...`
+- `/_/mrtang-admin/target-sync?id=...`
 
 ## 作用边界
 
@@ -135,7 +135,10 @@
 
 ## 运行详情
 
-`/_/mrtang-admin/target-sync/run?id=...` 当前支持：
+`/_/mrtang-admin/target-sync?id=...` 当前支持：
+
+- 在同一 SPA 页面内直接展开运行详情
+- 查看这次运行的范围、状态、统计和最近日志
 
 - 查看单次运行的：
   - 实体类型

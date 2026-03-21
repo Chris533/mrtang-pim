@@ -179,8 +179,8 @@ go run ./cmd/pim serve
 - Source Assets: `http://127.0.0.1:26228/_/mrtang-admin/source/assets`
 - Source Logs: `http://127.0.0.1:26228/_/mrtang-admin/source/logs`
 - Procurement: `http://127.0.0.1:26228/_/mrtang-admin/procurement`
-- Source Review Workbench: `http://127.0.0.1:26228/_/source-review-workbench`（兼容保留）
-- Procurement Workbench: `http://127.0.0.1:26228/_/procurement-workbench`（兼容保留）
+- Source Review Workbench: `http://127.0.0.1:26228/_/source-review-workbench`（兼容保留，建议改用 `/_/mrtang-admin/source/products`）
+- Procurement Workbench: `http://127.0.0.1:26228/_/procurement-workbench`（兼容保留，建议改用 `/_/mrtang-admin/procurement`）
 - Health: `http://127.0.0.1:26228/api/pim/healthz`
 
 生产环境访问策略：

@@ -157,6 +157,7 @@ func (s *RawSource) FetchDataset(ctx context.Context) (*model.Dataset, error) {
 		dataset.Meta.Notes = appendUniqueStrings(dataset.Meta.Notes, "raw 登录续活当前未配置 openId，预授权状态校验步骤将跳过。")
 	}
 	dataset.Meta.Notes = appendUniqueStrings(dataset.Meta.Notes, categoryNotes...)
+	dataset.Meta.Notes = appendUniqueStrings(dataset.Meta.Notes, summarizeCategoryFetchOutcome(nodes, sections, categoryNotes))
 	dataset.CategoryPage.Tree = nodes
 	if len(sections) > 0 {
 		dataset.CategoryPage.Sections = sections
@@ -225,6 +226,7 @@ func (s *RawSource) FetchTargetSyncDataset(ctx context.Context, entityType strin
 		dataset.ProductPage.Products = products
 	}
 	dataset.Meta.Notes = append(dataset.Meta.Notes, notes...)
+	dataset.Meta.Notes = appendUniqueStrings(dataset.Meta.Notes, summarizeCategoryFetchOutcome(scopedNodes, sections, notes))
 	return &dataset, nil
 }
 
@@ -875,16 +877,40 @@ func cloneCategorySection(section model.CategorySection) model.CategorySection {
 	return cloned
 }
 
+func summarizeCategoryFetchOutcome(nodes []model.CategoryNode, sections []model.CategorySection, notes []string) string {
+	total := len(flattenCategoryRequestNodes(nodes))
+	if total == 0 {
+		return ""
+	}
+	success := len(sections)
+	skipped := 0
+	fallback := 0
+	for _, note := range notes {
+		trimmed := strings.TrimSpace(note)
+		if strings.HasPrefix(trimmed, "raw 分类商品跳过 ") {
+			skipped++
+			continue
+		}
+		if strings.HasPrefix(trimmed, "raw 分类商品回退 ") {
+			fallback++
+		}
+	}
+	if skipped == 0 && fallback == 0 && success >= total {
+		return fmt.Sprintf("raw 分类商品抓取完成：成功 %d / %d。", success, total)
+	}
+	return fmt.Sprintf("raw 分类商品抓取存在缺口：成功 %d / %d，跳过 %d，回退 %d。详见 notes。", success, total, skipped, fallback)
+}
+
 func (s *RawSource) sectionTimeout() time.Duration {
-	timeout := s.cfg.Timeout / 3
+	timeout := s.cfg.Timeout + 5*time.Second
 	if timeout <= 0 {
-		timeout = 6 * time.Second
+		timeout = 20 * time.Second
 	}
-	if timeout < 4*time.Second {
-		timeout = 4 * time.Second
+	if timeout < 15*time.Second {
+		timeout = 15 * time.Second
 	}
-	if timeout > 12*time.Second {
-		timeout = 12 * time.Second
+	if timeout > 30*time.Second {
+		timeout = 30 * time.Second
 	}
 	return timeout
 }

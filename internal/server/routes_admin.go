@@ -1616,145 +1616,69 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	})
 
 	se.Router.GET("/_/mrtang-admin", func(re *core.RequestEvent) error {
-		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
-			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
-				"总览",
-				"后台首页先秒开壳子，再异步拉 coverage、source capture 和最近动作。",
-				"/_/mrtang-admin",
-				authorizedAdminModule(re, cfg, "source"),
-				authorizedAdminModule(re, cfg, "procurement"),
-			))
+		if adminLegacyRedirect(re) {
+			return redirectAdminAppShell(re, "/_/mrtang-admin")
 		}
-
-		return re.HTML(http.StatusOK, admin.RenderMrtangAdminHTML(
-			re.Request.Context(),
-			re.App,
-			cfg,
-			service,
-			miniappService,
+		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+			"总览",
+			"后台首页先秒开壳子，再异步拉 coverage、source capture 和最近动作。",
+			"/_/mrtang-admin",
 			authorizedAdminModule(re, cfg, "source"),
 			authorizedAdminModule(re, cfg, "procurement"),
-			strings.TrimSpace(re.Request.URL.Query().Get("message")),
-			strings.TrimSpace(re.Request.URL.Query().Get("error")),
 		))
 	})
 
 	se.Router.GET("/_/mrtang-admin/audit", func(re *core.RequestEvent) error {
-		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
-			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
-				"审计",
-				"统一审计入口，汇总源数据和采购动作并支持筛选。",
-				"/_/mrtang-admin/audit",
-				authorizedAdminModule(re, cfg, "source"),
-				authorizedAdminModule(re, cfg, "procurement"),
-			))
+		if adminLegacyRedirect(re) {
+			return redirectAdminAppShell(re, "/_/mrtang-admin/audit")
 		}
-		if !authorizedAdminModule(re, cfg, "dashboard") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无后台总览权限", "当前账号没有后台总览权限。", "/_/"))
-		}
-		return re.HTML(http.StatusOK, admin.RenderAuditHTML(
-			re.Request.Context(),
-			re.App,
-			cfg,
-			service,
-			miniappService,
-			admin.AuditFilter{
-				Domain:   strings.TrimSpace(re.Request.URL.Query().Get("domain")),
-				Status:   strings.TrimSpace(re.Request.URL.Query().Get("status")),
-				Query:    strings.TrimSpace(re.Request.URL.Query().Get("q")),
-				Page:     readQueryInt(re, "page", 1),
-				PageSize: readQueryInt(re, "pageSize", 20),
-			},
-			strings.TrimSpace(re.Request.URL.Query().Get("message")),
-			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+			"审计",
+			"统一审计入口，汇总源数据和采购动作并支持筛选。",
+			"/_/mrtang-admin/audit",
+			authorizedAdminModule(re, cfg, "source"),
+			authorizedAdminModule(re, cfg, "procurement"),
 		))
 	})
 
 	se.Router.GET("/_/mrtang-admin/target-sync", func(re *core.RequestEvent) error {
-		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
-			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
-				"抓取入库",
-				"先开页面，再异步拉 summary、矩阵和最近写操作；raw 慢时也只影响局部。",
-				"/_/mrtang-admin/target-sync",
-				authorizedAdminModule(re, cfg, "source"),
-				authorizedAdminModule(re, cfg, "procurement"),
-			))
+		if adminLegacyRedirect(re) {
+			return redirectAdminAppShell(re, "/_/mrtang-admin/target-sync")
 		}
-		if !authorizedAdminModule(re, cfg, "source") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无抓取入库权限", "当前账号没有抓取入库权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
-
-		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 4*time.Second)
-		defer cancel()
-
-		dataset, err := miniappService.Dataset(loadCtx)
-		if err != nil {
-			return re.HTML(http.StatusOK, admin.RenderTargetSyncHTML(
-				cfg,
-				pim.TargetSyncSummary{SourceMode: strings.TrimSpace(cfg.MiniApp.SourceMode), RawAuthStatus: miniappService.RawAuthStatus()},
-				strings.TrimSpace(re.Request.URL.Query().Get("message")),
-				"加载 miniapp dataset 失败："+err.Error(),
-			))
-		}
-		summary, err := service.TargetSyncSummary(loadCtx, re.App, *dataset, miniappService.RawAuthStatus())
-		if err != nil {
-			return re.HTML(http.StatusOK, admin.RenderTargetSyncHTML(
-				cfg,
-				pim.TargetSyncSummary{SourceMode: strings.TrimSpace(dataset.Meta.Source), RawAuthStatus: miniappService.RawAuthStatus()},
-				strings.TrimSpace(re.Request.URL.Query().Get("message")),
-				"生成抓取入库摘要失败："+err.Error(),
-			))
-		}
-		return re.HTML(http.StatusOK, admin.RenderTargetSyncHTML(
-			cfg,
-			summary,
-			strings.TrimSpace(re.Request.URL.Query().Get("message")),
-			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+			"抓取入库",
+			"先开页面，再异步拉 summary、矩阵和最近写操作；raw 慢时也只影响局部。",
+			"/_/mrtang-admin/target-sync",
+			authorizedAdminModule(re, cfg, "source"),
+			authorizedAdminModule(re, cfg, "procurement"),
 		))
 	})
 
 	se.Router.GET("/_/mrtang-admin/target-sync/run", func(re *core.RequestEvent) error {
-		if !authorizedAdminModule(re, cfg, "source") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无抓取入库权限", "当前账号没有抓取入库权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
 		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
 		if id == "" {
 			return re.BadRequestError("missing target sync run id", nil)
 		}
-		run, err := service.GetTargetSyncRun(re.App, id)
-		if err != nil {
-			return re.InternalServerError("load target sync run failed", err)
-		}
-		return re.HTML(http.StatusOK, admin.RenderTargetSyncRunDetailHTML(run, "/_/mrtang-admin/target-sync"))
+		return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin/target-sync?id="+url.QueryEscape(id))
 	})
 
 	se.Router.GET("/_/mrtang-admin/source", func(re *core.RequestEvent) error {
-		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
-			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
-				"源数据",
-				"先看 source 模块概览，再分流到商品、图片和日志；数据异步加载，不阻塞整页。",
-				"/_/mrtang-admin/source",
-				authorizedAdminModule(re, cfg, "source"),
-				authorizedAdminModule(re, cfg, "procurement"),
-			))
+		if adminLegacyRedirect(re) {
+			return redirectAdminAppShell(re, "/_/mrtang-admin/source")
 		}
-		if !authorizedAdminModule(re, cfg, "source") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
-
-		summary, err := service.SourceReviewWorkbench(re.Request.Context(), re.App, 6, 6, pim.SourceReviewFilter{PageSize: 6})
-		if err != nil {
-			return re.InternalServerError("load source module failed", err)
-		}
-
-		return re.HTML(http.StatusOK, admin.RenderSourceModuleHTML(
-			summary,
-			strings.TrimSpace(re.Request.URL.Query().Get("message")),
-			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+			"源数据",
+			"先看 source 模块概览，再分流到商品、图片和日志；数据异步加载，不阻塞整页。",
+			"/_/mrtang-admin/source",
+			authorizedAdminModule(re, cfg, "source"),
+			authorizedAdminModule(re, cfg, "procurement"),
 		))
 	})
 
 	se.Router.GET("/_/mrtang-admin/source/categories", func(re *core.RequestEvent) error {
+		if adminLegacyRedirect(re) {
+			return redirectAdminAppShell(re, "/_/mrtang-admin/source/categories")
+		}
 		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
 			"源数据分类",
 			"分类树同步结果和已落库分类列表都在这里查看；页面先开壳，再异步加载。",
@@ -1765,6 +1689,9 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	})
 
 	se.Router.GET("/_/mrtang-admin/backend-release", func(re *core.RequestEvent) error {
+		if adminLegacyRedirect(re) {
+			return redirectAdminAppShell(re, "/_/mrtang-admin/backend-release")
+		}
 		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
 			"发布准备",
 			"先看 Vendure 字段准备度、分类映射和商品 payload 预览，再决定何时正式同步。",
@@ -1775,133 +1702,61 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	})
 
 	se.Router.GET("/_/mrtang-admin/source/products", func(re *core.RequestEvent) error {
-		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
-			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
-				"源数据商品",
-				"商品审核、桥接、同步重试改成前端异步列表；现有动作端点继续复用。",
-				"/_/mrtang-admin/source/products",
-				authorizedAdminModule(re, cfg, "source"),
-				authorizedAdminModule(re, cfg, "procurement"),
-			))
+		if adminLegacyRedirect(re) {
+			return redirectAdminAppShell(re, "/_/mrtang-admin/source/products")
 		}
-		if !authorizedAdminModule(re, cfg, "source") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
-
-		filter := readSourceReviewFilter(re)
-		filter.AssetStatus = ""
-		filter.AssetPage = 1
-		summary, err := service.SourceReviewWorkbench(re.Request.Context(), re.App, 24, 1, filter)
-		if err != nil {
-			return re.InternalServerError("load source products failed", err)
-		}
-
-		return re.HTML(http.StatusOK, admin.RenderSourceProductsHTML(
-			summary,
-			filter,
-			strings.TrimSpace(re.Request.URL.Query().Get("message")),
-			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+			"源数据商品",
+			"商品审核、桥接、同步重试改成前端异步列表；现有动作端点继续复用。",
+			"/_/mrtang-admin/source/products",
+			authorizedAdminModule(re, cfg, "source"),
+			authorizedAdminModule(re, cfg, "procurement"),
 		))
 	})
 
 	se.Router.GET("/_/mrtang-admin/source/products/detail", func(re *core.RequestEvent) error {
-		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
-			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
-				"商品详情",
-				"详情页也切到前端异步渲染，动作端点继续复用现有 POST 路由。",
-				"/_/mrtang-admin/source/products/detail",
-				authorizedAdminModule(re, cfg, "source"),
-				authorizedAdminModule(re, cfg, "procurement"),
-			))
+		if adminLegacyRedirect(re) {
+			return redirectAdminAppShell(re, "/_/mrtang-admin/source/products/detail")
 		}
-		if !authorizedAdminModule(re, cfg, "source") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
-		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
-		if id == "" {
-			return re.BadRequestError("missing source product id", nil)
-		}
-		detail, err := service.SourceProductDetail(re.Request.Context(), re.App, id)
-		if err != nil {
-			return re.InternalServerError("load source product detail failed", err)
-		}
-		returnTo := strings.TrimSpace(re.Request.URL.Query().Get("returnTo"))
-		if returnTo == "" {
-			returnTo = "/_/mrtang-admin/source/products"
-		}
-		return re.HTML(http.StatusOK, admin.RenderSourceProductDetailPageHTML(
-			detail,
-			returnTo,
-			"/_/mrtang-admin/source/products",
-			returnTo,
+		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+			"商品详情",
+			"详情页也切到前端异步渲染，动作端点继续复用现有 POST 路由。",
+			"/_/mrtang-admin/source/products/detail",
+			authorizedAdminModule(re, cfg, "source"),
+			authorizedAdminModule(re, cfg, "procurement"),
 		))
 	})
 
 	se.Router.GET("/_/mrtang-admin/source/assets", func(re *core.RequestEvent) error {
-		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
-			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
-				"源数据图片",
-				"图片状态、失败聚合和批量处理改成前端异步列表；现有动作端点继续复用。",
-				"/_/mrtang-admin/source/assets",
-				authorizedAdminModule(re, cfg, "source"),
-				authorizedAdminModule(re, cfg, "procurement"),
-			))
+		if adminLegacyRedirect(re) {
+			return redirectAdminAppShell(re, "/_/mrtang-admin/source/assets")
 		}
-		if !authorizedAdminModule(re, cfg, "source") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
-
-		filter := readSourceReviewFilter(re)
-		filter.ProductStatus = ""
-		filter.SyncState = ""
-		filter.ProductPage = 1
-		summary, err := service.SourceReviewWorkbench(re.Request.Context(), re.App, 1, 24, filter)
-		if err != nil {
-			return re.InternalServerError("load source assets failed", err)
-		}
-
-		return re.HTML(http.StatusOK, admin.RenderSourceAssetsHTML(
-			summary,
-			filter,
-			strings.TrimSpace(re.Request.URL.Query().Get("message")),
-			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+			"源数据图片",
+			"图片状态、失败聚合和批量处理改成前端异步列表；现有动作端点继续复用。",
+			"/_/mrtang-admin/source/assets",
+			authorizedAdminModule(re, cfg, "source"),
+			authorizedAdminModule(re, cfg, "procurement"),
 		))
 	})
 
 	se.Router.GET("/_/mrtang-admin/source/assets/detail", func(re *core.RequestEvent) error {
-		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
-			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
-				"图片详情",
-				"详情页也切到前端异步渲染，动作端点继续复用现有 POST 路由。",
-				"/_/mrtang-admin/source/assets/detail",
-				authorizedAdminModule(re, cfg, "source"),
-				authorizedAdminModule(re, cfg, "procurement"),
-			))
+		if adminLegacyRedirect(re) {
+			return redirectAdminAppShell(re, "/_/mrtang-admin/source/assets/detail")
 		}
-		if !authorizedAdminModule(re, cfg, "source") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
-		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
-		if id == "" {
-			return re.BadRequestError("missing source asset id", nil)
-		}
-		detail, err := service.SourceAssetDetail(re.Request.Context(), re.App, id)
-		if err != nil {
-			return re.InternalServerError("load source asset detail failed", err)
-		}
-		returnTo := strings.TrimSpace(re.Request.URL.Query().Get("returnTo"))
-		if returnTo == "" {
-			returnTo = "/_/mrtang-admin/source/assets"
-		}
-		return re.HTML(http.StatusOK, admin.RenderSourceAssetDetailPageHTML(
-			detail,
-			returnTo,
-			"/_/mrtang-admin/source/assets",
-			returnTo,
+		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+			"图片详情",
+			"详情页也切到前端异步渲染，动作端点继续复用现有 POST 路由。",
+			"/_/mrtang-admin/source/assets/detail",
+			authorizedAdminModule(re, cfg, "source"),
+			authorizedAdminModule(re, cfg, "procurement"),
 		))
 	})
 
 	se.Router.GET("/_/mrtang-admin/source/asset-jobs", func(re *core.RequestEvent) error {
+		if adminLegacyRedirect(re) {
+			return redirectAdminAppShell(re, "/_/mrtang-admin/source/asset-jobs")
+		}
 		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
 			"图片任务",
 			"原图下载和图片处理的历史任务、重试入口和最近日志都在这里查看。",
@@ -1912,6 +1767,9 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	})
 
 	se.Router.GET("/_/mrtang-admin/source/asset-jobs/detail", func(re *core.RequestEvent) error {
+		if adminLegacyRedirect(re) {
+			return redirectAdminAppShell(re, "/_/mrtang-admin/source/asset-jobs/detail")
+		}
 		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
 			"图片任务详情",
 			"任务详情页会异步加载任务进度、错误和最近日志。",
@@ -1922,6 +1780,9 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	})
 
 	se.Router.GET("/_/mrtang-admin/source/product-jobs", func(re *core.RequestEvent) error {
+		if adminLegacyRedirect(re) {
+			return redirectAdminAppShell(re, "/_/mrtang-admin/source/product-jobs")
+		}
 		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
 			"商品发布任务",
 			"商品发布与重试发布的历史任务、失败项和重跑入口都在这里查看。",
@@ -1932,6 +1793,9 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	})
 
 	se.Router.GET("/_/mrtang-admin/source/product-jobs/detail", func(re *core.RequestEvent) error {
+		if adminLegacyRedirect(re) {
+			return redirectAdminAppShell(re, "/_/mrtang-admin/source/product-jobs/detail")
+		}
 		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
 			"商品发布任务详情",
 			"任务详情页会异步加载商品发布任务的进度、失败项和最近日志。",
@@ -1942,77 +1806,28 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	})
 
 	se.Router.GET("/_/mrtang-admin/source/logs", func(re *core.RequestEvent) error {
-		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
-			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
-				"日志",
-				"源数据操作日志统一走前端异步加载，和其他模块保持一致。",
-				"/_/mrtang-admin/source/logs",
-				authorizedAdminModule(re, cfg, "source"),
-				authorizedAdminModule(re, cfg, "procurement"),
-			))
+		if adminLegacyRedirect(re) {
+			return redirectAdminAppShell(re, "/_/mrtang-admin/source/logs")
 		}
-		if !authorizedAdminModule(re, cfg, "source") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无源数据模块权限", "当前账号没有源数据模块权限，请联系管理员配置 `PIM_SOURCE_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
-
-		data, err := buildSourceLogsPageData(re)
-		if err != nil {
-			return re.InternalServerError("load source logs failed", err)
-		}
-		return re.HTML(http.StatusOK, admin.RenderSourceLogsHTML(
-			data,
-			strings.TrimSpace(re.Request.URL.Query().Get("message")),
-			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+			"日志",
+			"源数据操作日志统一走前端异步加载，和其他模块保持一致。",
+			"/_/mrtang-admin/source/logs",
+			authorizedAdminModule(re, cfg, "source"),
+			authorizedAdminModule(re, cfg, "procurement"),
 		))
 	})
 
 	se.Router.GET("/_/source-review-workbench", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		filter := readSourceReviewFilter(re)
-		summary, err := service.SourceReviewWorkbench(re.Request.Context(), re.App, 24, 24, filter)
-		if err != nil {
-			return re.InternalServerError("load source review workbench failed", err)
-		}
-
-		return re.HTML(http.StatusOK, admin.RenderSourceReviewWorkbenchHTML(
-			summary,
-			filter,
-			strings.TrimSpace(re.Request.URL.Query().Get("message")),
-			strings.TrimSpace(re.Request.URL.Query().Get("error")),
-		))
+		return redirectAdminAppShell(re, "/_/mrtang-admin/source/products")
 	})
 
 	se.Router.GET("/_/source-review-workbench/product", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
-		if id == "" {
-			return re.BadRequestError("missing source product id", nil)
-		}
-		detail, err := service.SourceProductDetail(re.Request.Context(), re.App, id)
-		if err != nil {
-			return re.InternalServerError("load source product detail failed", err)
-		}
-		return re.HTML(http.StatusOK, admin.RenderSourceProductDetailHTML(detail))
+		return redirectAdminAppShell(re, "/_/mrtang-admin/source/products/detail")
 	})
 
 	se.Router.GET("/_/source-review-workbench/asset", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
-		if id == "" {
-			return re.BadRequestError("missing source asset id", nil)
-		}
-		detail, err := service.SourceAssetDetail(re.Request.Context(), re.App, id)
-		if err != nil {
-			return re.InternalServerError("load source asset detail failed", err)
-		}
-		return re.HTML(http.StatusOK, admin.RenderSourceAssetDetailHTML(detail))
+		return redirectAdminAppShell(re, "/_/mrtang-admin/source/assets/detail")
 	})
 
 	se.Router.POST("/_/mrtang-admin/source/import", func(re *core.RequestEvent) error {
@@ -2078,491 +1893,268 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin/target-sync?message="+url.QueryEscape(message))
 	})
 
+	// Legacy compatibility matrix:
+	// - /_/source-review-workbench GET page entries already redirect to SPA shells.
+	// - /_/source-review-workbench POST actions remain only for old bookmarks/forms and should
+	//   keep redirecting to new SPA destinations after completion.
+	// - /_/procurement-workbench POST actions remain only for old bookmarks/forms, but must now
+	//   reuse the same audited service methods as /_/mrtang-admin/procurement/* to avoid drift.
 	se.Router.POST("/_/source-review-workbench/product/status", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		id := strings.TrimSpace(re.Request.FormValue("id"))
-		status := strings.TrimSpace(re.Request.FormValue("status"))
-		if id == "" || status == "" {
-			return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?error="+url.QueryEscape("missing product id or status"))
-		}
-		if err := service.UpdateSourceProductReviewStatusWithAudit(re.Request.Context(), re.App, id, status, sourceActionNote(re), sourceActionActor(re)); err != nil {
-			return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?error="+url.QueryEscape("update source product status failed"))
-		}
-		return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?message="+url.QueryEscape("updated source product review status"))
+		return handleSourceStatusPost(re, legacySourceProductRedirectRoute, func(id string, status string, actor pim.SourceActionActor, note string) error {
+			return service.UpdateSourceProductReviewStatusWithAudit(re.Request.Context(), re.App, id, status, note, actor)
+		})
 	})
 
 	se.Router.POST("/_/mrtang-admin/source/products/status", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		id := strings.TrimSpace(re.Request.FormValue("id"))
-		status := strings.TrimSpace(re.Request.FormValue("status"))
-		if id == "" || status == "" {
-			return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, "missing product id or status", true))
-		}
-		if err := service.UpdateSourceProductReviewStatusWithAudit(re.Request.Context(), re.App, id, status, sourceActionNote(re), sourceActionActor(re)); err != nil {
-			return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, "update source product status failed", true))
-		}
-		return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, "updated source product review status", false))
+		return handleSourceStatusPost(re, sourceProductsRouteRedirect, func(id string, status string, actor pim.SourceActionActor, note string) error {
+			return service.UpdateSourceProductReviewStatusWithAudit(re.Request.Context(), re.App, id, status, note, actor)
+		})
 	})
 
 	se.Router.POST("/_/source-review-workbench/products/batch-status", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		status := strings.TrimSpace(re.Request.FormValue("status"))
-		ids := re.Request.Form["productIds"]
-		if status == "" || len(ids) == 0 {
-			return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?error="+url.QueryEscape("missing product ids or status"))
-		}
-		summary, err := service.BatchUpdateSourceProductReviewStatusWithAudit(re.Request.Context(), re.App, ids, status, sourceActionNote(re), sourceActionActor(re))
-		if err != nil {
-			return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?error="+url.QueryEscape("batch update source product status failed"))
-		}
-		message := fmt.Sprintf("updated source products: %d success, %d failed", summary.Processed, summary.Failed)
-		return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?message="+url.QueryEscape(message))
+		return handleSourceBatchStatusPost(re, "productIds", legacySourceProductsRouteRedirect, func(ids []string, status string, actor pim.SourceActionActor, note string) (string, error) {
+			summary, err := service.BatchUpdateSourceProductReviewStatusWithAudit(re.Request.Context(), re.App, ids, status, note, actor)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("updated source products: %d success, %d failed", summary.Processed, summary.Failed), nil
+		})
 	})
 
 	se.Router.POST("/_/mrtang-admin/source/products/batch-status", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		status := strings.TrimSpace(re.Request.FormValue("status"))
-		ids := re.Request.Form["productIds"]
-		if status == "" || len(ids) == 0 {
-			return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, "missing product ids or status", true))
-		}
-		summary, err := service.BatchUpdateSourceProductReviewStatusWithAudit(re.Request.Context(), re.App, ids, status, sourceActionNote(re), sourceActionActor(re))
-		if err != nil {
-			return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, "batch update source product status failed", true))
-		}
-		message := fmt.Sprintf("updated source products: %d success, %d failed", summary.Processed, summary.Failed)
-		return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, message, false))
+		return handleSourceBatchStatusPost(re, "productIds", sourceProductsListRouteRedirect, func(ids []string, status string, actor pim.SourceActionActor, note string) (string, error) {
+			summary, err := service.BatchUpdateSourceProductReviewStatusWithAudit(re.Request.Context(), re.App, ids, status, note, actor)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("updated source products: %d success, %d failed", summary.Processed, summary.Failed), nil
+		})
 	})
 
 	se.Router.POST("/_/source-review-workbench/product/promote", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		id := strings.TrimSpace(re.Request.FormValue("id"))
-		if id == "" {
-			return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?error="+url.QueryEscape("missing product id"))
-		}
-		if err := service.PromoteSourceProductWithAudit(re.Request.Context(), re.App, id, sourceActionActor(re), sourceActionNote(re)); err != nil {
-			return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?error="+url.QueryEscape("promote source product failed"))
-		}
-		return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?message="+url.QueryEscape("promoted source product"))
+		return handleSourceSinglePost(re, legacySourceProductRedirectRoute, "promote source product failed", "promoted source product", func(id string, actor pim.SourceActionActor, note string) error {
+			return service.PromoteSourceProductWithAudit(re.Request.Context(), re.App, id, actor, note)
+		})
 	})
 
 	se.Router.POST("/_/mrtang-admin/source/products/promote", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		id := strings.TrimSpace(re.Request.FormValue("id"))
-		if id == "" {
-			return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, "missing product id", true))
-		}
-		if err := service.PromoteSourceProductWithAudit(re.Request.Context(), re.App, id, sourceActionActor(re), sourceActionNote(re)); err != nil {
-			return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, "promote source product failed", true))
-		}
-		return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, "promoted source product", false))
+		return handleSourceSinglePost(re, sourceProductsRouteRedirect, "promote source product failed", "promoted source product", func(id string, actor pim.SourceActionActor, note string) error {
+			return service.PromoteSourceProductWithAudit(re.Request.Context(), re.App, id, actor, note)
+		})
 	})
 
 	se.Router.POST("/_/source-review-workbench/product/promote-sync", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		id := strings.TrimSpace(re.Request.FormValue("id"))
-		if id == "" {
-			return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?error="+url.QueryEscape("missing product id"))
-		}
-		if err := service.PromoteAndSyncSourceProductWithAudit(re.Request.Context(), re.App, id, sourceActionActor(re), sourceActionNote(re)); err != nil {
-			return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?error="+url.QueryEscape("promote and sync source product failed"))
-		}
-		return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?message="+url.QueryEscape("promoted and synced source product"))
+		return handleSourceSinglePost(re, legacySourceProductRedirectRoute, "promote and sync source product failed", "promoted and synced source product", func(id string, actor pim.SourceActionActor, note string) error {
+			return service.PromoteAndSyncSourceProductWithAudit(re.Request.Context(), re.App, id, actor, note)
+		})
 	})
 
 	se.Router.POST("/_/mrtang-admin/source/products/promote-sync", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		id := strings.TrimSpace(re.Request.FormValue("id"))
-		if id == "" {
-			return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, "missing product id", true))
-		}
-		if err := service.PromoteAndSyncSourceProductWithAudit(re.Request.Context(), re.App, id, sourceActionActor(re), sourceActionNote(re)); err != nil {
-			return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, "promote and sync source product failed", true))
-		}
-		return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, "promoted and synced source product", false))
+		return handleSourceSinglePost(re, sourceProductsRouteRedirect, "promote and sync source product failed", "promoted and synced source product", func(id string, actor pim.SourceActionActor, note string) error {
+			return service.PromoteAndSyncSourceProductWithAudit(re.Request.Context(), re.App, id, actor, note)
+		})
 	})
 
 	se.Router.POST("/_/source-review-workbench/product/retry-sync", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		id := strings.TrimSpace(re.Request.FormValue("id"))
-		if id == "" {
-			return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?error="+url.QueryEscape("missing product id"))
-		}
-		if err := service.RetrySourceProductSyncWithAudit(re.Request.Context(), re.App, id, sourceActionActor(re), sourceActionNote(re)); err != nil {
-			return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?error="+url.QueryEscape("retry source product sync failed"))
-		}
-		return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?message="+url.QueryEscape("retried source product sync"))
+		return handleSourceSinglePost(re, legacySourceProductRedirectRoute, "retry source product sync failed", "retried source product sync", func(id string, actor pim.SourceActionActor, note string) error {
+			return service.RetrySourceProductSyncWithAudit(re.Request.Context(), re.App, id, actor, note)
+		})
 	})
 
 	se.Router.POST("/_/mrtang-admin/source/products/retry-sync", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		id := strings.TrimSpace(re.Request.FormValue("id"))
-		if id == "" {
-			return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, "missing product id", true))
-		}
-		if err := service.RetrySourceProductSyncWithAudit(re.Request.Context(), re.App, id, sourceActionActor(re), sourceActionNote(re)); err != nil {
-			return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, "retry source product sync failed", true))
-		}
-		return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, "retried source product sync", false))
+		return handleSourceSinglePost(re, sourceProductsRouteRedirect, "retry source product sync failed", "retried source product sync", func(id string, actor pim.SourceActionActor, note string) error {
+			return service.RetrySourceProductSyncWithAudit(re.Request.Context(), re.App, id, actor, note)
+		})
 	})
 
 	se.Router.POST("/_/source-review-workbench/products/promote", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		summary, err := service.PromoteApprovedSourceProducts(re.Request.Context(), re.App, 50)
-		if err != nil {
-			return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?error="+url.QueryEscape("promote approved source products failed"))
-		}
-		message := fmt.Sprintf("promoted approved source products: %d promoted, %d skipped, %d failed", summary.Promoted, summary.Skipped, summary.Failed)
-		return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?message="+url.QueryEscape(message))
+		return handleSourceListPost(re, requireAuthorizedPage, "promote approved source products failed", legacySourceProductsRouteRedirect, func(actor pim.SourceActionActor, note string) (string, error) {
+			summary, err := service.PromoteApprovedSourceProducts(re.Request.Context(), re.App, 50)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("promoted approved source products: %d promoted, %d skipped, %d failed", summary.Promoted, summary.Skipped, summary.Failed), nil
+		})
 	})
 
 	se.Router.POST("/_/source-review-workbench/products/batch-promote", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		ids := re.Request.Form["productIds"]
-		if len(ids) == 0 {
-			return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?error="+url.QueryEscape("missing product ids"))
-		}
-		summary, err := service.BatchPromoteSourceProductsWithAudit(re.Request.Context(), re.App, ids, false, sourceActionActor(re), sourceActionNote(re))
-		if err != nil {
-			return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?error="+url.QueryEscape("batch promote source products failed"))
-		}
-		message := fmt.Sprintf("promoted source products: %d success, %d failed", summary.Processed, summary.Failed)
-		return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?message="+url.QueryEscape(message))
+		return handleSourceBatchIDsPost(re, requireAuthorizedPage, "productIds", "missing product ids", "batch promote source products failed", legacySourceProductsRouteRedirect, func(ids []string, actor pim.SourceActionActor, note string) (string, error) {
+			summary, err := service.BatchPromoteSourceProductsWithAudit(re.Request.Context(), re.App, ids, false, actor, note)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("promoted source products: %d success, %d failed", summary.Processed, summary.Failed), nil
+		})
 	})
 
 	se.Router.POST("/_/mrtang-admin/source/products/batch-promote", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		ids := re.Request.Form["productIds"]
-		if len(ids) == 0 {
-			return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, "missing product ids", true))
-		}
-		summary, err := service.BatchPromoteSourceProductsWithAudit(re.Request.Context(), re.App, ids, false, sourceActionActor(re), sourceActionNote(re))
-		if err != nil {
-			return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, "batch promote source products failed", true))
-		}
-		message := fmt.Sprintf("promoted source products: %d success, %d failed", summary.Processed, summary.Failed)
-		return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, message, false))
+		return handleSourceBatchIDsPost(re, requireAuthorizedPage, "productIds", "missing product ids", "batch promote source products failed", sourceProductsListRouteRedirect, func(ids []string, actor pim.SourceActionActor, note string) (string, error) {
+			summary, err := service.BatchPromoteSourceProductsWithAudit(re.Request.Context(), re.App, ids, false, actor, note)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("promoted source products: %d success, %d failed", summary.Processed, summary.Failed), nil
+		})
 	})
 
 	se.Router.POST("/_/source-review-workbench/products/batch-promote-sync", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		ids := re.Request.Form["productIds"]
-		if len(ids) == 0 {
-			return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?error="+url.QueryEscape("missing product ids"))
-		}
-		summary, err := service.BatchPromoteSourceProductsWithAudit(re.Request.Context(), re.App, ids, true, sourceActionActor(re), sourceActionNote(re))
-		if err != nil {
-			return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?error="+url.QueryEscape("batch promote and sync source products failed"))
-		}
-		message := fmt.Sprintf("promoted and synced source products: %d success, %d failed", summary.Processed, summary.Failed)
-		return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?message="+url.QueryEscape(message))
+		return handleSourceBatchIDsPost(re, requireAuthorizedPage, "productIds", "missing product ids", "batch promote and sync source products failed", legacySourceProductsRouteRedirect, func(ids []string, actor pim.SourceActionActor, note string) (string, error) {
+			summary, err := service.BatchPromoteSourceProductsWithAudit(re.Request.Context(), re.App, ids, true, actor, note)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("promoted and synced source products: %d success, %d failed", summary.Processed, summary.Failed), nil
+		})
 	})
 
 	se.Router.POST("/_/mrtang-admin/source/products/batch-promote-sync", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		ids := re.Request.Form["productIds"]
-		if len(ids) == 0 {
-			return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, "missing product ids", true))
-		}
-		summary, err := service.BatchPromoteSourceProductsWithAudit(re.Request.Context(), re.App, ids, true, sourceActionActor(re), sourceActionNote(re))
-		if err != nil {
-			return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, "batch promote and sync source products failed", true))
-		}
-		message := fmt.Sprintf("promoted and synced source products: %d success, %d failed", summary.Processed, summary.Failed)
-		return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, message, false))
+		return handleSourceBatchIDsPost(re, requireAuthorizedPage, "productIds", "missing product ids", "batch promote and sync source products failed", sourceProductsListRouteRedirect, func(ids []string, actor pim.SourceActionActor, note string) (string, error) {
+			summary, err := service.BatchPromoteSourceProductsWithAudit(re.Request.Context(), re.App, ids, true, actor, note)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("promoted and synced source products: %d success, %d failed", summary.Processed, summary.Failed), nil
+		})
 	})
 
 	se.Router.POST("/_/source-review-workbench/products/batch-retry-sync", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		ids := re.Request.Form["productIds"]
-		if len(ids) == 0 {
-			return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?error="+url.QueryEscape("missing product ids"))
-		}
-		summary, err := service.BatchRetrySourceProductSyncWithAudit(re.Request.Context(), re.App, ids, sourceActionActor(re), sourceActionNote(re))
-		if err != nil {
-			return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?error="+url.QueryEscape("batch retry source sync failed"))
-		}
-		message := fmt.Sprintf("retried source product sync: %d success, %d failed", summary.Processed, summary.Failed)
-		return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?message="+url.QueryEscape(message))
+		return handleSourceBatchIDsPost(re, requireAuthorizedPage, "productIds", "missing product ids", "batch retry source sync failed", legacySourceProductsRouteRedirect, func(ids []string, actor pim.SourceActionActor, note string) (string, error) {
+			summary, err := service.BatchRetrySourceProductSyncWithAudit(re.Request.Context(), re.App, ids, actor, note)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("retried source product sync: %d success, %d failed", summary.Processed, summary.Failed), nil
+		})
 	})
 
 	se.Router.POST("/_/mrtang-admin/source/products/batch-retry-sync", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		ids := re.Request.Form["productIds"]
-		if len(ids) == 0 {
-			return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, "missing product ids", true))
-		}
-		summary, err := service.BatchRetrySourceProductSyncWithAudit(re.Request.Context(), re.App, ids, sourceActionActor(re), sourceActionNote(re))
-		if err != nil {
-			return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, "batch retry source sync failed", true))
-		}
-		message := fmt.Sprintf("retried source product sync: %d success, %d failed", summary.Processed, summary.Failed)
-		return re.Redirect(http.StatusSeeOther, sourceProductsRedirect(re, message, false))
+		return handleSourceBatchIDsPost(re, requireAuthorizedPage, "productIds", "missing product ids", "batch retry source sync failed", sourceProductsListRouteRedirect, func(ids []string, actor pim.SourceActionActor, note string) (string, error) {
+			summary, err := service.BatchRetrySourceProductSyncWithAudit(re.Request.Context(), re.App, ids, actor, note)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("retried source product sync: %d success, %d failed", summary.Processed, summary.Failed), nil
+		})
 	})
 
 	se.Router.POST("/_/source-review-workbench/assets/process", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		assetID := strings.TrimSpace(re.Request.FormValue("id"))
-		if assetID != "" {
-			if err := service.ProcessSourceAssetWithAudit(re.Request.Context(), re.App, assetID, sourceActionActor(re), sourceActionNote(re)); err != nil {
-				return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?error="+url.QueryEscape("process source asset failed"))
-			}
-			return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?message="+url.QueryEscape("processed single source asset"))
-		}
-
-		summary, err := service.ProcessPendingSourceAssets(re.Request.Context(), re.App, 20)
-		if err != nil {
-			return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?error="+url.QueryEscape("process source assets failed"))
-		}
-		message := fmt.Sprintf("processed source assets: %d success, %d failed", summary.Processed, summary.Failed)
-		return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?message="+url.QueryEscape(message))
+		return handleSourceAssetProcessPost(re, legacySourceAssetRedirectRoute, legacySourceAssetsListRouteRedirect, service)
 	})
 
 	se.Router.POST("/_/mrtang-admin/source/assets/process", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		assetID := strings.TrimSpace(re.Request.FormValue("id"))
-		if assetID != "" {
-			if err := service.ProcessSourceAssetWithAudit(re.Request.Context(), re.App, assetID, sourceActionActor(re), sourceActionNote(re)); err != nil {
-				return re.Redirect(http.StatusSeeOther, sourceAssetsRedirect(re, "process source asset failed", true))
-			}
-			return re.Redirect(http.StatusSeeOther, sourceAssetsRedirect(re, "processed single source asset", false))
-		}
-
-		summary, err := service.ProcessPendingSourceAssets(re.Request.Context(), re.App, 20)
-		if err != nil {
-			return re.Redirect(http.StatusSeeOther, sourceAssetsRedirect(re, "process source assets failed", true))
-		}
-		message := fmt.Sprintf("processed source assets: %d success, %d failed", summary.Processed, summary.Failed)
-		return re.Redirect(http.StatusSeeOther, sourceAssetsRedirect(re, message, false))
+		return handleSourceAssetProcessPost(re, sourceAssetsRouteRedirect, sourceAssetsListRouteRedirect, service)
 	})
 
 	se.Router.POST("/_/mrtang-admin/source/assets/batch-process", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		ids := re.Request.Form["assetIds"]
-		if len(ids) == 0 {
-			return re.Redirect(http.StatusSeeOther, sourceAssetsRedirect(re, "missing asset ids", true))
-		}
-		summary, err := service.BatchProcessSourceAssetsWithAudit(re.Request.Context(), re.App, ids, sourceActionActor(re), sourceActionNote(re))
-		if err != nil {
-			return re.Redirect(http.StatusSeeOther, sourceAssetsRedirect(re, "batch process source assets failed", true))
-		}
-		message := fmt.Sprintf("processed source assets: %d success, %d failed", summary.Processed, summary.Failed)
-		return re.Redirect(http.StatusSeeOther, sourceAssetsRedirect(re, message, false))
+		return handleSourceBatchIDsPost(re, requireAuthorizedPage, "assetIds", "missing asset ids", "batch process source assets failed", sourceAssetsListRouteRedirect, func(ids []string, actor pim.SourceActionActor, note string) (string, error) {
+			summary, err := service.BatchProcessSourceAssetsWithAudit(re.Request.Context(), re.App, ids, actor, note)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("processed source assets: %d success, %d failed", summary.Processed, summary.Failed), nil
+		})
 	})
 
 	se.Router.POST("/_/mrtang-admin/source/assets/reprocess-failed", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		summary, err := service.ProcessFailedSourceAssets(re.Request.Context(), re.App, 50)
-		if err != nil {
-			return re.Redirect(http.StatusSeeOther, sourceAssetsRedirect(re, "reprocess failed source assets failed", true))
-		}
-		message := fmt.Sprintf("reprocessed failed source assets: %d success, %d failed", summary.Processed, summary.Failed)
-		return re.Redirect(http.StatusSeeOther, sourceAssetsRedirect(re, message, false))
+		return handleSourceListPost(re, requireAuthorizedPage, "reprocess failed source assets failed", sourceAssetsListRouteRedirect, func(actor pim.SourceActionActor, note string) (string, error) {
+			summary, err := service.ProcessFailedSourceAssets(re.Request.Context(), re.App, 50)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("reprocessed failed source assets: %d success, %d failed", summary.Processed, summary.Failed), nil
+		})
 	})
 
 	se.Router.POST("/_/source-review-workbench/assets/batch-process", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		ids := re.Request.Form["assetIds"]
-		if len(ids) == 0 {
-			return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?error="+url.QueryEscape("missing asset ids"))
-		}
-		summary, err := service.BatchProcessSourceAssetsWithAudit(re.Request.Context(), re.App, ids, sourceActionActor(re), sourceActionNote(re))
-		if err != nil {
-			return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?error="+url.QueryEscape("batch process source assets failed"))
-		}
-		message := fmt.Sprintf("processed source assets: %d success, %d failed", summary.Processed, summary.Failed)
-		return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?message="+url.QueryEscape(message))
+		return handleSourceBatchIDsPost(re, requireAuthorizedPage, "assetIds", "missing asset ids", "batch process source assets failed", legacySourceAssetsListRouteRedirect, func(ids []string, actor pim.SourceActionActor, note string) (string, error) {
+			summary, err := service.BatchProcessSourceAssetsWithAudit(re.Request.Context(), re.App, ids, actor, note)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("processed source assets: %d success, %d failed", summary.Processed, summary.Failed), nil
+		})
 	})
 
 	se.Router.POST("/_/source-review-workbench/assets/reprocess-failed", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		summary, err := service.ProcessFailedSourceAssets(re.Request.Context(), re.App, 50)
-		if err != nil {
-			return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?error="+url.QueryEscape("reprocess failed source assets failed"))
-		}
-		message := fmt.Sprintf("reprocessed failed source assets: %d success, %d failed", summary.Processed, summary.Failed)
-		return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?message="+url.QueryEscape(message))
+		return handleSourceListPost(re, requireAuthorizedPage, "reprocess failed source assets failed", legacySourceAssetsListRouteRedirect, func(actor pim.SourceActionActor, note string) (string, error) {
+			summary, err := service.ProcessFailedSourceAssets(re.Request.Context(), re.App, 50)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("reprocessed failed source assets: %d success, %d failed", summary.Processed, summary.Failed), nil
+		})
 	})
 
 	se.Router.POST("/_/source-review-workbench/supplier-products/sync", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		result, err := service.SyncApproved(re.Request.Context(), re.App, cfg.Workflow.SyncBatchSize)
-		if err != nil {
-			return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?error="+url.QueryEscape("sync approved supplier products failed"))
-		}
-		message := fmt.Sprintf("sync approved supplier products: processed %d, updated %d, failed %d", result.Processed, result.Updated, result.Failed)
-		return re.Redirect(http.StatusSeeOther, "/_/source-review-workbench?message="+url.QueryEscape(message))
+		return handleSourceListPost(re, requireAuthorizedPage, "sync approved supplier products failed", legacySourceProductsRouteRedirect, func(actor pim.SourceActionActor, note string) (string, error) {
+			result, err := service.SyncApproved(re.Request.Context(), re.App, cfg.Workflow.SyncBatchSize)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("sync approved supplier products: processed %d, updated %d, failed %d", result.Processed, result.Updated, result.Failed), nil
+		})
 	})
 
 	se.Router.POST("/_/mrtang-admin/source/assets/process-pending", func(re *core.RequestEvent) error {
-		if !authorizedAdminModule(re, cfg, "source") {
-			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
-		}
-
-		summary, err := service.ProcessPendingSourceAssets(re.Request.Context(), re.App, 20)
-		if err != nil {
-			return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin?error="+url.QueryEscape("process source assets failed"))
-		}
-		message := fmt.Sprintf("processed source assets: %d success, %d failed", summary.Processed, summary.Failed)
-		return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin?message="+url.QueryEscape(message))
+		return handleSourceListPost(re, func(re *core.RequestEvent) error {
+			return requireAuthorizedModule(re, cfg, "source", "当前账号没有源数据模块权限。")
+		}, "process source assets failed", adminRootRouteRedirect, func(actor pim.SourceActionActor, note string) (string, error) {
+			summary, err := service.ProcessPendingSourceAssets(re.Request.Context(), re.App, 20)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("processed source assets: %d success, %d failed", summary.Processed, summary.Failed), nil
+		})
 	})
 
 	se.Router.POST("/_/mrtang-admin/source/products/promote-approved", func(re *core.RequestEvent) error {
-		if !authorizedAdminModule(re, cfg, "source") {
-			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
-		}
-
-		summary, err := service.PromoteApprovedSourceProducts(re.Request.Context(), re.App, 50)
-		if err != nil {
-			return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin?error="+url.QueryEscape("promote source products failed"))
-		}
-
-		message := fmt.Sprintf("promoted approved source products: %d promoted, %d skipped, %d failed", summary.Promoted, summary.Skipped, summary.Failed)
-		return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin?message="+url.QueryEscape(message))
+		return handleSourceListPost(re, func(re *core.RequestEvent) error {
+			return requireAuthorizedModule(re, cfg, "source", "当前账号没有源数据模块权限。")
+		}, "promote source products failed", adminRootRouteRedirect, func(actor pim.SourceActionActor, note string) (string, error) {
+			summary, err := service.PromoteApprovedSourceProducts(re.Request.Context(), re.App, 50)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("promoted approved source products: %d promoted, %d skipped, %d failed", summary.Promoted, summary.Skipped, summary.Failed), nil
+		})
 	})
 
 	se.Router.POST("/_/mrtang-admin/supplier-products/sync", func(re *core.RequestEvent) error {
-		if !authorizedAdminModule(re, cfg, "source") {
-			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
-		}
-
-		result, err := service.SyncApproved(re.Request.Context(), re.App, cfg.Workflow.SyncBatchSize)
-		if err != nil {
-			return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin?error="+url.QueryEscape("sync approved supplier products failed"))
-		}
-
-		message := fmt.Sprintf("sync approved supplier products: processed %d, updated %d, failed %d", result.Processed, result.Updated, result.Failed)
-		return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin?message="+url.QueryEscape(message))
+		return handleSourceListPost(re, func(re *core.RequestEvent) error {
+			return requireAuthorizedModule(re, cfg, "source", "当前账号没有源数据模块权限。")
+		}, "sync approved supplier products failed", adminRootRouteRedirect, func(actor pim.SourceActionActor, note string) (string, error) {
+			result, err := service.SyncApproved(re.Request.Context(), re.App, cfg.Workflow.SyncBatchSize)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("sync approved supplier products: processed %d, updated %d, failed %d", result.Processed, result.Updated, result.Failed), nil
+		})
 	})
 
 	se.Router.GET("/_/mrtang-admin/procurement", func(re *core.RequestEvent) error {
-		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
-			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
-				"采购",
-				"采购列表、风险筛选和最近动作改成前端异步加载；详情页先继续复用现有服务端版本。",
-				"/_/mrtang-admin/procurement",
-				authorizedAdminModule(re, cfg, "source"),
-				authorizedAdminModule(re, cfg, "procurement"),
-			))
+		if adminLegacyRedirect(re) {
+			return redirectAdminAppShell(re, "/_/mrtang-admin/procurement")
 		}
-		if !authorizedAdminModule(re, cfg, "procurement") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无采购模块权限", "当前账号没有采购模块权限，请联系管理员配置 `PIM_PROCUREMENT_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
-
-		summary, err := service.ProcurementWorkbenchSummaryFiltered(
-			re.Request.Context(),
-			re.App,
-			readQueryInt(re, "pageSize", 20),
-			strings.TrimSpace(re.Request.URL.Query().Get("status")),
-			strings.TrimSpace(re.Request.URL.Query().Get("risk")),
-			strings.TrimSpace(re.Request.URL.Query().Get("q")),
-			readQueryInt(re, "page", 1),
-		)
-		if err != nil {
-			return re.InternalServerError("load procurement workbench failed", err)
-		}
-
-		return re.HTML(http.StatusOK, admin.RenderProcurementWorkbenchHTML(summary))
+		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+			"采购",
+			"采购列表、风险筛选和最近动作改成前端异步加载；详情页先继续复用现有服务端版本。",
+			"/_/mrtang-admin/procurement",
+			authorizedAdminModule(re, cfg, "source"),
+			authorizedAdminModule(re, cfg, "procurement"),
+		))
 	})
 
 	se.Router.GET("/_/mrtang-admin/procurement/detail", func(re *core.RequestEvent) error {
-		if strings.TrimSpace(re.Request.URL.Query().Get("legacy")) != "1" {
-			return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
-				"采购详情",
-				"详情页也切到前端异步渲染，风险商品和原始摘要不再阻塞整页。",
-				"/_/mrtang-admin/procurement/detail",
-				authorizedAdminModule(re, cfg, "source"),
-				authorizedAdminModule(re, cfg, "procurement"),
-			))
+		if adminLegacyRedirect(re) {
+			return redirectAdminAppShell(re, "/_/mrtang-admin/procurement/detail")
 		}
-		if !authorizedAdminModule(re, cfg, "procurement") {
-			return re.HTML(http.StatusForbidden, admin.RenderForbiddenPageHTML("无采购模块权限", "当前账号没有采购模块权限，请联系管理员配置 `PIM_PROCUREMENT_ADMIN_EMAILS`。", "/_/mrtang-admin"))
-		}
-		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
-		if id == "" {
-			return re.BadRequestError("missing procurement order id", nil)
-		}
-		order, err := service.GetProcurementOrder(re.Request.Context(), re.App, id)
-		if err != nil {
-			return re.InternalServerError("load procurement order detail failed", err)
-		}
-		returnTo := strings.TrimSpace(re.Request.URL.Query().Get("returnTo"))
-		if returnTo == "" {
-			returnTo = "/_/mrtang-admin/procurement"
-		}
-		return re.HTML(http.StatusOK, admin.RenderProcurementDetailHTML(order, returnTo))
+		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+			"采购详情",
+			"详情页也切到前端异步渲染，风险商品和原始摘要不再阻塞整页。",
+			"/_/mrtang-admin/procurement/detail",
+			authorizedAdminModule(re, cfg, "source"),
+			authorizedAdminModule(re, cfg, "procurement"),
+		))
 	})
 
 	se.Router.GET("/_/procurement-workbench", func(re *core.RequestEvent) error {
@@ -2573,111 +2165,33 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 	})
 
 	se.Router.POST("/_/mrtang-admin/procurement/order/status", func(re *core.RequestEvent) error {
-		if !authorizedAdminModule(re, cfg, "procurement") {
-			return re.ForbiddenError("当前账号没有采购模块权限。", nil)
-		}
-
-		id := strings.TrimSpace(re.Request.FormValue("id"))
-		status := strings.TrimSpace(re.Request.FormValue("status"))
-		note := strings.TrimSpace(re.Request.FormValue("note"))
-		if id == "" || status == "" {
-			return re.BadRequestError("missing procurement order id or status", nil)
-		}
-
-		if _, err := service.UpdateProcurementOrderStatusWithAudit(re.Request.Context(), re.App, id, status, note, procurementActionActor(re)); err != nil {
-			return re.BadRequestError("update procurement order status failed", err)
-		}
-
-		return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin/procurement")
+		return handleProcurementStatusPost(re, func(re *core.RequestEvent) error {
+			return requireAuthorizedModule(re, cfg, "procurement", "当前账号没有采购模块权限。")
+		}, service)
 	})
 
 	se.Router.POST("/_/procurement-workbench/order/status", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		id := strings.TrimSpace(re.Request.FormValue("id"))
-		status := strings.TrimSpace(re.Request.FormValue("status"))
-		note := strings.TrimSpace(re.Request.FormValue("note"))
-		if id == "" || status == "" {
-			return re.BadRequestError("missing procurement order id or status", nil)
-		}
-
-		if _, err := service.UpdateProcurementOrderStatus(re.Request.Context(), re.App, id, status, note); err != nil {
-			return re.BadRequestError("update procurement order status failed", err)
-		}
-
-		return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin/procurement")
+		return handleProcurementStatusPost(re, requireAuthorizedPage, service)
 	})
 
 	se.Router.POST("/_/mrtang-admin/procurement/order/export", func(re *core.RequestEvent) error {
-		if !authorizedAdminModule(re, cfg, "procurement") {
-			return re.ForbiddenError("当前账号没有采购模块权限。", nil)
-		}
-
-		id := strings.TrimSpace(re.Request.FormValue("id"))
-		if id == "" {
-			return re.BadRequestError("missing procurement order id", nil)
-		}
-
-		if _, err := service.ExportProcurementOrderWithAudit(re.Request.Context(), re.App, id, procurementActionActor(re), strings.TrimSpace(re.Request.FormValue("note"))); err != nil {
-			return re.BadRequestError("export procurement order failed", err)
-		}
-
-		return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin/procurement")
+		return handleProcurementExportPost(re, func(re *core.RequestEvent) error {
+			return requireAuthorizedModule(re, cfg, "procurement", "当前账号没有采购模块权限。")
+		}, service)
 	})
 
 	se.Router.POST("/_/procurement-workbench/order/export", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		id := strings.TrimSpace(re.Request.FormValue("id"))
-		if id == "" {
-			return re.BadRequestError("missing procurement order id", nil)
-		}
-
-		if _, err := service.ExportProcurementOrder(re.Request.Context(), re.App, id); err != nil {
-			return re.BadRequestError("export procurement order failed", err)
-		}
-
-		return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin/procurement")
+		return handleProcurementExportPost(re, requireAuthorizedPage, service)
 	})
 
 	se.Router.POST("/_/mrtang-admin/procurement/order/review", func(re *core.RequestEvent) error {
-		if !authorizedAdminModule(re, cfg, "procurement") {
-			return re.ForbiddenError("当前账号没有采购模块权限。", nil)
-		}
-
-		id := strings.TrimSpace(re.Request.FormValue("id"))
-		note := strings.TrimSpace(re.Request.FormValue("note"))
-		if id == "" {
-			return re.BadRequestError("missing procurement order id", nil)
-		}
-
-		if _, err := service.ReviewProcurementOrderWithAudit(re.Request.Context(), re.App, id, note, procurementActionActor(re)); err != nil {
-			return re.BadRequestError("review procurement order failed", err)
-		}
-
-		return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin/procurement")
+		return handleProcurementReviewPost(re, func(re *core.RequestEvent) error {
+			return requireAuthorizedModule(re, cfg, "procurement", "当前账号没有采购模块权限。")
+		}, service)
 	})
 
 	se.Router.POST("/_/procurement-workbench/order/review", func(re *core.RequestEvent) error {
-		if !admin.AuthorizedPage(re) {
-			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
-		}
-
-		id := strings.TrimSpace(re.Request.FormValue("id"))
-		note := strings.TrimSpace(re.Request.FormValue("note"))
-		if id == "" {
-			return re.BadRequestError("missing procurement order id", nil)
-		}
-
-		if _, err := service.ReviewProcurementOrder(re.Request.Context(), re.App, id, note); err != nil {
-			return re.BadRequestError("review procurement order failed", err)
-		}
-
-		return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin/procurement")
+		return handleProcurementReviewPost(re, requireAuthorizedPage, service)
 	})
 }
 
@@ -2687,6 +2201,9 @@ func serveAdminAsset(re *core.RequestEvent, name string, contentType string) err
 		return re.NotFoundError("File not found.", err)
 	}
 	re.Response.Header().Set("Content-Type", contentType)
+	re.Response.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	re.Response.Header().Set("Pragma", "no-cache")
+	re.Response.Header().Set("Expires", "0")
 	return re.String(http.StatusOK, string(body))
 }
 
@@ -2778,6 +2295,220 @@ func targetSyncActor(re *core.RequestEvent) pim.TargetSyncActor {
 	}
 }
 
+type adminRouteGuard func(*core.RequestEvent) error
+type sourceSingleRedirect func(re *core.RequestEvent, id string, message string, isError bool) string
+type sourceListRedirect func(re *core.RequestEvent, message string, isError bool) string
+
+func requireAuthorizedPage(re *core.RequestEvent) error {
+	if admin.AuthorizedPage(re) {
+		return nil
+	}
+	return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
+}
+
+func requireAuthorizedModule(re *core.RequestEvent, cfg config.Config, module string, message string) error {
+	if authorizedAdminModule(re, cfg, module) {
+		return nil
+	}
+	return re.ForbiddenError(message, nil)
+}
+
+func handleProcurementStatusPost(re *core.RequestEvent, guard adminRouteGuard, service *pim.Service) error {
+	if err := guard(re); err != nil {
+		return err
+	}
+
+	id := strings.TrimSpace(re.Request.FormValue("id"))
+	status := strings.TrimSpace(re.Request.FormValue("status"))
+	note := strings.TrimSpace(re.Request.FormValue("note"))
+	if id == "" || status == "" {
+		return re.BadRequestError("missing procurement order id or status", nil)
+	}
+
+	if _, err := service.UpdateProcurementOrderStatusWithAudit(re.Request.Context(), re.App, id, status, note, procurementActionActor(re)); err != nil {
+		return re.BadRequestError("update procurement order status failed", err)
+	}
+
+	return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin/procurement")
+}
+
+func handleProcurementExportPost(re *core.RequestEvent, guard adminRouteGuard, service *pim.Service) error {
+	if err := guard(re); err != nil {
+		return err
+	}
+
+	id := strings.TrimSpace(re.Request.FormValue("id"))
+	if id == "" {
+		return re.BadRequestError("missing procurement order id", nil)
+	}
+
+	if _, err := service.ExportProcurementOrderWithAudit(re.Request.Context(), re.App, id, procurementActionActor(re), strings.TrimSpace(re.Request.FormValue("note"))); err != nil {
+		return re.BadRequestError("export procurement order failed", err)
+	}
+
+	return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin/procurement")
+}
+
+func handleProcurementReviewPost(re *core.RequestEvent, guard adminRouteGuard, service *pim.Service) error {
+	if err := guard(re); err != nil {
+		return err
+	}
+
+	id := strings.TrimSpace(re.Request.FormValue("id"))
+	note := strings.TrimSpace(re.Request.FormValue("note"))
+	if id == "" {
+		return re.BadRequestError("missing procurement order id", nil)
+	}
+
+	if _, err := service.ReviewProcurementOrderWithAudit(re.Request.Context(), re.App, id, note, procurementActionActor(re)); err != nil {
+		return re.BadRequestError("review procurement order failed", err)
+	}
+
+	return re.Redirect(http.StatusSeeOther, "/_/mrtang-admin/procurement")
+}
+
+func handleSourceSinglePost(re *core.RequestEvent, redirect sourceSingleRedirect, errorMessage string, successMessage string, action func(id string, actor pim.SourceActionActor, note string) error) error {
+	if err := requireAuthorizedPage(re); err != nil {
+		return err
+	}
+
+	id := strings.TrimSpace(re.Request.FormValue("id"))
+	if id == "" {
+		return re.Redirect(http.StatusSeeOther, redirect(re, id, "missing product id", true))
+	}
+
+	if err := action(id, sourceActionActor(re), sourceActionNote(re)); err != nil {
+		return re.Redirect(http.StatusSeeOther, redirect(re, id, errorMessage, true))
+	}
+
+	return re.Redirect(http.StatusSeeOther, redirect(re, id, successMessage, false))
+}
+
+func handleSourceStatusPost(re *core.RequestEvent, redirect sourceSingleRedirect, action func(id string, status string, actor pim.SourceActionActor, note string) error) error {
+	if err := requireAuthorizedPage(re); err != nil {
+		return err
+	}
+
+	id := strings.TrimSpace(re.Request.FormValue("id"))
+	status := strings.TrimSpace(re.Request.FormValue("status"))
+	if id == "" || status == "" {
+		return re.Redirect(http.StatusSeeOther, redirect(re, id, "missing product id or status", true))
+	}
+
+	if err := action(id, status, sourceActionActor(re), sourceActionNote(re)); err != nil {
+		return re.Redirect(http.StatusSeeOther, redirect(re, id, "update source product status failed", true))
+	}
+
+	return re.Redirect(http.StatusSeeOther, redirect(re, id, "updated source product review status", false))
+}
+
+func handleSourceBatchStatusPost(re *core.RequestEvent, idsField string, redirect sourceListRedirect, action func(ids []string, status string, actor pim.SourceActionActor, note string) (string, error)) error {
+	if err := requireAuthorizedPage(re); err != nil {
+		return err
+	}
+
+	status := strings.TrimSpace(re.Request.FormValue("status"))
+	ids := re.Request.Form[idsField]
+	if status == "" || len(ids) == 0 {
+		return re.Redirect(http.StatusSeeOther, redirect(re, "missing product ids or status", true))
+	}
+
+	message, err := action(ids, status, sourceActionActor(re), sourceActionNote(re))
+	if err != nil {
+		return re.Redirect(http.StatusSeeOther, redirect(re, "batch update source product status failed", true))
+	}
+
+	return re.Redirect(http.StatusSeeOther, redirect(re, message, false))
+}
+
+func handleSourceBatchIDsPost(re *core.RequestEvent, guard adminRouteGuard, idsField string, missingMessage string, errorMessage string, redirect sourceListRedirect, action func(ids []string, actor pim.SourceActionActor, note string) (string, error)) error {
+	if err := guard(re); err != nil {
+		return err
+	}
+
+	ids := re.Request.Form[idsField]
+	if len(ids) == 0 {
+		return re.Redirect(http.StatusSeeOther, redirect(re, missingMessage, true))
+	}
+
+	message, err := action(ids, sourceActionActor(re), sourceActionNote(re))
+	if err != nil {
+		return re.Redirect(http.StatusSeeOther, redirect(re, errorMessage, true))
+	}
+
+	return re.Redirect(http.StatusSeeOther, redirect(re, message, false))
+}
+
+func handleSourceListPost(re *core.RequestEvent, guard adminRouteGuard, errorMessage string, redirect sourceListRedirect, action func(actor pim.SourceActionActor, note string) (string, error)) error {
+	if err := guard(re); err != nil {
+		return err
+	}
+
+	message, err := action(sourceActionActor(re), sourceActionNote(re))
+	if err != nil {
+		return re.Redirect(http.StatusSeeOther, redirect(re, errorMessage, true))
+	}
+
+	return re.Redirect(http.StatusSeeOther, redirect(re, message, false))
+}
+
+func handleSourceAssetProcessPost(re *core.RequestEvent, singleRedirect sourceSingleRedirect, listRedirect sourceListRedirect, service *pim.Service) error {
+	if err := requireAuthorizedPage(re); err != nil {
+		return err
+	}
+
+	assetID := strings.TrimSpace(re.Request.FormValue("id"))
+	if assetID != "" {
+		if err := service.ProcessSourceAssetWithAudit(re.Request.Context(), re.App, assetID, sourceActionActor(re), sourceActionNote(re)); err != nil {
+			return re.Redirect(http.StatusSeeOther, singleRedirect(re, assetID, "process source asset failed", true))
+		}
+		return re.Redirect(http.StatusSeeOther, singleRedirect(re, assetID, "processed single source asset", false))
+	}
+
+	summary, err := service.ProcessPendingSourceAssets(re.Request.Context(), re.App, 20)
+	if err != nil {
+		return re.Redirect(http.StatusSeeOther, listRedirect(re, "process source assets failed", true))
+	}
+	message := fmt.Sprintf("processed source assets: %d success, %d failed", summary.Processed, summary.Failed)
+	return re.Redirect(http.StatusSeeOther, listRedirect(re, message, false))
+}
+
+func sourceProductsRouteRedirect(re *core.RequestEvent, id string, message string, isError bool) string {
+	return sourceProductsRedirect(re, message, isError)
+}
+
+func legacySourceProductRedirectRoute(re *core.RequestEvent, id string, message string, isError bool) string {
+	return legacySourceProductRedirect(id, message, isError)
+}
+
+func sourceProductsListRouteRedirect(re *core.RequestEvent, message string, isError bool) string {
+	return sourceProductsRedirect(re, message, isError)
+}
+
+func legacySourceProductsRouteRedirect(re *core.RequestEvent, message string, isError bool) string {
+	return legacySourceProductsRedirect(message, isError)
+}
+
+func sourceAssetsRouteRedirect(re *core.RequestEvent, id string, message string, isError bool) string {
+	return sourceAssetsRedirect(re, message, isError)
+}
+
+func legacySourceAssetRedirectRoute(re *core.RequestEvent, id string, message string, isError bool) string {
+	return legacySourceAssetRedirect(id, message, isError)
+}
+
+func sourceAssetsListRouteRedirect(re *core.RequestEvent, message string, isError bool) string {
+	return sourceAssetsRedirect(re, message, isError)
+}
+
+func legacySourceAssetsListRouteRedirect(re *core.RequestEvent, message string, isError bool) string {
+	return legacySourceAssetsRedirect(message, isError)
+}
+
+func adminRootRouteRedirect(re *core.RequestEvent, message string, isError bool) string {
+	return adminMessageRedirect("/_/mrtang-admin", message, isError)
+}
+
 func authorizedAdminModule(re *core.RequestEvent, cfg config.Config, module string) bool {
 	if !admin.AuthorizedPage(re) {
 		return false
@@ -2817,6 +2548,23 @@ func authorizedAdminModule(re *core.RequestEvent, cfg config.Config, module stri
 	return false
 }
 
+func adminLegacyRedirect(re *core.RequestEvent) bool {
+	return strings.TrimSpace(re.Request.URL.Query().Get("legacy")) == "1"
+}
+
+func redirectAdminAppShell(re *core.RequestEvent, path string) error {
+	query := re.Request.URL.Query()
+	query.Del("legacy")
+	target := strings.TrimSpace(path)
+	if target == "" {
+		target = "/_/mrtang-admin"
+	}
+	if encoded := query.Encode(); encoded != "" {
+		target += "?" + encoded
+	}
+	return re.Redirect(http.StatusSeeOther, target)
+}
+
 func sourceProductsRedirect(re *core.RequestEvent, message string, isError bool) string {
 	target := strings.TrimSpace(re.Request.FormValue("returnTo"))
 	if !strings.HasPrefix(target, "/_/mrtang-admin/source/products") {
@@ -2836,10 +2584,53 @@ func sourceProductsRedirect(re *core.RequestEvent, message string, isError bool)
 	return target + sep + key + "=" + url.QueryEscape(message)
 }
 
+func legacySourceProductsRedirect(message string, isError bool) string {
+	return adminMessageRedirect("/_/mrtang-admin/source/products", message, isError)
+}
+
+func legacySourceProductRedirect(id string, message string, isError bool) string {
+	target := "/_/mrtang-admin/source/products"
+	if strings.TrimSpace(id) != "" {
+		target = "/_/mrtang-admin/source/products/detail?id=" + url.QueryEscape(strings.TrimSpace(id))
+	}
+	return adminMessageRedirect(target, message, isError)
+}
+
 func sourceAssetsRedirect(re *core.RequestEvent, message string, isError bool) string {
 	target := strings.TrimSpace(re.Request.FormValue("returnTo"))
 	if !strings.HasPrefix(target, "/_/mrtang-admin/source/assets") {
 		target = "/_/mrtang-admin/source/assets"
+	}
+	if message == "" {
+		return target
+	}
+	sep := "?"
+	if strings.Contains(target, "?") {
+		sep = "&"
+	}
+	key := "message"
+	if isError {
+		key = "error"
+	}
+	return target + sep + key + "=" + url.QueryEscape(message)
+}
+
+func legacySourceAssetsRedirect(message string, isError bool) string {
+	return adminMessageRedirect("/_/mrtang-admin/source/assets", message, isError)
+}
+
+func legacySourceAssetRedirect(id string, message string, isError bool) string {
+	target := "/_/mrtang-admin/source/assets"
+	if strings.TrimSpace(id) != "" {
+		target = "/_/mrtang-admin/source/assets/detail?id=" + url.QueryEscape(strings.TrimSpace(id))
+	}
+	return adminMessageRedirect(target, message, isError)
+}
+
+func adminMessageRedirect(target string, message string, isError bool) string {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		target = "/_/mrtang-admin"
 	}
 	if message == "" {
 		return target

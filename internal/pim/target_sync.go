@@ -156,23 +156,34 @@ type TargetSyncBaseSummary struct {
 }
 
 type TargetSyncLiveSummary struct {
-	SourceMode              string                   `json:"sourceMode"`
-	ExpectedNodeCount       int                      `json:"expectedNodeCount"`
-	ExpectedProductCount    int                      `json:"expectedProductCount"`
-	ExpectedAssetCount      int                      `json:"expectedAssetCount"`
-	ExpectedMultiUnitCount  int                      `json:"expectedMultiUnitCount"`
-	TopLevelCount           int                      `json:"topLevelCount"`
-	DiffNewCount            int                      `json:"diffNewCount"`
-	DiffChangedCount        int                      `json:"diffChangedCount"`
-	DiffMissingCount        int                      `json:"diffMissingCount"`
-	ProductDiffNewCount     int                      `json:"productDiffNewCount"`
-	ProductDiffChangedCount int                      `json:"productDiffChangedCount"`
-	AssetDiffNewCount       int                      `json:"assetDiffNewCount"`
-	AssetDiffChangedCount   int                      `json:"assetDiffChangedCount"`
-	ScopeOptions            []TargetSyncScopeOption  `json:"scopeOptions"`
-	CategoryDiffs           []TargetCategoryDiffItem `json:"categoryDiffs"`
-	CheckoutSources         []TargetCheckoutSource   `json:"checkoutSources"`
-	UsedStoredData          bool                     `json:"usedStoredData"`
+	SourceMode              string                          `json:"sourceMode"`
+	ExpectedNodeCount       int                             `json:"expectedNodeCount"`
+	ExpectedProductCount    int                             `json:"expectedProductCount"`
+	ExpectedAssetCount      int                             `json:"expectedAssetCount"`
+	ExpectedMultiUnitCount  int                             `json:"expectedMultiUnitCount"`
+	TopLevelCount           int                             `json:"topLevelCount"`
+	DiffNewCount            int                             `json:"diffNewCount"`
+	DiffChangedCount        int                             `json:"diffChangedCount"`
+	DiffMissingCount        int                             `json:"diffMissingCount"`
+	ProductDiffNewCount     int                             `json:"productDiffNewCount"`
+	ProductDiffChangedCount int                             `json:"productDiffChangedCount"`
+	AssetDiffNewCount       int                             `json:"assetDiffNewCount"`
+	AssetDiffChangedCount   int                             `json:"assetDiffChangedCount"`
+	CategoryWarningSummary  string                          `json:"categoryWarningSummary"`
+	CategorySkippedCount    int                             `json:"categorySkippedCount"`
+	CategoryFallbackCount   int                             `json:"categoryFallbackCount"`
+	CategoryWarningItems    []TargetSyncCategoryWarningItem `json:"categoryWarningItems"`
+	ScopeOptions            []TargetSyncScopeOption         `json:"scopeOptions"`
+	CategoryDiffs           []TargetCategoryDiffItem        `json:"categoryDiffs"`
+	CheckoutSources         []TargetCheckoutSource          `json:"checkoutSources"`
+	UsedStoredData          bool                            `json:"usedStoredData"`
+}
+
+type TargetSyncCategoryWarningItem struct {
+	Key    string `json:"key"`
+	Label  string `json:"label"`
+	Status string `json:"status"`
+	Note   string `json:"note"`
 }
 
 type TargetSyncCheckoutLiveSummary struct {
@@ -356,6 +367,7 @@ func (s *Service) TargetSyncBaseSummary(app core.App, sourceMode string, rawAuth
 
 func (s *Service) TargetSyncLiveSummary(app core.App, dataset miniappmodel.Dataset) (TargetSyncLiveSummary, error) {
 	expectedNodes := flattenCategoryNodes(dataset.CategoryPage.Tree)
+	categoryWarningSummary, categorySkippedCount, categoryFallbackCount, categoryWarningItems := TargetSyncCategoryWarningsFromNotes(dataset.Meta.Notes)
 	sourceCategories, err := app.FindAllRecords(CollectionSourceCategories)
 	if err != nil {
 		return TargetSyncLiveSummary{}, err
@@ -407,6 +419,10 @@ func (s *Service) TargetSyncLiveSummary(app core.App, dataset miniappmodel.Datas
 		ProductDiffChangedCount: productDiffChanged,
 		AssetDiffNewCount:       assetDiffNew,
 		AssetDiffChangedCount:   assetDiffChanged,
+		CategoryWarningSummary:  categoryWarningSummary,
+		CategorySkippedCount:    categorySkippedCount,
+		CategoryFallbackCount:   categoryFallbackCount,
+		CategoryWarningItems:    categoryWarningItems,
 		ScopeOptions:            scopeOptions,
 		CategoryDiffs:           diffItems,
 		CheckoutSources:         targetCheckoutSources(dataset),
@@ -559,6 +575,28 @@ func (s *Service) TargetSyncStoredLiveSummary(app core.App, sourceMode string) (
 		CheckoutSources:        []TargetCheckoutSource{},
 		UsedStoredData:         true,
 	}, nil
+}
+
+func TargetSyncCategoryWarningsFromNotes(notes []string) (string, int, int, []TargetSyncCategoryWarningItem) {
+	summary := ""
+	for _, note := range notes {
+		trimmed := strings.TrimSpace(note)
+		if strings.HasPrefix(trimmed, "raw 分类商品抓取存在缺口：") {
+			summary = trimmed
+		}
+	}
+	items := collectTargetSyncCategoryWarningItems(notes)
+	skipped := 0
+	fallback := 0
+	for _, item := range items {
+		switch strings.ToLower(strings.TrimSpace(item.Status)) {
+		case "skipped":
+			skipped++
+		case "fallback":
+			fallback++
+		}
+	}
+	return summary, skipped, fallback, items
 }
 
 func (s *Service) TargetSyncCheckoutLiveSummary(dataset miniappmodel.Dataset) TargetSyncCheckoutLiveSummary {
@@ -1402,32 +1440,86 @@ func collectRawCategoryProductFailures(notes []string) []rawCategoryProductFailu
 	return items
 }
 
+func collectTargetSyncCategoryWarningItems(notes []string) []TargetSyncCategoryWarningItem {
+	items := make([]TargetSyncCategoryWarningItem, 0)
+	seen := make(map[string]string)
+	for _, note := range notes {
+		item, ok := parseTargetSyncCategoryWarningItem(note)
+		if !ok {
+			continue
+		}
+		if existing, exists := seen[item.Key]; exists {
+			if existing == "fallback" && item.Status == "skipped" {
+				for idx := range items {
+					if items[idx].Key == item.Key {
+						items[idx] = item
+						break
+					}
+				}
+				seen[item.Key] = item.Status
+			}
+			continue
+		}
+		seen[item.Key] = item.Status
+		items = append(items, item)
+	}
+	return items
+}
+
 func parseRawCategoryProductFailure(note string) (rawCategoryProductFailure, bool) {
-	const prefix = "raw 分类商品跳过 "
-	trimmed := strings.TrimSpace(note)
-	if !strings.HasPrefix(trimmed, prefix) {
+	item, ok := parseTargetSyncCategoryWarningItem(note)
+	if !ok || !strings.EqualFold(item.Status, "skipped") {
 		return rawCategoryProductFailure{}, false
+	}
+	return rawCategoryProductFailure{
+		Key:   item.Key,
+		Label: item.Label,
+		Note:  item.Note,
+	}, true
+}
+
+func parseTargetSyncCategoryWarningItem(note string) (TargetSyncCategoryWarningItem, bool) {
+	status := ""
+	prefix := ""
+	trimmed := strings.TrimSpace(note)
+	switch {
+	case strings.HasPrefix(trimmed, "raw 分类商品跳过 "):
+		status = "skipped"
+		prefix = "raw 分类商品跳过 "
+	case strings.HasPrefix(trimmed, "raw 分类商品回退 "):
+		status = "fallback"
+		prefix = "raw 分类商品回退 "
+	default:
+		return TargetSyncCategoryWarningItem{}, false
 	}
 	rest := strings.TrimPrefix(trimmed, prefix)
 	splitIdx := strings.Index(rest, "）：")
 	if splitIdx < 0 {
-		return rawCategoryProductFailure{}, false
+		return TargetSyncCategoryWarningItem{}, false
 	}
 	head := rest[:splitIdx]
 	errNote := strings.TrimSpace(rest[splitIdx+len("）："):])
 	keyStart := strings.LastIndex(head, "（")
 	if keyStart < 0 {
-		return rawCategoryProductFailure{}, false
+		return TargetSyncCategoryWarningItem{}, false
 	}
 	label := strings.TrimSpace(head[:keyStart])
 	key := strings.TrimSpace(head[keyStart+len("（"):])
 	if key == "" {
-		return rawCategoryProductFailure{}, false
+		return TargetSyncCategoryWarningItem{}, false
 	}
-	return rawCategoryProductFailure{
-		Key:   key,
-		Label: targetSyncFirstNonEmpty(label, key),
-		Note:  "分类路径抓取失败：" + targetSyncFirstNonEmpty(label, key) + "：" + errNote,
+	normalizedLabel := targetSyncFirstNonEmpty(label, key)
+	itemNote := ""
+	if strings.EqualFold(status, "fallback") {
+		itemNote = "实时请求失败，已回退最近成功结果：" + errNote
+	} else {
+		itemNote = "实时请求失败，当前分类已跳过：" + errNote
+	}
+	return TargetSyncCategoryWarningItem{
+		Key:    key,
+		Label:  normalizedLabel,
+		Status: status,
+		Note:   itemNote,
 	}, true
 }
 

@@ -9,33 +9,33 @@
 - `/_/mrtang-admin`
   - 后台总览
   - 总览、待办、异常和高频入口
-  - 默认使用无构建前端壳子异步加载数据，基础摘要和 miniapp raw 实时摘要分块加载，可用 `?legacy=1` 临时回退旧服务端模板页
+  - 默认使用无构建前端壳子异步加载数据，基础摘要和 miniapp raw 实时摘要分块加载；旧 `?legacy=1` 参数现在只做兼容跳转，不再回退旧 SSR 页面
 - `/_/mrtang-admin/target-sync`：抓取入库
   - 源站抓取入库
   - 分类树、商品规格、图片资产的统一抓取入库入口
-  - 默认使用无构建前端壳子异步加载基础摘要、raw 实时摘要、checkout 矩阵、最近写操作和当前运行进度；raw 超时只影响局部区块，可用 `?legacy=1` 临时回退旧服务端模板页
+  - 默认使用无构建前端壳子异步加载基础摘要、raw 实时摘要、checkout 矩阵、最近写操作和当前运行进度；raw 超时只影响局部区块，`?legacy=1` 现在只做兼容跳转
 - `/_/mrtang-admin/backend-release`
   - 发布准备
   - 查看 Vendure 字段准备度、直接创建 backend 分类、商品 payload 预览
   - 默认使用无构建前端壳子异步加载数据
-- `/_/mrtang-admin/target-sync/run?id=...`：抓取运行详情
-  - 抓取入库运行详情
-  - 查看单次抓取入库到底改了什么，以及阶段日志和进度
+- `/_/mrtang-admin/target-sync?id=...`
+  - 抓取运行详情
+  - 运行详情已并回 `target-sync` SPA 页面，不再使用单独 SSR 详情页
 - `/_/mrtang-admin/source`
   - 源数据首页
   - source 模块首页，负责 products / assets / logs 分流
-  - 默认使用无构建前端壳子异步加载数据，可用 `?legacy=1` 临时回退旧服务端模板页
+  - 默认使用无构建前端壳子异步加载数据，`?legacy=1` 现在只做兼容跳转
 - `/_/mrtang-admin/source/products`
   - 源数据商品
   - 商品审核、选中项批量审核、加入发布队列、加入发布队列并发布、重试发布
-  - 默认使用无构建前端壳子异步加载列表，可用 `?legacy=1` 临时回退旧服务端模板页
+  - 默认使用无构建前端壳子异步加载列表，`?legacy=1` 现在只做兼容跳转
 - `/_/mrtang-admin/source/products/detail?id=...`
   - 商品详情
-  - 默认使用无构建前端壳子异步加载详情，可用 `?legacy=1` 临时回退旧服务端模板页
+  - 默认使用无构建前端壳子异步加载详情，`?legacy=1` 现在只做兼容跳转
 - `/_/mrtang-admin/source/assets`
   - 源数据图片
   - 原图下载、图片处理、选中图片批量任务、失败重试、批量进度、单图详情、原图失败/处理失败筛选
-  - 默认使用无构建前端壳子异步加载列表，可用 `?legacy=1` 临时回退旧服务端模板页
+  - 默认使用无构建前端壳子异步加载列表，`?legacy=1` 现在只做兼容跳转
 - `/_/mrtang-admin/source/asset-jobs`
   - 图片任务
   - 原图下载和图片处理的历史任务、选中图片任务、失败重试、任务详情
@@ -46,18 +46,18 @@
   - 默认使用无构建前端壳子异步加载详情
 - `/_/mrtang-admin/source/assets/detail?id=...`
   - 图片详情
-  - 默认使用无构建前端壳子异步加载详情，可用 `?legacy=1` 临时回退旧服务端模板页
+  - 默认使用无构建前端壳子异步加载详情，`?legacy=1` 现在只做兼容跳转
 - `/_/mrtang-admin/source/logs`
   - 源数据日志
   - source action logs 查询与失败追踪
 - `/_/mrtang-admin/procurement`
   - 采购首页
   - 手动采购工作台，支持筛选、分页和详情页
-  - 默认使用无构建前端壳子异步加载列表和最近动作，可用 `?legacy=1` 临时回退旧服务端模板页
+  - 默认使用无构建前端壳子异步加载列表和最近动作，`?legacy=1` 现在只做兼容跳转
 - `/_/mrtang-admin/procurement/detail?id=...`
   - 采购单详情
   - 查看采购单摘要与风险信息
-  - 默认使用无构建前端壳子异步加载详情，可用 `?legacy=1` 临时回退旧服务端模板页
+  - 默认使用无构建前端壳子异步加载详情，`?legacy=1` 现在只做兼容跳转
 - `/_/mrtang-admin/audit`
   - 统一审计
   - 汇总 source、图片任务与 procurement 最近动作，可按模块、状态、关键词筛选
@@ -155,6 +155,8 @@
 ## 兼容页面
 
 `/_/source-review-workbench` 仍然保留，用于兼容原有统一工作台入口。
+
+兼容矩阵见 [admin-legacy-compat-matrix.md](./admin-legacy-compat-matrix.md)。
 
 但新的默认入口应当是：
 

@@ -742,6 +742,14 @@ func (s *Service) ListProcurementOrders(_ context.Context, app core.App, limit i
 		}
 		result = append(result, order)
 	}
+	sort.SliceStable(result, func(i, j int) bool {
+		left := procurementOrderPrimarySortTime(result[i])
+		right := procurementOrderPrimarySortTime(result[j])
+		if left != right {
+			return right < left
+		}
+		return result[j].ID < result[i].ID
+	})
 
 	return result, nil
 }
@@ -752,11 +760,26 @@ func procurementOrderSortExpr(app core.App) (string, error) {
 		return "", err
 	}
 
-	if collection.Fields.GetByName("created") != nil {
-		return "-created", nil
+	if collection.Fields.GetByName("ordered_at") != nil {
+		return "-ordered_at,-exported_at,-reviewed_at,-received_at,-canceled_at,-id", nil
 	}
 
 	return "-id", nil
+}
+
+func procurementOrderPrimarySortTime(order ProcurementOrder) string {
+	for _, value := range []string{
+		strings.TrimSpace(order.OrderedAt),
+		strings.TrimSpace(order.ExportedAt),
+		strings.TrimSpace(order.ReviewedAt),
+		strings.TrimSpace(order.ReceivedAt),
+		strings.TrimSpace(order.CanceledAt),
+	} {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func supplierProductSortExpr(app core.App) (string, error) {

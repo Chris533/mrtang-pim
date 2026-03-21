@@ -39,6 +39,10 @@ type mrtangAdminMiniappData struct {
 	SourceURL                   string
 	DatasetSource               string
 	UsedStoredData              bool
+	CategoryWarningSummary      string
+	CategorySkippedCount        int
+	CategoryFallbackCount       int
+	CategoryWarningItems        []pim.TargetSyncCategoryWarningItem
 	RawAuthStatus               miniappmodel.RawAuthStatus
 	ContractCount               int
 	HomepageSectionCount        int
@@ -118,43 +122,6 @@ type mrtangAdminRecentAction struct {
 type DashboardMiniappAPIData struct {
 	Miniapp      mrtangAdminMiniappData `json:"miniapp"`
 	MiniappError string                 `json:"miniappError"`
-}
-
-func RenderMrtangAdminHTML(
-	ctx context.Context,
-	app core.App,
-	cfg config.Config,
-	pimService *pim.Service,
-	miniappService *miniappservice.Service,
-	canAccessSource bool,
-	canAccessProcurement bool,
-	flashMessage string,
-	flashError string,
-) string {
-	pageData := buildMrtangAdminPageData(ctx, app, cfg, pimService, miniappService)
-	pageData.CanAccessSource = canAccessSource
-	pageData.CanAccessProcurement = canAccessProcurement
-	pageData.FlashMessage = strings.TrimSpace(flashMessage)
-	pageData.FlashError = strings.TrimSpace(flashError)
-	return renderMrtangAdminHTML(pageData)
-}
-
-func RenderAuditHTML(
-	ctx context.Context,
-	app core.App,
-	cfg config.Config,
-	pimService *pim.Service,
-	miniappService *miniappservice.Service,
-	filter AuditFilter,
-	flashMessage string,
-	flashError string,
-) string {
-	pageData := buildMrtangAdminPageData(ctx, app, cfg, pimService, miniappService)
-	return RenderAuditPageHTML(
-		filterAuditActions(pageData.RecentActions, filter),
-		strings.TrimSpace(flashMessage),
-		strings.TrimSpace(flashError),
-	)
 }
 
 func filterAuditActions(items []mrtangAdminRecentAction, filter AuditFilter) AuditPageData {
@@ -360,6 +327,7 @@ func buildMrtangAdminMiniappData(ctx context.Context, cfg config.Config, service
 		OrderOperationCount:   countOrderOperations(dataset.CartOrder.Order),
 		FreightScenarioCount:  len(dataset.CartOrder.Order.FreightCosts),
 	}
+	data.CategoryWarningSummary, data.CategorySkippedCount, data.CategoryFallbackCount, data.CategoryWarningItems = pim.TargetSyncCategoryWarningsFromNotes(dataset.Meta.Notes)
 
 	for _, section := range dataset.CategoryPage.Sections {
 		if len(section.Products) > 0 {
