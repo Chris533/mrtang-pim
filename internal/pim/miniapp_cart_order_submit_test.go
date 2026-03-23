@@ -1,6 +1,7 @@
 package pim
 
 import (
+	"context"
 	"testing"
 
 	miniappmodel "mrtang-pim/internal/miniapp/model"
@@ -74,6 +75,58 @@ func TestResolvedMiniappOrderUnitPrefersSalesUnit(t *testing.T) {
 	unit := resolvedMiniappOrderUnit(product, "件")
 	if unit.UnitID != "unit-piece" {
 		t.Fatalf("expected matching unit, got %#v", unit)
+	}
+}
+
+func TestDecodeMiniappCartLinesCollectsNestedLines(t *testing.T) {
+	lines := decodeMiniappCartLines(map[string]any{
+		"data": map[string]any{
+			"cartSpuVOList": map[string]any{
+				"list": []any{
+					map[string]any{
+						"id":       "cart-1",
+						"spuId":    "spu-1",
+						"skuId":    "sku-1",
+						"unitId":   "unit-1",
+						"unitName": "件",
+						"num":      2.0,
+						"cost":     18.0,
+					},
+				},
+			},
+		},
+	})
+
+	line, ok := lines[miniappCartLineKey("sku-1", "unit-1")]
+	if !ok {
+		t.Fatalf("expected nested cart line to be collected, got %#v", lines)
+	}
+	if line.UnitName != "件" {
+		t.Fatalf("expected unit name to be preserved, got %#v", line)
+	}
+}
+
+func TestNormalizeCartQuantitiesFallsBackToUnitName(t *testing.T) {
+	submitter := &miniappCartOrderSubmitter{}
+	err := submitter.normalizeCartQuantities(context.Background(), []miniappCartOrderLine{
+		{
+			SkuID:     "sku-1",
+			UnitID:    "target-unit",
+			SalesUnit: "件",
+			Quantity:  2,
+		},
+	}, map[string]rawCartLine{
+		miniappCartLineKey("sku-1", "actual-unit"): {
+			ID:       "cart-1",
+			SkuID:    "sku-1",
+			UnitID:   "actual-unit",
+			UnitName: "件",
+			Num:      2,
+			Cost:     18,
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected unit-name fallback to avoid error, got %v", err)
 	}
 }
 

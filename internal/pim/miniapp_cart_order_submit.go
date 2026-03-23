@@ -37,11 +37,13 @@ type miniappCartOrderLine struct {
 }
 
 type rawCartLine struct {
-	ID     string
-	SkuID  string
-	UnitID string
-	Num    float64
-	Cost   float64
+	ID       string
+	SpuID    string
+	SkuID    string
+	UnitID   string
+	UnitName string
+	Num      float64
+	Cost     float64
 }
 
 type rawDetailLine struct {
@@ -369,39 +371,25 @@ func (s *miniappCartOrderSubmitter) fetchCartList(ctx context.Context) (map[stri
 	if err != nil {
 		return nil, fmt.Errorf("load supplier cart list: %w", err)
 	}
-	lines := make(map[string]rawCartLine)
-	response, _ := operation.Response.(map[string]any)
-	data, _ := response["data"].(map[string]any)
-	cartSpuVOList, _ := data["cartSpuVOList"].(map[string]any)
-	items, _ := cartSpuVOList["list"].([]any)
-	for _, raw := range items {
-		item, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		line := rawCartLine{
-			ID:     stringFromAny(item["id"]),
-			SkuID:  stringFromAny(item["skuId"]),
-			UnitID: stringFromAny(item["unitId"]),
-			Num:    floatFromAny(item["num"]),
-			Cost:   positiveOr(floatFromAny(item["cost"]), floatFromAny(item["discountCost"])),
-		}
-		if line.SkuID == "" || line.UnitID == "" || line.ID == "" {
-			continue
-		}
-		lines[miniappCartLineKey(line.SkuID, line.UnitID)] = line
-	}
-	return lines, nil
+	return decodeMiniappCartLines(operation.Response), nil
 }
 
 func (s *miniappCartOrderSubmitter) normalizeCartQuantities(ctx context.Context, targetLines []miniappCartOrderLine, cartLines map[string]rawCartLine) error {
 	for _, line := range targetLines {
 		current, ok := cartLines[miniappCartLineKey(line.SkuID, line.UnitID)]
-		if !ok && strings.TrimSpace(line.UnitID) == "" {
+		if !ok {
+			current, ok = findCartLineBySKUAndUnitName(cartLines, line.SkuID, line.SalesUnit)
+		}
+		if !ok {
 			current, ok = findCartLineBySKU(cartLines, line.SkuID)
 		}
 		if !ok || strings.TrimSpace(current.ID) == "" {
-			return fmt.Errorf("supplier cart line not found for skuId=%s unitId=%s", line.SkuID, line.UnitID)
+			return fmt.Errorf(
+				"supplier cart line not found for skuId=%s unitId=%s salesUnit=%s",
+				line.SkuID,
+				line.UnitID,
+				line.SalesUnit,
+			)
 		}
 		diff := roundMiniappNumber(line.Quantity - current.Num)
 		if almostZero(diff) {
@@ -727,6 +715,37 @@ func miniappCartLineKey(skuID string, unitID string) string {
 	return strings.TrimSpace(skuID) + "::" + strings.TrimSpace(unitID)
 }
 
+func decodeMiniappCartLines(response any) map[string]rawCartLine {
+	lines := make(map[string]rawCartLine)
+	collectMiniappCartLines(response, lines)
+	return lines
+}
+
+func collectMiniappCartLines(raw any, lines map[string]rawCartLine) {
+	switch value := raw.(type) {
+	case map[string]any:
+		line := rawCartLine{
+			ID:       stringFromAny(value["id"]),
+			SpuID:    stringFromAny(value["spuId"]),
+			SkuID:    stringFromAny(value["skuId"]),
+			UnitID:   stringFromAny(value["unitId"]),
+			UnitName: firstNonEmptyString(stringFromAny(value["unitName"]), stringFromAny(value["salesUnit"])),
+			Num:      floatFromAny(value["num"]),
+			Cost:     positiveOr(floatFromAny(value["cost"]), floatFromAny(value["discountCost"])),
+		}
+		if line.ID != "" && line.SkuID != "" {
+			lines[miniappCartLineKey(line.SkuID, line.UnitID)] = line
+		}
+		for _, child := range value {
+			collectMiniappCartLines(child, lines)
+		}
+	case []any:
+		for _, item := range value {
+			collectMiniappCartLines(item, lines)
+		}
+	}
+}
+
 func findCartLineBySKU(lines map[string]rawCartLine, skuID string) (rawCartLine, bool) {
 	skuID = strings.TrimSpace(skuID)
 	if skuID == "" {
@@ -736,6 +755,30 @@ func findCartLineBySKU(lines map[string]rawCartLine, skuID string) (rawCartLine,
 	found := false
 	for _, line := range lines {
 		if strings.TrimSpace(line.SkuID) != skuID {
+			continue
+		}
+		if found {
+			return rawCartLine{}, false
+		}
+		matched = line
+		found = true
+	}
+	return matched, found
+}
+
+func findCartLineBySKUAndUnitName(lines map[string]rawCartLine, skuID string, unitName string) (rawCartLine, bool) {
+	skuID = strings.TrimSpace(skuID)
+	unitName = strings.TrimSpace(unitName)
+	if skuID == "" || unitName == "" {
+		return rawCartLine{}, false
+	}
+	var matched rawCartLine
+	found := false
+	for _, line := range lines {
+		if strings.TrimSpace(line.SkuID) != skuID {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(line.UnitName), unitName) {
 			continue
 		}
 		if found {
