@@ -221,6 +221,24 @@ func registerProcurementRoutes(se *core.ServeEvent, cfg config.Config, service *
 		return re.JSON(http.StatusOK, summary)
 	})
 
+	se.Router.POST("/api/pim/procurement/precheck", func(re *core.RequestEvent) error {
+		if !authorized(re, cfg.Security.APIKey) {
+			return re.UnauthorizedError("missing or invalid api key", nil)
+		}
+
+		request, err := readProcurementRequest(re)
+		if err != nil {
+			return re.BadRequestError("invalid procurement request", err)
+		}
+
+		result, err := service.PrecheckProcurementItems(re.Request.Context(), re.App, request)
+		if err != nil {
+			return re.BadRequestError("precheck procurement failed", err)
+		}
+
+		return re.JSON(http.StatusOK, result)
+	})
+
 	se.Router.POST("/api/pim/procurement/export", func(re *core.RequestEvent) error {
 		if !authorized(re, cfg.Security.APIKey) {
 			return re.UnauthorizedError("missing or invalid api key", nil)

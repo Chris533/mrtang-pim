@@ -22,6 +22,7 @@ import (
 
 	"mrtang-pim/internal/config"
 	"mrtang-pim/internal/image"
+	miniappservice "mrtang-pim/internal/miniapp/service"
 	"mrtang-pim/internal/supplier"
 	"mrtang-pim/internal/vendure"
 )
@@ -43,6 +44,12 @@ const (
 	StatusSynced       = "synced"
 	StatusOffline      = "offline"
 	StatusError        = "error"
+
+	SupplierStatusActive       = "active"
+	SupplierStatusOutOfStock   = "out_of_stock"
+	SupplierStatusOffline      = "offline"
+	SupplierStatusPriceChanged = "price_changed"
+	SupplierStatusSpecChanged  = "spec_changed"
 
 	ImageStatusPending    = "pending"
 	ImageStatusProcessing = "processing"
@@ -72,11 +79,40 @@ type Result struct {
 	Offline   int    `json:"offline"`
 }
 
+type SupplierSingleImageCandidate struct {
+	ID               string `json:"id"`
+	SupplierCode     string `json:"supplierCode"`
+	OriginalSKU      string `json:"originalSku"`
+	Title            string `json:"title"`
+	SourceType       string `json:"sourceType"`
+	SyncStatus       string `json:"syncStatus"`
+	VendureProductID string `json:"vendureProductId"`
+	GalleryCount     int    `json:"galleryCount"`
+	UpdatedAt        string `json:"updatedAt"`
+}
+
+type SupplierDuplicateCleanupResult struct {
+	ProductCount    int      `json:"productCount"`
+	LinkedCount     int      `json:"linkedCount"`
+	DuplicateGroups int      `json:"duplicateGroups"`
+	CandidateCount  int      `json:"candidateCount"`
+	DeletedCount    int      `json:"deletedCount"`
+	FailedCount     int      `json:"failedCount"`
+	DeletedIDs      []string `json:"deletedIds,omitempty"`
+	FailedIDs       []string `json:"failedIds,omitempty"`
+}
+
+type harvestOfflineSummary struct {
+	OfflineCount int
+	FailureItems []HarvestFailureItem
+}
+
 type ProcurementItemRequest struct {
-	SupplierCode string  `json:"supplierCode"`
-	OriginalSKU  string  `json:"originalSku"`
-	SalesUnit    string  `json:"salesUnit,omitempty"`
-	Quantity     float64 `json:"quantity"`
+	SupplierCode  string  `json:"supplierCode"`
+	OriginalSKU   string  `json:"originalSku"`
+	SalesUnit     string  `json:"salesUnit,omitempty"`
+	Quantity      float64 `json:"quantity"`
+	ExpectedPrice float64 `json:"expectedPrice,omitempty"`
 }
 
 type ProcurementRequest struct {
@@ -155,9 +191,95 @@ func (s *Service) CleanupBackendAssets(ctx context.Context) (vendure.AssetCleanu
 	return s.vendure.CleanupOrphanedPIMAssets(ctx)
 }
 
+func (s *Service) CleanupDuplicateOrphanProducts(ctx context.Context, app core.App) (SupplierDuplicateCleanupResult, error) {
+	linkedIDs, err := s.linkedVendureProductIDs(app)
+	if err != nil {
+		return SupplierDuplicateCleanupResult{}, err
+	}
+
+	products, err := s.vendure.ListProducts(ctx)
+	if err != nil {
+		return SupplierDuplicateCleanupResult{}, err
+	}
+
+	grouped := make(map[string][]vendure.ProductBasic)
+	for _, item := range products {
+		key := normalizeDuplicateNameKey(item.Name)
+		if key == "" {
+			continue
+		}
+		grouped[key] = append(grouped[key], item)
+	}
+
+	candidates := make([]string, 0, 128)
+	duplicateGroups := 0
+	for _, items := range grouped {
+		if len(items) < 2 {
+			continue
+		}
+		hasLinked := false
+		for _, item := range items {
+			if _, ok := linkedIDs[strings.TrimSpace(item.ID)]; ok {
+				hasLinked = true
+				break
+			}
+		}
+		if !hasLinked {
+			continue
+		}
+		duplicateGroups++
+		for _, item := range items {
+			productID := strings.TrimSpace(item.ID)
+			if productID == "" {
+				continue
+			}
+			if _, ok := linkedIDs[productID]; ok {
+				continue
+			}
+			candidates = append(candidates, productID)
+		}
+	}
+
+	deleteResult, err := s.vendure.DeleteProducts(ctx, candidates)
+	if err != nil {
+		return SupplierDuplicateCleanupResult{}, err
+	}
+
+	return SupplierDuplicateCleanupResult{
+		ProductCount:    len(products),
+		LinkedCount:     len(linkedIDs),
+		DuplicateGroups: duplicateGroups,
+		CandidateCount:  len(uniqueTrimmed(candidates)),
+		DeletedCount:    deleteResult.Deleted,
+		FailedCount:     deleteResult.Failed,
+		DeletedIDs:      deleteResult.DeletedIDs,
+		FailedIDs:       deleteResult.FailedIDs,
+	}, nil
+}
+
 type ProcurementSubmitResponse struct {
 	Summary ProcurementSummary             `json:"summary"`
 	Results []supplier.PurchaseOrderResult `json:"results"`
+}
+
+type ProcurementPrecheckItem struct {
+	SupplierCode  string  `json:"supplierCode"`
+	OriginalSKU   string  `json:"originalSku"`
+	SalesUnit     string  `json:"salesUnit,omitempty"`
+	Quantity      float64 `json:"quantity,omitempty"`
+	Status        string  `json:"status"`
+	Message       string  `json:"message,omitempty"`
+	AvailableQty  float64 `json:"availableQty,omitempty"`
+	OldPrice      float64 `json:"oldPrice,omitempty"`
+	NewPrice      float64 `json:"newPrice,omitempty"`
+	BusinessPrice float64 `json:"businessPrice,omitempty"`
+	ConsumerPrice float64 `json:"consumerPrice,omitempty"`
+}
+
+type ProcurementPrecheckResult struct {
+	Ok        bool                      `json:"ok"`
+	CheckedAt string                    `json:"checkedAt,omitempty"`
+	Items     []ProcurementPrecheckItem `json:"items"`
 }
 
 type ProcurementStatusUpdateRequest struct {
@@ -244,6 +366,31 @@ type procurementCatalogItem struct {
 	NeedColdChain      bool
 }
 
+type supplierProductSnapshot struct {
+	Title            string                      `json:"title"`
+	Category         string                      `json:"category"`
+	ImageURL         string                      `json:"imageUrl"`
+	GalleryURLs      []string                    `json:"galleryUrls,omitempty"`
+	CostPrice        float64                     `json:"costPrice"`
+	BPrice           float64                     `json:"bPrice"`
+	CPrice           float64                     `json:"cPrice"`
+	CurrencyCode     string                      `json:"currencyCode"`
+	SourceProductID  string                      `json:"sourceProductId"`
+	SourceType       string                      `json:"sourceType"`
+	SalesUnit        string                      `json:"salesUnit"`
+	ConversionRate   float64                     `json:"conversionRate"`
+	DefaultStockQty  float64                     `json:"defaultStockQty"`
+	DefaultStockText string                      `json:"defaultStockText"`
+	UnitOptions      []supplierPayloadUnitOption `json:"unitOptions,omitempty"`
+}
+
+type supplierProductDiff struct {
+	ContentChanged bool
+	PriceChanged   bool
+	StockChanged   bool
+	SpecChanged    bool
+}
+
 type SourceAssetDownloadProgressLog struct {
 	Time    string `json:"time"`
 	Message string `json:"message"`
@@ -326,6 +473,19 @@ type SourceProductSyncProgress struct {
 	ProductIDs  []string                       `json:"productIds"`
 }
 
+type SupplierSyncProgress struct {
+	ID          string                         `json:"id"`
+	Status      string                         `json:"status"`
+	Total       int                            `json:"total"`
+	Processed   int                            `json:"processed"`
+	Failed      int                            `json:"failed"`
+	CurrentItem string                         `json:"currentItem"`
+	StartedAt   string                         `json:"startedAt"`
+	FinishedAt  string                         `json:"finishedAt"`
+	Error       string                         `json:"error"`
+	Logs        []SourceProductSyncProgressLog `json:"logs"`
+}
+
 type BackendCategoryMappingItem struct {
 	ID                  string `json:"id"`
 	SourceKey           string `json:"sourceKey"`
@@ -349,12 +509,29 @@ type BackendReleaseProductItem struct {
 	TargetAudience     string  `json:"targetAudience"`
 	ConversionRate     float64 `json:"conversionRate"`
 	SyncStatus         string  `json:"syncStatus"`
+	SupplierStatus     string  `json:"supplierStatus"`
 	VendureProductID   string  `json:"vendureProductId"`
 	VendureVariantID   string  `json:"vendureVariantId"`
+	CreatedAt          string  `json:"createdAt"`
+	SupplierUpdatedAt  string  `json:"supplierUpdatedAt"`
+	UpdatedAt          string  `json:"updatedAt"`
+	LastSyncedAt       string  `json:"lastSyncedAt"`
+	LastSeenAt         string  `json:"lastSeenAt"`
+	OfflineAt          string  `json:"offlineAt"`
+	LastSyncError      string  `json:"lastSyncError"`
 	Reason             string  `json:"reason"`
 	HasProcessedImage  bool    `json:"hasProcessedImage"`
 	HasConsumerImage   bool    `json:"hasConsumerImage"`
 	ReadyForPreview    bool    `json:"readyForPreview"`
+}
+
+type BackendReleaseFilter struct {
+	SyncStatus string `json:"syncStatus"`
+	Query      string `json:"query"`
+	Page       int    `json:"page"`
+	PageSize   int    `json:"pageSize"`
+	SortBy     string `json:"sortBy"`
+	SortOrder  string `json:"sortOrder"`
 }
 
 type BackendCategoryBranchSummary struct {
@@ -386,7 +563,12 @@ type BackendReleaseSummary struct {
 	ReadyProductCount    int                                `json:"readyProductCount"`
 	SyncedProductCount   int                                `json:"syncedProductCount"`
 	ErrorProductCount    int                                `json:"errorProductCount"`
+	OfflineProductCount  int                                `json:"offlineProductCount"`
 	PublishedRootCount   int                                `json:"publishedRootCount"`
+	FilteredProductCount int                                `json:"filteredProductCount"`
+	ProductPage          int                                `json:"productPage"`
+	ProductPages         int                                `json:"productPages"`
+	ProductPageSize      int                                `json:"productPageSize"`
 	Categories           []BackendCategoryMappingItem       `json:"categories"`
 	Branches             []BackendCategoryBranchSummary     `json:"branches"`
 	Products             []BackendReleaseProductItem        `json:"products"`
@@ -409,19 +591,22 @@ type BackendCategoryPublishBatchResult struct {
 }
 
 type Service struct {
-	cfg               config.Config
-	connector         supplier.Connector
-	miniappCartOrder  *miniappCartOrderSubmitter
-	processor         image.Processor
-	vendure           *vendure.Client
-	lock              sync.Mutex
-	targetSyncMu      sync.Mutex
-	activeTargetSyncs map[string]string
-	sourceAssetMu     sync.Mutex
-	activeAssetLoads  map[string]*SourceAssetDownloadProgress
-	activeAssetProcs  map[string]*SourceAssetProcessProgress
-	sourceProductMu   sync.Mutex
-	activeProductJobs map[string]*SourceProductSyncProgress
+	cfg                config.Config
+	connector          supplier.Connector
+	miniappCartOrder   *miniappCartOrderSubmitter
+	processor          image.Processor
+	vendure            *vendure.Client
+	lock               sync.Mutex
+	targetSyncMu       sync.Mutex
+	activeTargetSyncs  map[string]string
+	sourceAssetMu      sync.Mutex
+	activeAssetLoads   map[string]*SourceAssetDownloadProgress
+	activeAssetProcs   map[string]*SourceAssetProcessProgress
+	sourceProductMu    sync.Mutex
+	activeProductJobs  map[string]*SourceProductSyncProgress
+	supplierSyncMu     sync.Mutex
+	activeSupplierSync *SupplierSyncProgress
+	lastSupplierSync   *SupplierSyncProgress
 }
 
 func NewService(cfg config.Config) *Service {
@@ -441,7 +626,7 @@ func NewService(cfg config.Config) *Service {
 			SkipTLSVerify: cfg.Supplier.HTTPSkipTLSVerify,
 		})
 	case "miniapp_cart_order":
-		connector = supplier.NewFileConnector(cfg.Supplier.FilePath, cfg.Supplier.Code)
+		connector = newMiniappHarvestConnector(cfg)
 	default:
 		connector = supplier.NewFileConnector(cfg.Supplier.FilePath, cfg.Supplier.Code)
 	}
@@ -460,10 +645,16 @@ func NewService(cfg config.Config) *Service {
 }
 
 func (s *Service) ConnectorCapabilities() supplier.ConnectorCapabilities {
-	if s.miniappCartOrder != nil {
-		return s.miniappCartOrder.Capabilities()
+	capabilities := s.connector.Capabilities()
+	if s.miniappCartOrder == nil {
+		return capabilities
 	}
-	return s.connector.Capabilities()
+
+	submitCapabilities := s.miniappCartOrder.Capabilities()
+	capabilities.FetchProducts = capabilities.FetchProducts || submitCapabilities.FetchProducts
+	capabilities.SubmitPurchaseOrder = capabilities.SubmitPurchaseOrder || submitCapabilities.SubmitPurchaseOrder
+	capabilities.ExportPurchaseOrder = capabilities.ExportPurchaseOrder || submitCapabilities.ExportPurchaseOrder
+	return capabilities
 }
 
 func (s *Service) ProcurementSummary(ctx context.Context, app core.App, req ProcurementRequest) (ProcurementSummary, error) {
@@ -482,6 +673,125 @@ func (s *Service) ProcurementSummary(ctx context.Context, app core.App, req Proc
 	)
 
 	return summary, nil
+}
+
+func (s *Service) PrecheckProcurementItems(_ context.Context, app core.App, req ProcurementRequest) (ProcurementPrecheckResult, error) {
+	if len(req.Items) == 0 {
+		return ProcurementPrecheckResult{}, fmt.Errorf("procurement items are required")
+	}
+
+	items := make([]ProcurementPrecheckItem, 0, len(req.Items))
+	allOK := true
+	for _, requestItem := range req.Items {
+		quantity := requestItem.Quantity
+		if quantity <= 0 {
+			return ProcurementPrecheckResult{}, fmt.Errorf("procurement quantity must be positive for sku %s", strings.TrimSpace(requestItem.OriginalSKU))
+		}
+
+		supplierCode := strings.TrimSpace(requestItem.SupplierCode)
+		if supplierCode == "" {
+			supplierCode = s.cfg.Supplier.Code
+		}
+
+		sku := strings.TrimSpace(requestItem.OriginalSKU)
+		if sku == "" {
+			return ProcurementPrecheckResult{}, fmt.Errorf("procurement sku is required")
+		}
+
+		itemResult := ProcurementPrecheckItem{
+			SupplierCode: supplierCode,
+			OriginalSKU:  sku,
+			SalesUnit:    strings.TrimSpace(requestItem.SalesUnit),
+			Quantity:     quantity,
+			Status:       "ok",
+		}
+
+		record, err := app.FindFirstRecordByFilter(
+			CollectionSupplierProducts,
+			"supplier_code = {:supplier} && original_sku = {:sku}",
+			dbx.Params{
+				"supplier": supplierCode,
+				"sku":      sku,
+			},
+		)
+		if err != nil {
+			itemResult.Status = "offline"
+			itemResult.Message = "supplier item not found"
+			items = append(items, itemResult)
+			allOK = false
+			continue
+		}
+
+		if record.GetString("sync_status") == StatusOffline || record.GetString("supplier_status") == SupplierStatusOffline {
+			itemResult.Status = "offline"
+			itemResult.Message = defaultString(strings.TrimSpace(record.GetString("offline_reason")), "supplier item offline")
+			items = append(items, itemResult)
+			allOK = false
+			continue
+		}
+
+		requestedSalesUnit := strings.TrimSpace(requestItem.SalesUnit)
+		unitOption, hasUnitOption := supplierRecordUnitOptionExact(record, requestedSalesUnit)
+		defaultUnitOption := supplierRecordUnitOption(record, "")
+		if requestedSalesUnit != "" && !hasUnitOption && supplierRecordHasUnitOptions(record) {
+			itemResult.Status = "spec_mismatch"
+			itemResult.Message = "requested sales unit is no longer available"
+			items = append(items, itemResult)
+			allOK = false
+			continue
+		}
+
+		selectedOption := unitOption
+		if !hasUnitOption {
+			selectedOption = defaultUnitOption
+		}
+		itemResult.SalesUnit = defaultString(requestedSalesUnit, defaultString(selectedOption.UnitName, defaultString(readJSONAttribute(record, "sales_unit"), "件")))
+
+		businessPrice := positiveOr(selectedOption.Price, record.GetFloat("b_price"))
+		if businessPrice <= 0 {
+			businessPrice = record.GetFloat("c_price")
+		}
+		consumerPrice := positiveOr(selectedOption.Price, record.GetFloat("c_price"))
+		if consumerPrice <= 0 {
+			consumerPrice = record.GetFloat("b_price")
+		}
+		itemResult.BusinessPrice = roundAmount(businessPrice)
+		itemResult.ConsumerPrice = roundAmount(consumerPrice)
+
+		if requestItem.ExpectedPrice > 0 {
+			currentPrice := positiveOr(businessPrice, consumerPrice)
+			if priceChanged(requestItem.ExpectedPrice, currentPrice) {
+				itemResult.Status = "price_changed"
+				itemResult.Message = "supplier price updated"
+				itemResult.OldPrice = roundAmount(requestItem.ExpectedPrice)
+				itemResult.NewPrice = roundAmount(currentPrice)
+				allOK = false
+			}
+		}
+
+		stockQty, hasStock := supplierRecordAvailableStock(record, itemResult.SalesUnit)
+		itemResult.AvailableQty = roundAmount(stockQty)
+		if hasStock {
+			switch {
+			case stockQty <= 0:
+				itemResult.Status = "insufficient_stock"
+				itemResult.Message = defaultString(strings.TrimSpace(selectedOption.StockText), "supplier out of stock")
+				allOK = false
+			case quantity > stockQty:
+				itemResult.Status = "insufficient_stock"
+				itemResult.Message = "supplier stock is insufficient"
+				allOK = false
+			}
+		}
+
+		items = append(items, itemResult)
+	}
+
+	return ProcurementPrecheckResult{
+		Ok:        allOK,
+		CheckedAt: time.Now().Format(time.RFC3339),
+		Items:     items,
+	}, nil
 }
 
 func (s *Service) ExportProcurement(ctx context.Context, app core.App, req ProcurementRequest) (ProcurementExport, error) {
@@ -990,15 +1300,109 @@ func procurementSummaryHasRiskLevel(summary ProcurementSummary, level string) bo
 }
 
 func (s *Service) Harvest(ctx context.Context, app core.App) (Result, error) {
+	return s.HarvestWithOptions(ctx, app, HarvestOptions{TriggerType: HarvestTriggerAPI})
+}
+
+func (s *Service) harvestExecutionTimeout() time.Duration {
+	timeout := s.cfg.MiniApp.SourceTimeout * 12
+	if timeout < 5*time.Minute {
+		timeout = 5 * time.Minute
+	}
+	if timeout > 30*time.Minute {
+		timeout = 30 * time.Minute
+	}
+	return timeout
+}
+
+func (s *Service) StartHarvest(ctx context.Context, app core.App, options HarvestOptions) (HarvestRun, bool, error) {
+	s.lock.Lock()
+	runningRun, err := FindRunningHarvestRun(app)
+	if err != nil {
+		s.lock.Unlock()
+		return HarvestRun{}, false, err
+	}
+	if strings.TrimSpace(runningRun.ID) != "" {
+		s.lock.Unlock()
+		return runningRun, true, nil
+	}
+
+	runRecord, err := s.createHarvestRun(app, options)
+	if err != nil {
+		s.lock.Unlock()
+		return HarvestRun{}, false, err
+	}
+	run := harvestRunFromRecord(runRecord)
+	s.lock.Unlock()
+
+	go func(runRecord *core.Record) {
+		s.lock.Lock()
+		defer s.lock.Unlock()
+
+		startedAt, parseErr := time.Parse(time.RFC3339, strings.TrimSpace(runRecord.GetString("started_at")))
+		if parseErr != nil || startedAt.IsZero() {
+			startedAt = time.Now()
+		}
+		state := harvestExecutionState{
+			Result:           Result{Action: "harvest"},
+			startedAt:        startedAt,
+			lastPersistAt:    startedAt,
+			lastPersistCount: 0,
+		}
+		defer func() {
+			if _, err := s.finalizeHarvestRun(app, runRecord, state); err != nil {
+				app.Logger().Error("finalize harvest run failed", "error", err)
+			}
+		}()
+
+		runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.harvestExecutionTimeout())
+		defer cancel()
+		if err := s.executeHarvest(runCtx, app, runRecord, &state); err != nil {
+			app.Logger().Error("harvest failed", "error", err)
+		}
+	}(runRecord)
+
+	return run, false, nil
+}
+
+func (s *Service) HarvestWithOptions(ctx context.Context, app core.App, options HarvestOptions) (Result, error) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	items, err := s.connector.Fetch(ctx)
-	if err != nil {
-		return Result{Action: "harvest"}, err
+	state := harvestExecutionState{
+		Result:           Result{Action: "harvest"},
+		startedAt:        time.Now(),
+		lastPersistAt:    time.Now(),
+		lastPersistCount: 0,
+	}
+	runRecord, runErr := s.createHarvestRun(app, options)
+	if runErr != nil {
+		app.Logger().Error("create harvest run failed", "error", runErr)
+	}
+	defer func() {
+		if runRecord == nil {
+			return
+		}
+		if _, err := s.finalizeHarvestRun(app, runRecord, state); err != nil {
+			app.Logger().Error("finalize harvest run failed", "error", err)
+		}
+	}()
+
+	runCtx, cancel := context.WithTimeout(ctx, s.harvestExecutionTimeout())
+	defer cancel()
+	if err := s.executeHarvest(runCtx, app, runRecord, &state); err != nil {
+		return state.Result, err
 	}
 
-	result := Result{Action: "harvest"}
+	return state.Result, nil
+}
+
+func (s *Service) executeHarvest(ctx context.Context, app core.App, runRecord *core.Record, state *harvestExecutionState) error {
+	items, err := s.connector.Fetch(ctx)
+	if err != nil {
+		state.errorMessage = err.Error()
+		return err
+	}
+
 	seen := make(map[string]struct{}, len(items))
 
 	for _, item := range items {
@@ -1007,38 +1411,54 @@ func (s *Service) Harvest(ctx context.Context, app core.App) (Result, error) {
 
 		changed, created, err := s.upsertSupplierProduct(ctx, app, item)
 		if err != nil {
-			result.Failed++
+			state.Failed++
+			state.failureItems = appendHarvestFailure(state.failureItems, HarvestFailureItem{
+				SKU:   item.OriginalSKU,
+				Step:  "upsert",
+				Error: err.Error(),
+			})
+			if progressErr := s.updateHarvestRunProgress(app, runRecord, state, false); progressErr != nil {
+				app.Logger().Error("persist harvest progress failed", "error", progressErr)
+			}
 			app.Logger().Error("harvest upsert failed", "sku", item.OriginalSKU, "error", err)
 			continue
 		}
 
-		result.Processed++
+		state.Processed++
 		if created {
-			result.Created++
+			state.Created++
 			continue
 		}
 
 		if changed {
-			result.Updated++
+			state.Updated++
 		} else {
-			result.Skipped++
+			state.Skipped++
+		}
+		if progressErr := s.updateHarvestRunProgress(app, runRecord, state, false); progressErr != nil {
+			app.Logger().Error("persist harvest progress failed", "error", progressErr)
 		}
 	}
 
-	offlineCount, err := s.markMissingProductsOffline(ctx, app, seen)
+	offlineSummary, err := s.markMissingProductsOffline(ctx, app, seen)
 	if err != nil {
-		return result, err
+		state.errorMessage = err.Error()
+		return err
 	}
-	result.Offline = offlineCount
-
-	return result, nil
+	state.Offline = offlineSummary.OfflineCount
+	state.Failed += len(offlineSummary.FailureItems)
+	state.failureItems = truncateHarvestFailureItems(append(state.failureItems, offlineSummary.FailureItems...))
+	if progressErr := s.updateHarvestRunProgress(app, runRecord, state, true); progressErr != nil {
+		app.Logger().Error("persist harvest progress failed", "error", progressErr)
+	}
+	return nil
 }
 
 func (s *Service) ProcessPending(ctx context.Context, app core.App, limit int) (Result, error) {
 	records, err := app.FindRecordsByFilter(
 		CollectionSupplierProducts,
 		"(sync_status = {:pending} || sync_status = {:error}) && raw_image_url != ''",
-		"updated",
+		"",
 		limit,
 		0,
 		dbx.Params{
@@ -1049,6 +1469,14 @@ func (s *Service) ProcessPending(ctx context.Context, app core.App, limit int) (
 	if err != nil {
 		return Result{Action: "process"}, err
 	}
+	slices.SortFunc(records, func(left, right *core.Record) int {
+		leftPriority := supplierProcessPriority(left)
+		rightPriority := supplierProcessPriority(right)
+		if leftPriority != rightPriority {
+			return leftPriority - rightPriority
+		}
+		return strings.Compare(strings.TrimSpace(left.GetString("updated")), strings.TrimSpace(right.GetString("updated")))
+	})
 
 	result := Result{Action: "process"}
 	for _, record := range records {
@@ -1073,11 +1501,154 @@ func (s *Service) ProcessRecord(ctx context.Context, app core.App, recordID stri
 	return s.processRecord(ctx, app, record)
 }
 
-func (s *Service) SyncApproved(ctx context.Context, app core.App, limit int) (Result, error) {
+func (s *Service) readySyncStatus() string {
+	if s.cfg.Workflow.AutoApproveReady {
+		return StatusApproved
+	}
+	return StatusReady
+}
+
+func (s *Service) AdvanceProcessedPending(ctx context.Context, app core.App, limit int) (Result, error) {
+	records, err := app.FindRecordsByFilter(
+		CollectionSupplierProducts,
+		"sync_status = {:pending} && image_processing_status = {:processed}",
+		"",
+		limit,
+		0,
+		dbx.Params{
+			"pending":   StatusPending,
+			"processed": ImageStatusProcessed,
+		},
+	)
+	if err != nil {
+		return Result{Action: "advance"}, err
+	}
+	slices.SortFunc(records, func(left, right *core.Record) int {
+		return strings.Compare(strings.TrimSpace(left.GetString("updated")), strings.TrimSpace(right.GetString("updated")))
+	})
+
+	result := Result{Action: "advance"}
+	for _, record := range records {
+		record.Set("sync_status", s.readySyncStatus())
+		if err := app.Save(record); err != nil {
+			result.Failed++
+			app.Logger().Error("advance supplier product failed", "recordId", record.Id, "error", err)
+			continue
+		}
+		result.Processed++
+	}
+
+	return result, nil
+}
+
+func (s *Service) ApproveReady(ctx context.Context, app core.App, limit int) (Result, error) {
 	records, err := app.FindRecordsByFilter(
 		CollectionSupplierProducts,
 		"sync_status = {:status}",
-		"-updated",
+		"",
+		limit,
+		0,
+		dbx.Params{"status": StatusReady},
+	)
+	if err != nil {
+		return Result{Action: "approve"}, err
+	}
+	slices.SortFunc(records, func(left, right *core.Record) int {
+		return strings.Compare(strings.TrimSpace(left.GetString("updated")), strings.TrimSpace(right.GetString("updated")))
+	})
+
+	result := Result{Action: "approve"}
+	for _, record := range records {
+		record.Set("sync_status", StatusApproved)
+		if err := app.Save(record); err != nil {
+			result.Failed++
+			app.Logger().Error("approve supplier product failed", "recordId", record.Id, "error", err)
+			continue
+		}
+		result.Processed++
+	}
+
+	return result, nil
+}
+
+func (s *Service) ScanSyncedSingleImageCandidates(ctx context.Context, app core.App, limit int) ([]SupplierSingleImageCandidate, error) {
+	_ = ctx
+	if limit <= 0 {
+		limit = 200
+	}
+	records, err := app.FindRecordsByFilter(
+		CollectionSupplierProducts,
+		"sync_status = {:synced} && vendure_product_id != ''",
+		"",
+		10000,
+		0,
+		dbx.Params{"synced": StatusSynced},
+	)
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(records, func(left, right *core.Record) int {
+		return strings.Compare(strings.TrimSpace(right.GetString("updated")), strings.TrimSpace(left.GetString("updated")))
+	})
+	items := make([]SupplierSingleImageCandidate, 0, minInt(limit, len(records)))
+	for _, record := range records {
+		if !isSyncedSingleImageSkeletonRecord(record) {
+			continue
+		}
+		items = append(items, SupplierSingleImageCandidate{
+			ID:               record.Id,
+			SupplierCode:     strings.TrimSpace(record.GetString("supplier_code")),
+			OriginalSKU:      strings.TrimSpace(record.GetString("original_sku")),
+			Title:            strings.TrimSpace(displayTitle(record)),
+			SourceType:       strings.TrimSpace(defaultString(record.GetString("source_type"), readJSONAttribute(record, "source_type"))),
+			SyncStatus:       strings.TrimSpace(record.GetString("sync_status")),
+			VendureProductID: strings.TrimSpace(record.GetString("vendure_product_id")),
+			GalleryCount:     len(supplierRecordGalleryURLs(record)),
+			UpdatedAt:        strings.TrimSpace(record.GetString("updated")),
+		})
+		if len(items) >= limit {
+			break
+		}
+	}
+	return items, nil
+}
+
+func (s *Service) RequeueSingleImageCandidatesByIDs(ctx context.Context, app core.App, ids []string) (Result, error) {
+	_ = ctx
+	result := Result{Action: "requeue_single_image"}
+	normalized := uniqueTrimmed(ids)
+	for _, id := range normalized {
+		record, err := app.FindRecordById(CollectionSupplierProducts, id)
+		if err != nil {
+			result.Failed++
+			app.Logger().Error("requeue single image supplier product load failed", "recordId", id, "error", err)
+			continue
+		}
+		if !isSyncedSingleImageSkeletonRecord(record) {
+			result.Skipped++
+			continue
+		}
+		record.Set("sync_status", StatusApproved)
+		record.Set("last_sync_error", "")
+		if err := app.Save(record); err != nil {
+			result.Failed++
+			app.Logger().Error("requeue single image supplier product failed", "recordId", record.Id, "error", err)
+			continue
+		}
+		result.Processed++
+	}
+	return result, nil
+}
+
+func (s *Service) SyncApproved(ctx context.Context, app core.App, limit int) (Result, error) {
+	return s.syncApprovedWithProgress(ctx, app, limit, nil)
+}
+
+func (s *Service) syncApprovedWithProgress(ctx context.Context, app core.App, limit int, onProgress func(total int, processed int, failed int, current string)) (Result, error) {
+	records, err := app.FindRecordsByFilter(
+		CollectionSupplierProducts,
+		"sync_status = {:status}",
+		"",
 		limit,
 		0,
 		dbx.Params{"status": StatusApproved},
@@ -1085,19 +1656,79 @@ func (s *Service) SyncApproved(ctx context.Context, app core.App, limit int) (Re
 	if err != nil {
 		return Result{Action: "sync"}, err
 	}
+	slices.SortFunc(records, func(left, right *core.Record) int {
+		return strings.Compare(strings.TrimSpace(right.GetString("updated")), strings.TrimSpace(left.GetString("updated")))
+	})
+	if onProgress != nil {
+		onProgress(len(records), 0, 0, "")
+	}
 
 	result := Result{Action: "sync"}
 	for _, record := range records {
+		current := strings.TrimSpace(record.GetString("supplier_code")) + "/" + strings.TrimSpace(record.GetString("original_sku"))
+		if onProgress != nil {
+			onProgress(len(records), result.Processed, result.Failed, current)
+		}
 		if err := s.syncRecord(ctx, app, record); err != nil {
 			result.Failed++
 			app.Logger().Error("vendure sync failed", "recordId", record.Id, "error", err)
+			if onProgress != nil {
+				onProgress(len(records), result.Processed, result.Failed, current)
+			}
 			continue
 		}
 
 		result.Processed++
+		if onProgress != nil {
+			onProgress(len(records), result.Processed, result.Failed, current)
+		}
 	}
 
 	return result, nil
+}
+
+func (s *Service) StartSupplierSyncAsync(ctx context.Context, app core.App, limit int) (SupplierSyncProgress, bool, error) {
+	runningRecord, err := findRunningSupplierSyncRun(app)
+	if err != nil {
+		return SupplierSyncProgress{}, false, err
+	}
+	if runningRecord != nil {
+		return supplierSyncProgressFromRecord(runningRecord), true, nil
+	}
+	runRecord, err := s.createSupplierSyncRun(app)
+	if err != nil {
+		return SupplierSyncProgress{}, false, err
+	}
+	progress := supplierSyncProgressFromRecord(runRecord)
+
+	go func() {
+		runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Minute)
+		defer cancel()
+		finalResult := Result{Action: "sync"}
+		finalErr := ""
+		result, err := s.syncApprovedWithProgress(runCtx, app, limit, func(total int, processed int, failed int, current string) {
+			if progressErr := s.updateSupplierSyncRunProgress(app, runRecord, total, processed, failed, current); progressErr != nil {
+				app.Logger().Error("persist supplier sync progress failed", "error", progressErr)
+			}
+		})
+		finalResult = result
+		if err != nil {
+			finalErr = err.Error()
+		}
+		if finalizeErr := s.finalizeSupplierSyncRun(app, runRecord, runRecord.GetInt("total_count"), finalResult.Processed, finalResult.Failed, finalErr); finalizeErr != nil {
+			app.Logger().Error("finalize supplier sync run failed", "error", finalizeErr)
+		}
+	}()
+
+	return progress, false, nil
+}
+
+func (s *Service) SupplierSyncProgress(app core.App) SupplierSyncProgress {
+	record, err := latestSupplierSyncRun(app)
+	if err != nil || record == nil {
+		return SupplierSyncProgress{}
+	}
+	return supplierSyncProgressFromRecord(record)
 }
 
 func (s *Service) SyncRecord(ctx context.Context, app core.App, recordID string) error {
@@ -1129,7 +1760,7 @@ func (s *Service) upsertSupplierProduct(ctx context.Context, app core.App, item 
 		created = true
 	}
 
-	previousSignature := signature(record)
+	previousSnapshot := supplierProductSnapshotFromRecord(record)
 	normalizedCategory, _ := s.resolveCategory(ctx, app, item.SupplierCode, item.RawCategory)
 
 	record.Set("supplier_code", item.SupplierCode)
@@ -1145,30 +1776,72 @@ func (s *Service) upsertSupplierProduct(ctx context.Context, app core.App, item 
 	record.Set("c_price", item.CPrice)
 	record.Set("currency_code", defaultString(item.CurrencyCode, "CNY"))
 	record.Set("supplier_updated_at", item.SupplierUpdatedAt.Format(time.RFC3339))
+	record.Set("last_seen_at", time.Now().Format(time.RFC3339))
+	record.Set("offline_reason", "")
 
 	if payload, err := json.Marshal(item.Payload); err == nil {
 		record.Set("supplier_payload", string(payload))
 	}
+	record.Set("source_product_id", readJSONAttribute(record, "source_product_id"))
+	record.Set("source_type", readJSONAttribute(record, "source_type"))
+
+	nextSnapshot := supplierProductSnapshotFromRecord(record)
+	diff := diffSupplierProductSnapshots(previousSnapshot, nextSnapshot)
+	snapshotHash, err := supplierProductSnapshotHash(nextSnapshot)
+	if err != nil {
+		return false, created, err
+	}
+	if err := setJSONField(record, "last_snapshot_json", nextSnapshot); err != nil {
+		return false, created, err
+	}
+	record.Set("source_snapshot_hash", snapshotHash)
+	record.Set("supplier_status", supplierStatusFromSnapshot(nextSnapshot, diff))
 
 	if created {
 		record.Set("sync_status", StatusPending)
 		record.Set("image_processing_status", ImageStatusPending)
-	} else if previousSignature != signature(record) {
-		if strings.TrimSpace(record.GetString("vendure_product_id")) != "" {
-			record.Set("sync_status", StatusApproved)
-		} else {
-			record.Set("sync_status", StatusPending)
+		record.Set("last_price_sync_at", time.Now().Format(time.RFC3339))
+		record.Set("last_stock_sync_at", time.Now().Format(time.RFC3339))
+	} else if diff.hasChanges() {
+		hasVendureProduct := strings.TrimSpace(record.GetString("vendure_product_id")) != ""
+		switch {
+		case diff.SpecChanged:
+			if hasVendureProduct {
+				record.Set("sync_status", s.readySyncStatus())
+			} else {
+				record.Set("sync_status", StatusPending)
+			}
+		case diff.ContentChanged:
+			if hasVendureProduct {
+				record.Set("sync_status", StatusApproved)
+			} else {
+				record.Set("sync_status", StatusPending)
+			}
+			record.Set("image_processing_status", ImageStatusPending)
+		case diff.PriceChanged || diff.StockChanged:
+			if hasVendureProduct {
+				record.Set("sync_status", StatusApproved)
+			} else {
+				record.Set("sync_status", StatusPending)
+			}
 		}
-		record.Set("image_processing_status", ImageStatusPending)
+		if diff.PriceChanged {
+			record.Set("last_price_sync_at", time.Now().Format(time.RFC3339))
+		}
+		if diff.StockChanged {
+			record.Set("last_stock_sync_at", time.Now().Format(time.RFC3339))
+		}
 		record.Set("last_sync_error", "")
-		record.Set("image_processing_error", "")
+		if diff.ContentChanged {
+			record.Set("image_processing_error", "")
+		}
 	}
 
 	if err := app.Save(record); err != nil {
 		return false, created, err
 	}
 
-	return previousSignature != signature(record), created, nil
+	return diff.hasChanges(), created, nil
 }
 
 func (s *Service) processRecord(ctx context.Context, app core.App, record *core.Record) error {
@@ -1195,12 +1868,15 @@ func (s *Service) processRecord(ctx context.Context, app core.App, record *core.
 	record.Set("processed_image", result.File)
 	record.Set("image_processing_status", ImageStatusProcessed)
 	record.Set("image_processing_error", "")
-	record.Set("sync_status", StatusReady)
+	record.Set("sync_status", s.readySyncStatus())
 	record.Set("processed_image_source", result.Source)
 	return app.Save(record)
 }
 
 func (s *Service) syncRecord(ctx context.Context, app core.App, record *core.Record) error {
+	if err := s.backfillMiniappCarouselIfNeeded(ctx, app, record); err != nil {
+		app.Logger().Error("miniapp carousel backfill skipped", "recordId", record.Id, "error", err)
+	}
 	payload := s.buildVendurePayload(app, record)
 
 	result, err := s.vendure.SyncProduct(ctx, payload)
@@ -1231,6 +1907,72 @@ func (s *Service) syncRecord(ctx context.Context, app core.App, record *core.Rec
 	record.Set("last_sync_error", "")
 	record.Set("sync_status", StatusSynced)
 	record.Set("last_synced_at", time.Now().Format(time.RFC3339))
+	return app.Save(record)
+}
+
+func (s *Service) backfillMiniappCarouselIfNeeded(ctx context.Context, app core.App, record *core.Record) error {
+	if !strings.EqualFold(strings.TrimSpace(s.cfg.Supplier.Connector), "miniapp_cart_order") {
+		return nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(s.cfg.MiniApp.SourceMode), "raw") {
+		return nil
+	}
+
+	sourceType := strings.ToLower(strings.TrimSpace(defaultString(record.GetString("source_type"), readJSONAttribute(record, "source_type"))))
+	if sourceType == "raw_detail" || sourceType == "rr_detail" {
+		return nil
+	}
+	if len(supplierRecordGalleryURLs(record)) > 1 {
+		return nil
+	}
+
+	sourceProductID := strings.TrimSpace(defaultString(record.GetString("source_product_id"), readJSONAttribute(record, "source_product_id")))
+	spuID, skuID := splitSourceProductID(sourceProductID)
+	if strings.TrimSpace(spuID) == "" || strings.TrimSpace(skuID) == "" {
+		return nil
+	}
+
+	miniapp := miniappservice.New(newMiniappActionSource(s.cfg), nil)
+	resolveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
+	defer cancel()
+
+	product, err := miniapp.ResolveProduct(resolveCtx, spuID, skuID)
+	if err != nil {
+		return fmt.Errorf("resolve product %s/%s: %w", spuID, skuID, err)
+	}
+	if product == nil {
+		return nil
+	}
+
+	galleryURLs := miniappGalleryURLs(s.cfg.MiniApp.RawAssetBaseURL, *product)
+	if len(galleryURLs) <= 1 {
+		return nil
+	}
+
+	payload := make(map[string]any)
+	if raw := strings.TrimSpace(record.GetString("supplier_payload")); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &payload)
+	}
+	payload["gallery_urls"] = galleryURLs
+	if sourceType := strings.TrimSpace(product.SourceType); sourceType != "" {
+		payload["source_type"] = sourceType
+		record.Set("source_type", sourceType)
+	}
+	payload["source_product_id"] = sourceProductID
+	record.Set("source_product_id", sourceProductID)
+
+	coverURL := sanitizeURLWithBase(firstNonEmptyString(
+		strings.TrimSpace(product.Summary.Cover),
+		firstMiniappImageURL(product.Detail.Carousel),
+		firstMiniappImageURL(product.Detail.DetailAssets),
+	), s.cfg.MiniApp.RawAssetBaseURL)
+	if coverURL != "" {
+		record.Set("raw_image_url", coverURL)
+	}
+
+	if err := setJSONField(record, "supplier_payload", payload); err != nil {
+		return err
+	}
 	return app.Save(record)
 }
 
@@ -1276,9 +2018,20 @@ func (s *Service) buildVendurePayload(app core.App, record *core.Record) vendure
 func (s *Service) recordGalleryAssetURLs(app core.App, record *core.Record) ([]string, []string) {
 	productID := strings.TrimSpace(record.GetString("source_product_id"))
 	if productID == "" {
+		productID = strings.TrimSpace(readJSONAttribute(record, "source_product_id"))
+	}
+	payloadURLs := supplierRecordGalleryURLs(record)
+	if productID == "" {
 		productID = strings.TrimSpace(record.GetString("product_id"))
 	}
 	if productID == "" {
+		if len(payloadURLs) > 0 {
+			names := make([]string, 0, len(payloadURLs))
+			for _, item := range payloadURLs {
+				names = append(names, assetFileName(item))
+			}
+			return payloadURLs, names
+		}
 		primary := strings.TrimSpace(s.recordPrimaryAssetURL(record))
 		if primary == "" {
 			return nil, nil
@@ -1295,6 +2048,13 @@ func (s *Service) recordGalleryAssetURLs(app core.App, record *core.Record) ([]s
 		dbx.Params{"product_id": productID},
 	)
 	if err != nil || len(assets) == 0 {
+		if len(payloadURLs) > 0 {
+			names := make([]string, 0, len(payloadURLs))
+			for _, item := range payloadURLs {
+				names = append(names, assetFileName(item))
+			}
+			return payloadURLs, names
+		}
 		primary := strings.TrimSpace(s.recordPrimaryAssetURL(record))
 		if primary == "" {
 			return nil, nil
@@ -1339,6 +2099,10 @@ func (s *Service) recordGalleryAssetURLs(app core.App, record *core.Record) ([]s
 			name = assetFileName(urlValue)
 		}
 		appendAsset(urlValue, name)
+	}
+
+	for _, item := range payloadURLs {
+		appendAsset(item, assetFileName(item))
 	}
 
 	if len(urls) == 0 {
@@ -1567,9 +2331,125 @@ func (s *Service) sourceCategoryRoot(app core.App, categoryKey string) (string, 
 }
 
 func (s *Service) BackendReleaseSummary(_ context.Context, app core.App, limit int) (BackendReleaseSummary, error) {
+	return s.BackendReleaseSummaryFiltered(context.Background(), app, limit, BackendReleaseFilter{})
+}
+
+func normalizeBackendReleaseFilter(filter BackendReleaseFilter, fallbackPageSize int) BackendReleaseFilter {
+	filter.SyncStatus = strings.TrimSpace(filter.SyncStatus)
+	filter.Query = strings.TrimSpace(filter.Query)
+	filter.SortBy = normalizeBackendReleaseSortBy(filter.SortBy)
+	filter.SortOrder = normalizeBackendReleaseSortOrder(filter.SortOrder)
+	if filter.Page <= 0 {
+		filter.Page = 1
+	}
+	if fallbackPageSize <= 0 {
+		fallbackPageSize = 12
+	}
+	if filter.PageSize <= 0 {
+		filter.PageSize = fallbackPageSize
+	}
+	if filter.PageSize > 200 {
+		filter.PageSize = 200
+	}
+	return filter
+}
+
+func normalizeBackendReleaseSortBy(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "updated", "updated_at", "pim_updated", "pim_updated_at":
+		return "updated"
+	case "created", "created_at":
+		return "created"
+	case "synced", "sync", "synced_at", "last_synced_at":
+		return "last_synced_at"
+	case "supplier_updated", "supplier_updated_at":
+		return "supplier_updated_at"
+	default:
+		return "updated"
+	}
+}
+
+func normalizeBackendReleaseSortOrder(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "asc", "ascending":
+		return "asc"
+	default:
+		return "desc"
+	}
+}
+
+func backendReleaseProductSortValue(record *core.Record, sortBy string) string {
+	switch sortBy {
+	case "created":
+		return strings.TrimSpace(record.GetString("created"))
+	case "last_synced_at":
+		return strings.TrimSpace(record.GetString("last_synced_at"))
+	case "supplier_updated_at":
+		return strings.TrimSpace(record.GetString("supplier_updated_at"))
+	default:
+		return strings.TrimSpace(record.GetString("updated"))
+	}
+}
+
+func compareBackendReleaseProducts(left, right *core.Record, sortBy, sortOrder string) int {
+	leftValue := backendReleaseProductSortValue(left, sortBy)
+	rightValue := backendReleaseProductSortValue(right, sortBy)
+
+	if leftValue != rightValue {
+		if leftValue == "" {
+			return 1
+		}
+		if rightValue == "" {
+			return -1
+		}
+		cmp := strings.Compare(leftValue, rightValue)
+		if sortOrder == "desc" {
+			cmp = -cmp
+		}
+		if cmp != 0 {
+			return cmp
+		}
+	}
+
+	updatedCmp := strings.Compare(strings.TrimSpace(right.GetString("updated")), strings.TrimSpace(left.GetString("updated")))
+	if updatedCmp != 0 {
+		return updatedCmp
+	}
+	return strings.Compare(right.Id, left.Id)
+}
+
+func matchesBackendReleaseProductFilter(filter BackendReleaseFilter, record *core.Record) bool {
+	if status := strings.ToLower(strings.TrimSpace(filter.SyncStatus)); status != "" && status != "all" {
+		recordStatus := strings.ToLower(strings.TrimSpace(record.GetString("sync_status")))
+		if recordStatus != status {
+			return false
+		}
+	}
+
+	if query := strings.ToLower(strings.TrimSpace(filter.Query)); query != "" {
+		search := strings.ToLower(strings.Join([]string{
+			displayTitle(record),
+			record.GetString("supplier_code"),
+			record.GetString("original_sku"),
+			record.GetString("normalized_category"),
+			record.GetString("raw_category"),
+			record.GetString("vendure_product_id"),
+			record.GetString("vendure_variant_id"),
+			record.GetString("last_sync_error"),
+		}, " "))
+		if !strings.Contains(search, query) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (s *Service) BackendReleaseSummaryFiltered(_ context.Context, app core.App, limit int, filter BackendReleaseFilter) (BackendReleaseSummary, error) {
 	if limit <= 0 {
 		limit = 12
 	}
+	filter = normalizeBackendReleaseFilter(filter, limit)
 	summary := BackendReleaseSummary{}
 
 	sourceCategories, err := app.FindAllRecords(CollectionSourceCategories)
@@ -1662,6 +2542,7 @@ func (s *Service) BackendReleaseSummary(_ context.Context, app core.App, limit i
 	allProducts, err := app.FindAllRecords(CollectionSupplierProducts)
 	if err == nil {
 		summary.ProductCount = len(allProducts)
+		filtered := make([]*core.Record, 0, len(allProducts))
 		for _, record := range allProducts {
 			status := strings.ToLower(strings.TrimSpace(record.GetString("sync_status")))
 			switch status {
@@ -1671,13 +2552,50 @@ func (s *Service) BackendReleaseSummary(_ context.Context, app core.App, limit i
 				summary.SyncedProductCount++
 			case StatusError:
 				summary.ErrorProductCount++
+			case StatusOffline:
+				summary.OfflineProductCount++
+			}
+			if matchesBackendReleaseProductFilter(filter, record) {
+				filtered = append(filtered, record)
 			}
 		}
+		slices.SortFunc(filtered, func(left, right *core.Record) int {
+			return compareBackendReleaseProducts(left, right, filter.SortBy, filter.SortOrder)
+		})
+		summary.FilteredProductCount = len(filtered)
+		summary.ProductPage = filter.Page
+		summary.ProductPageSize = filter.PageSize
+		summary.ProductPages = totalPages(len(filtered), filter.PageSize)
+		if summary.ProductPages <= 0 {
+			summary.ProductPages = 1
+		}
+		if summary.ProductPage > summary.ProductPages {
+			summary.ProductPage = summary.ProductPages
+		}
+		start := (summary.ProductPage - 1) * filter.PageSize
+		if start < 0 {
+			start = 0
+		}
+		if start > len(filtered) {
+			start = len(filtered)
+		}
+		end := start + filter.PageSize
+		if end > len(filtered) {
+			end = len(filtered)
+		}
+		for _, record := range filtered[start:end] {
+			summary.Products = append(summary.Products, backendReleaseProductItemFromRecord(record))
+		}
+		if len(filtered) > 0 {
+			summary.RecommendedProducts = pickRecommendedBackendReleaseProducts(filtered, 3)
+		}
 	}
-	for _, record := range records {
-		summary.Products = append(summary.Products, backendReleaseProductItemFromRecord(record))
+	if len(summary.RecommendedProducts) == 0 {
+		for _, record := range records {
+			summary.Products = append(summary.Products, backendReleaseProductItemFromRecord(record))
+		}
+		summary.RecommendedProducts = pickRecommendedBackendReleaseProducts(records, 3)
 	}
-	summary.RecommendedProducts = pickRecommendedBackendReleaseProducts(records, 3)
 
 	slices.SortFunc(summary.Categories, func(a, b BackendCategoryMappingItem) int {
 		return strings.Compare(a.SourcePath, b.SourcePath)
@@ -1699,8 +2617,16 @@ func backendReleaseProductItemFromRecord(record *core.Record) BackendReleaseProd
 		TargetAudience:     defaultString(record.GetString("target_audience"), "ALL"),
 		ConversionRate:     conversionRate,
 		SyncStatus:         record.GetString("sync_status"),
+		SupplierStatus:     record.GetString("supplier_status"),
 		VendureProductID:   record.GetString("vendure_product_id"),
 		VendureVariantID:   record.GetString("vendure_variant_id"),
+		CreatedAt:          record.GetString("created"),
+		SupplierUpdatedAt:  record.GetString("supplier_updated_at"),
+		UpdatedAt:          record.GetString("updated"),
+		LastSyncedAt:       record.GetString("last_synced_at"),
+		LastSeenAt:         record.GetString("last_seen_at"),
+		OfflineAt:          record.GetString("offline_at"),
+		LastSyncError:      record.GetString("last_sync_error"),
 		HasProcessedImage:  hasProcessedImage,
 		HasConsumerImage:   hasConsumerImage,
 		ReadyForPreview:    strings.TrimSpace(record.GetString("original_sku")) != "" && strings.TrimSpace(displayTitle(record)) != "",
@@ -2326,13 +3252,14 @@ func isAllowedProcurementTransition(current string, next string) bool {
 	}
 }
 
-func (s *Service) markMissingProductsOffline(ctx context.Context, app core.App, seen map[string]struct{}) (int, error) {
+func (s *Service) markMissingProductsOffline(ctx context.Context, app core.App, seen map[string]struct{}) (harvestOfflineSummary, error) {
 	records, err := app.FindAllRecords(CollectionSupplierProducts)
 	if err != nil {
-		return 0, err
+		return harvestOfflineSummary{}, err
 	}
 
-	offlineCount := 0
+	summary := harvestOfflineSummary{}
+	now := time.Now()
 	for _, record := range records {
 		if record.GetString("supplier_code") != s.cfg.Supplier.Code {
 			continue
@@ -2343,26 +3270,66 @@ func (s *Service) markMissingProductsOffline(ctx context.Context, app core.App, 
 			continue
 		}
 
-		if record.GetString("sync_status") == StatusOffline {
-			continue
-		}
-
-		record.Set("sync_status", StatusOffline)
-		record.Set("offline_at", time.Now().Format(time.RFC3339))
-		if err := app.Save(record); err != nil {
-			return offlineCount, err
+		newlyOffline, changed := markRecordMissingFromSupplier(record, now)
+		if changed {
+			if err := app.Save(record); err != nil {
+				return summary, err
+			}
 		}
 
 		if vendureID := record.GetString("vendure_product_id"); vendureID != "" {
-			if err := s.vendure.DisableProduct(ctx, vendureID); err != nil {
+			if err := s.disableVendureProductForOffline(ctx, vendureID); err != nil {
+				summary.FailureItems = appendHarvestFailure(summary.FailureItems, HarvestFailureItem{
+					SKU:       record.GetString("original_sku"),
+					ProductID: vendureID,
+					Step:      "disable_product",
+					Error:     err.Error(),
+				})
 				app.Logger().Error("disable vendure product failed", "productId", vendureID, "error", err)
 			}
 		}
 
-		offlineCount++
+		if newlyOffline {
+			summary.OfflineCount++
+		}
 	}
 
-	return offlineCount, nil
+	return summary, nil
+}
+
+func (s *Service) disableVendureProductForOffline(ctx context.Context, productID string) error {
+	timeout := s.cfg.Vendure.RequestTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	disableCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	defer cancel()
+	return s.vendure.DisableProduct(disableCtx, productID)
+}
+
+func markRecordMissingFromSupplier(record *core.Record, now time.Time) (bool, bool) {
+	newlyOffline := false
+	changed := false
+
+	if record.GetString("sync_status") != StatusOffline {
+		record.Set("sync_status", StatusOffline)
+		newlyOffline = true
+		changed = true
+	}
+	if record.GetString("supplier_status") != SupplierStatusOffline {
+		record.Set("supplier_status", SupplierStatusOffline)
+		changed = true
+	}
+	if strings.TrimSpace(record.GetString("offline_reason")) != "missing_from_supplier_feed" {
+		record.Set("offline_reason", "missing_from_supplier_feed")
+		changed = true
+	}
+	if strings.TrimSpace(record.GetString("offline_at")) == "" {
+		record.Set("offline_at", now.Format(time.RFC3339))
+		changed = true
+	}
+
+	return newlyOffline, changed
 }
 
 func (s *Service) resolveCategory(_ context.Context, app core.App, supplierCode string, rawCategory string) (string, error) {
@@ -2472,6 +3439,20 @@ func splitCategoryPath(pathValue string, fallback string) []string {
 	return result
 }
 
+func supplierProcessPriority(record *core.Record) int {
+	imageStatus := strings.ToLower(strings.TrimSpace(record.GetString("image_processing_status")))
+	switch imageStatus {
+	case ImageStatusPending, ImageStatusFailed:
+		return 0
+	case ImageStatusProcessing:
+		return 1
+	case ImageStatusProcessed:
+		return 2
+	default:
+		return 3
+	}
+}
+
 func slugifySegments(items []string) []string {
 	result := make([]string, 0, len(items))
 	for _, item := range items {
@@ -2512,6 +3493,33 @@ func uniqueTrimmed(items []string) []string {
 		result = append(result, value)
 	}
 	return result
+}
+
+func normalizeDuplicateNameKey(value string) string {
+	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(value)), " "))
+}
+
+func (s *Service) linkedVendureProductIDs(app core.App) (map[string]struct{}, error) {
+	records, err := app.FindRecordsByFilter(
+		CollectionSupplierProducts,
+		"vendure_product_id != ''",
+		"",
+		20000,
+		0,
+		nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]struct{}, len(records))
+	for _, record := range records {
+		productID := strings.TrimSpace(record.GetString("vendure_product_id"))
+		if productID == "" {
+			continue
+		}
+		result[productID] = struct{}{}
+	}
+	return result, nil
 }
 
 func containsTrimmed(items []string, target string) bool {
@@ -2710,15 +3718,110 @@ func displayTitle(record *core.Record) string {
 	return defaultString(record.GetString("normalized_title"), record.GetString("raw_title"))
 }
 
+func (diff supplierProductDiff) hasChanges() bool {
+	return diff.ContentChanged || diff.PriceChanged || diff.StockChanged || diff.SpecChanged
+}
+
+func supplierProductSnapshotFromRecord(record *core.Record) supplierProductSnapshot {
+	defaultOption := supplierRecordUnitOption(record, "")
+	return supplierProductSnapshot{
+		Title:            displayTitle(record),
+		Category:         defaultString(record.GetString("normalized_category"), record.GetString("raw_category")),
+		ImageURL:         strings.TrimSpace(record.GetString("raw_image_url")),
+		GalleryURLs:      supplierRecordGalleryURLs(record),
+		CostPrice:        roundAmount(record.GetFloat("cost_price")),
+		BPrice:           roundAmount(record.GetFloat("b_price")),
+		CPrice:           roundAmount(record.GetFloat("c_price")),
+		CurrencyCode:     defaultString(record.GetString("currency_code"), "CNY"),
+		SourceProductID:  defaultString(record.GetString("source_product_id"), readJSONAttribute(record, "source_product_id")),
+		SourceType:       defaultString(record.GetString("source_type"), readJSONAttribute(record, "source_type")),
+		SalesUnit:        defaultString(readJSONAttribute(record, "sales_unit"), "件"),
+		ConversionRate:   roundAmount(sourceConversionRateFromSupplierRecord(record)),
+		DefaultStockQty:  roundAmount(defaultOption.StockQty),
+		DefaultStockText: strings.TrimSpace(defaultOption.StockText),
+		UnitOptions:      normalizedSupplierUnitOptions(supplierRecordUnitOptions(record)),
+	}
+}
+
+func supplierProductSnapshotHash(snapshot supplierProductSnapshot) (string, error) {
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		return "", err
+	}
+
+	sum := fnv.New128a()
+	if _, err := sum.Write(encoded); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(sum.Sum(nil)), nil
+}
+
+func diffSupplierProductSnapshots(previous supplierProductSnapshot, next supplierProductSnapshot) supplierProductDiff {
+	diff := supplierProductDiff{
+		ContentChanged: previous.Title != next.Title ||
+			previous.Category != next.Category ||
+			previous.ImageURL != next.ImageURL ||
+			!slices.Equal(previous.GalleryURLs, next.GalleryURLs) ||
+			previous.CurrencyCode != next.CurrencyCode,
+		PriceChanged: priceChanged(previous.CostPrice, next.CostPrice) ||
+			priceChanged(previous.BPrice, next.BPrice) ||
+			priceChanged(previous.CPrice, next.CPrice),
+		StockChanged: stockChanged(previous.DefaultStockQty, next.DefaultStockQty) ||
+			strings.TrimSpace(previous.DefaultStockText) != strings.TrimSpace(next.DefaultStockText),
+	}
+
+	if len(previous.UnitOptions) != len(next.UnitOptions) {
+		diff.SpecChanged = true
+	}
+
+	count := minInt(len(previous.UnitOptions), len(next.UnitOptions))
+	for index := 0; index < count; index++ {
+		left := previous.UnitOptions[index]
+		right := next.UnitOptions[index]
+		if strings.TrimSpace(left.UnitName) != strings.TrimSpace(right.UnitName) ||
+			strings.TrimSpace(left.BaseUnit) != strings.TrimSpace(right.BaseUnit) ||
+			roundAmount(left.Rate) != roundAmount(right.Rate) ||
+			left.IsDefault != right.IsDefault {
+			diff.SpecChanged = true
+		}
+		if priceChanged(left.Price, right.Price) {
+			diff.PriceChanged = true
+		}
+		if stockChanged(left.StockQty, right.StockQty) || strings.TrimSpace(left.StockText) != strings.TrimSpace(right.StockText) {
+			diff.StockChanged = true
+		}
+	}
+
+	if previous.SourceProductID != next.SourceProductID ||
+		previous.SourceType != next.SourceType ||
+		previous.SalesUnit != next.SalesUnit ||
+		roundAmount(previous.ConversionRate) != roundAmount(next.ConversionRate) {
+		diff.SpecChanged = true
+	}
+
+	return diff
+}
+
+func supplierStatusFromSnapshot(snapshot supplierProductSnapshot, diff supplierProductDiff) string {
+	if snapshotHasTrackedStock(snapshot) && snapshot.DefaultStockQty <= 0 {
+		return SupplierStatusOutOfStock
+	}
+	switch {
+	case diff.SpecChanged:
+		return SupplierStatusSpecChanged
+	case diff.PriceChanged:
+		return SupplierStatusPriceChanged
+	default:
+		return SupplierStatusActive
+	}
+}
+
 func signature(record *core.Record) string {
-	return strings.Join([]string{
-		record.GetString("raw_title"),
-		record.GetString("raw_category"),
-		record.GetString("raw_image_url"),
-		fmt.Sprintf("%.2f", record.GetFloat("cost_price")),
-		fmt.Sprintf("%.2f", record.GetFloat("b_price")),
-		fmt.Sprintf("%.2f", record.GetFloat("c_price")),
-	}, "|")
+	snapshot, err := supplierProductSnapshotHash(supplierProductSnapshotFromRecord(record))
+	if err != nil {
+		return ""
+	}
+	return snapshot
 }
 
 func slugify(value string) string {
@@ -2818,6 +3921,98 @@ func readJSONNumber(record *core.Record, key string) float64 {
 	}
 }
 
+func normalizedSupplierUnitOptions(options []supplierPayloadUnitOption) []supplierPayloadUnitOption {
+	normalized := make([]supplierPayloadUnitOption, 0, len(options))
+	for _, option := range options {
+		normalized = append(normalized, supplierPayloadUnitOption{
+			UnitName:  strings.TrimSpace(option.UnitName),
+			Price:     roundAmount(option.Price),
+			BaseUnit:  strings.TrimSpace(option.BaseUnit),
+			Rate:      roundAmount(option.Rate),
+			IsDefault: option.IsDefault,
+			StockQty:  roundAmount(option.StockQty),
+			StockText: strings.TrimSpace(option.StockText),
+		})
+	}
+	slices.SortStableFunc(normalized, func(left, right supplierPayloadUnitOption) int {
+		leftKey := fmt.Sprintf("%s|%.2f|%t", left.UnitName, left.Rate, left.IsDefault)
+		rightKey := fmt.Sprintf("%s|%.2f|%t", right.UnitName, right.Rate, right.IsDefault)
+		return strings.Compare(leftKey, rightKey)
+	})
+	return normalized
+}
+
+func priceChanged(previous float64, next float64) bool {
+	return roundAmount(previous) != roundAmount(next)
+}
+
+func stockChanged(previous float64, next float64) bool {
+	return roundAmount(previous) != roundAmount(next)
+}
+
+func snapshotHasTrackedStock(snapshot supplierProductSnapshot) bool {
+	if snapshot.DefaultStockQty > 0 || strings.TrimSpace(snapshot.DefaultStockText) != "" {
+		return true
+	}
+	return len(snapshot.UnitOptions) > 0
+}
+
+func supplierRecordHasUnitOptions(record *core.Record) bool {
+	return len(supplierRecordUnitOptions(record)) > 0
+}
+
+func supplierRecordUnitOptionExact(record *core.Record, unitName string) (supplierPayloadUnitOption, bool) {
+	trimmed := strings.TrimSpace(unitName)
+	if trimmed == "" {
+		option := supplierRecordUnitOption(record, "")
+		return option, strings.TrimSpace(option.UnitName) != ""
+	}
+	for _, option := range supplierRecordUnitOptions(record) {
+		if strings.EqualFold(strings.TrimSpace(option.UnitName), trimmed) {
+			return option, true
+		}
+	}
+	return supplierPayloadUnitOption{}, false
+}
+
+func supplierRecordAvailableStock(record *core.Record, unitName string) (float64, bool) {
+	if option, ok := supplierRecordUnitOptionExact(record, unitName); ok {
+		return roundAmount(option.StockQty), true
+	}
+	if supplierRecordHasUnitOptions(record) {
+		option := supplierRecordUnitOption(record, "")
+		return roundAmount(option.StockQty), true
+	}
+	raw := strings.TrimSpace(record.GetString("supplier_payload"))
+	if raw == "" {
+		return 0, false
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return 0, false
+	}
+
+	for _, key := range []string{"stockQty", "stock_qty"} {
+		value, ok := payload[key]
+		if !ok {
+			continue
+		}
+		switch cast := value.(type) {
+		case float64:
+			return roundAmount(cast), true
+		case int:
+			return roundAmount(float64(cast)), true
+		case int64:
+			return roundAmount(float64(cast)), true
+		case json.Number:
+			number, _ := cast.Float64()
+			return roundAmount(number), true
+		}
+	}
+	return 0, false
+}
+
 func readJSONArrayAttributes(record *core.Record, key string) []string {
 	raw := strings.TrimSpace(record.GetString("supplier_payload"))
 	if raw == "" {
@@ -2847,6 +4042,27 @@ func readJSONArrayAttributes(record *core.Record, key string) []string {
 		}
 	}
 	return uniqueTrimmed(result)
+}
+
+func supplierRecordGalleryURLs(record *core.Record) []string {
+	return uniqueTrimmed(readJSONArrayAttributes(record, "gallery_urls"))
+}
+
+func isSyncedSingleImageSkeletonRecord(record *core.Record) bool {
+	if !strings.EqualFold(strings.TrimSpace(record.GetString("sync_status")), StatusSynced) {
+		return false
+	}
+	if strings.TrimSpace(record.GetString("vendure_product_id")) == "" {
+		return false
+	}
+	sourceType := strings.ToLower(strings.TrimSpace(defaultString(record.GetString("source_type"), readJSONAttribute(record, "source_type"))))
+	if sourceType == "raw_detail" || sourceType == "rr_detail" {
+		return false
+	}
+	if !strings.Contains(sourceType, "skeleton") {
+		return false
+	}
+	return len(supplierRecordGalleryURLs(record)) <= 1
 }
 
 type supplierPayloadUnitOption struct {

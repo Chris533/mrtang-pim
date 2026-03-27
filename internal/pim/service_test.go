@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pocketbase/pocketbase/core"
 
@@ -336,6 +337,179 @@ func TestSupplierRecordOrderUnitPrefersRequestedSalesUnit(t *testing.T) {
 	}
 	if unit.UnitName != "袋" {
 		t.Fatalf("expected 袋, got %q", unit.UnitName)
+	}
+}
+
+func TestDiffSupplierProductSnapshotsSeparatesPriceStockAndSpecChanges(t *testing.T) {
+	base := supplierProductSnapshot{
+		Title:    "测试商品",
+		Category: "冻品",
+		ImageURL: "https://example.com/a.png",
+		GalleryURLs: []string{
+			"https://example.com/a.png",
+			"https://example.com/b.png",
+		},
+		CostPrice:        10,
+		BPrice:           12,
+		CPrice:           15,
+		CurrencyCode:     "CNY",
+		SourceProductID:  "source-1",
+		SourceType:       "snapshot",
+		SalesUnit:        "件",
+		ConversionRate:   10,
+		DefaultStockQty:  5,
+		DefaultStockText: "有货",
+		UnitOptions: []supplierPayloadUnitOption{
+			{UnitName: "件", Price: 12, Rate: 10, IsDefault: true, StockQty: 5, StockText: "有货"},
+			{UnitName: "袋", Price: 3, Rate: 1, StockQty: 10, StockText: "充足"},
+		},
+	}
+
+	priceChangedSnapshot := base
+	priceChangedSnapshot.BPrice = 13
+	priceChangedSnapshot.UnitOptions[0].Price = 13
+	priceDiff := diffSupplierProductSnapshots(base, priceChangedSnapshot)
+	if !priceDiff.PriceChanged || priceDiff.StockChanged || priceDiff.SpecChanged {
+		t.Fatalf("expected pure price change diff, got %#v", priceDiff)
+	}
+
+	stockChangedSnapshot := base
+	stockChangedSnapshot.DefaultStockQty = 2
+	stockChangedSnapshot.UnitOptions[0].StockQty = 2
+	stockDiff := diffSupplierProductSnapshots(base, stockChangedSnapshot)
+	if !stockDiff.StockChanged || stockDiff.PriceChanged || stockDiff.SpecChanged {
+		t.Fatalf("expected pure stock change diff, got %#v", stockDiff)
+	}
+
+	specChangedSnapshot := base
+	specChangedSnapshot.UnitOptions = append(specChangedSnapshot.UnitOptions, supplierPayloadUnitOption{UnitName: "箱", Price: 20, Rate: 20})
+	specDiff := diffSupplierProductSnapshots(base, specChangedSnapshot)
+	if !specDiff.SpecChanged {
+		t.Fatalf("expected spec change diff, got %#v", specDiff)
+	}
+}
+
+func TestDiffSupplierProductSnapshotsTreatsGalleryURLsAsContentChange(t *testing.T) {
+	base := supplierProductSnapshot{
+		Title:       "鸭心",
+		Category:    "鸡鸭副产",
+		ImageURL:    "https://example.com/cover.png",
+		GalleryURLs: []string{"https://example.com/cover.png"},
+	}
+
+	next := base
+	next.GalleryURLs = []string{
+		"https://example.com/cover.png",
+		"https://example.com/carousel-1.png",
+		"https://example.com/carousel-2.png",
+	}
+
+	diff := diffSupplierProductSnapshots(base, next)
+	if !diff.ContentChanged || diff.PriceChanged || diff.StockChanged || diff.SpecChanged {
+		t.Fatalf("expected pure content change for gallery update, got %#v", diff)
+	}
+}
+
+func TestSupplierProductSnapshotFromRecordIncludesGalleryURLs(t *testing.T) {
+	record := core.NewRecord(core.NewBaseCollection("supplier_products"))
+	record.Set("normalized_title", "盛佳峰鸭心")
+	record.Set("supplier_payload", `{"gallery_urls":["https://example.com/cover.png","https://example.com/c1.png","https://example.com/c2.png"]}`)
+
+	snapshot := supplierProductSnapshotFromRecord(record)
+	expected := []string{
+		"https://example.com/cover.png",
+		"https://example.com/c1.png",
+		"https://example.com/c2.png",
+	}
+	if !reflect.DeepEqual(snapshot.GalleryURLs, expected) {
+		t.Fatalf("expected gallery urls %v, got %v", expected, snapshot.GalleryURLs)
+	}
+}
+
+func TestSupplierStatusFromSnapshotPrefersStockThenSpecThenPrice(t *testing.T) {
+	snapshot := supplierProductSnapshot{
+		DefaultStockQty:  0,
+		DefaultStockText: "售罄",
+		UnitOptions:      []supplierPayloadUnitOption{{UnitName: "件", StockQty: 0, IsDefault: true}},
+	}
+	if status := supplierStatusFromSnapshot(snapshot, supplierProductDiff{}); status != SupplierStatusOutOfStock {
+		t.Fatalf("expected out_of_stock, got %q", status)
+	}
+
+	snapshot.DefaultStockQty = 10
+	if status := supplierStatusFromSnapshot(snapshot, supplierProductDiff{SpecChanged: true}); status != SupplierStatusSpecChanged {
+		t.Fatalf("expected spec_changed, got %q", status)
+	}
+
+	if status := supplierStatusFromSnapshot(snapshot, supplierProductDiff{PriceChanged: true}); status != SupplierStatusPriceChanged {
+		t.Fatalf("expected price_changed, got %q", status)
+	}
+}
+
+func TestMarkRecordMissingFromSupplierTransitionsActiveRecordOffline(t *testing.T) {
+	record := core.NewRecord(core.NewBaseCollection("supplier_products"))
+	record.Set("sync_status", StatusSynced)
+	record.Set("supplier_status", SupplierStatusActive)
+	record.Set("offline_reason", "")
+	record.Set("offline_at", "")
+
+	now := time.Date(2026, 3, 24, 10, 0, 0, 0, time.UTC)
+	newlyOffline, changed := markRecordMissingFromSupplier(record, now)
+	if !newlyOffline {
+		t.Fatal("expected record to be newly offline")
+	}
+	if !changed {
+		t.Fatal("expected record to change")
+	}
+	if record.GetString("sync_status") != StatusOffline {
+		t.Fatalf("expected sync_status offline, got %q", record.GetString("sync_status"))
+	}
+	if record.GetString("supplier_status") != SupplierStatusOffline {
+		t.Fatalf("expected supplier_status offline, got %q", record.GetString("supplier_status"))
+	}
+	if record.GetString("offline_reason") != "missing_from_supplier_feed" {
+		t.Fatalf("unexpected offline_reason: %q", record.GetString("offline_reason"))
+	}
+	if record.GetString("offline_at") == "" {
+		t.Fatal("expected offline_at to be set")
+	}
+}
+
+func TestMarkRecordMissingFromSupplierRepairsExistingOfflineRecord(t *testing.T) {
+	record := core.NewRecord(core.NewBaseCollection("supplier_products"))
+	record.Set("sync_status", StatusOffline)
+	record.Set("supplier_status", "")
+	record.Set("offline_reason", "")
+	record.Set("offline_at", "")
+
+	now := time.Date(2026, 3, 24, 11, 0, 0, 0, time.UTC)
+	newlyOffline, changed := markRecordMissingFromSupplier(record, now)
+	if newlyOffline {
+		t.Fatal("did not expect already offline record to be counted as newly offline")
+	}
+	if !changed {
+		t.Fatal("expected existing offline record to be repaired")
+	}
+	if record.GetString("supplier_status") != SupplierStatusOffline {
+		t.Fatalf("expected supplier_status offline, got %q", record.GetString("supplier_status"))
+	}
+	if record.GetString("offline_reason") != "missing_from_supplier_feed" {
+		t.Fatalf("unexpected offline_reason: %q", record.GetString("offline_reason"))
+	}
+	if record.GetString("offline_at") == "" {
+		t.Fatal("expected offline_at to be backfilled")
+	}
+}
+
+func TestSupplierRecordAvailableStockUsesRequestedUnitAndFallback(t *testing.T) {
+	record := core.NewRecord(core.NewBaseCollection("supplier_products"))
+	record.Set("supplier_payload", `{"unit_options":[{"unitName":"件","price":30,"rate":10,"isDefault":true,"stockQty":2},{"unitName":"袋","price":4,"rate":1,"isDefault":false,"stockQty":8}]}`)
+
+	if stock, ok := supplierRecordAvailableStock(record, "袋"); !ok || stock != 8 {
+		t.Fatalf("expected 袋 stock 8, got stock=%v ok=%v", stock, ok)
+	}
+	if stock, ok := supplierRecordAvailableStock(record, ""); !ok || stock != 2 {
+		t.Fatalf("expected default stock 2, got stock=%v ok=%v", stock, ok)
 	}
 }
 

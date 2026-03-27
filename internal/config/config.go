@@ -81,6 +81,7 @@ type ImageConfig struct {
 
 type WorkflowConfig struct {
 	AutoProcessOnIngest bool
+	AutoApproveReady    bool
 	AutoSyncApproved    bool
 	ProcessBatchSize    int
 	SyncBatchSize       int
@@ -169,11 +170,12 @@ func Load() Config {
 		},
 		Workflow: WorkflowConfig{
 			AutoProcessOnIngest: getEnvBool("AUTO_PROCESS_ON_INGEST", true),
+			AutoApproveReady:    getEnvBool("AUTO_APPROVE_READY", false),
 			AutoSyncApproved:    getEnvBool("AUTO_SYNC_APPROVED", false),
 			ProcessBatchSize:    getEnvInt("PROCESS_BATCH_SIZE", 20),
 			SyncBatchSize:       getEnvInt("SYNC_BATCH_SIZE", 20),
 			DefaultStockOnHand:  getEnvInt("DEFAULT_STOCK_ON_HAND", 100),
-			CronHarvest:         getEnv("CRON_HARVEST", "0 */6 * * *"),
+			CronHarvest:         getEnv("CRON_HARVEST", "0 * * * *"),
 			CronProcess:         getEnv("CRON_PROCESS", "*/10 * * * *"),
 			CronSync:            getEnv("CRON_SYNC", "*/15 * * * *"),
 		},

@@ -12,7 +12,8 @@ import (
 
 func RenderAdminAppShellHTML(title string, subtitle string, currentPath string, canAccessSource bool, canAccessProcurement bool) string {
 	cssHref := "/_/mrtang-admin/app.css?v=" + adminAssetVersion("static/app.css")
-	jsHref := "/_/mrtang-admin/app.js?v=" + adminAssetVersion("static/app.js")
+	appVersion := adminAssetVersion("static/app.js")
+	jsHref := "/_/mrtang-admin/app.js?v=" + appVersion
 	const page = `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -29,7 +30,8 @@ func RenderAdminAppShellHTML(title string, subtitle string, currentPath string, 
       subtitle: {{printf "%q" .Subtitle}},
       currentPath: {{printf "%q" .CurrentPath}},
       canAccessSource: {{.CanAccessSource}},
-      canAccessProcurement: {{.CanAccessProcurement}}
+      canAccessProcurement: {{.CanAccessProcurement}},
+      version: {{printf "%q" .Version}}
     };
   </script>
   <script type="module" src="{{.JSHref}}"></script>
@@ -50,6 +52,7 @@ func RenderAdminAppShellHTML(title string, subtitle string, currentPath string, 
 		JSHref               string
 		CanAccessSource      bool
 		CanAccessProcurement bool
+		Version              string
 	}
 
 	tpl := template.Must(template.New("admin-app-shell").Parse(page))
@@ -62,6 +65,7 @@ func RenderAdminAppShellHTML(title string, subtitle string, currentPath string, 
 		JSHref:               jsHref,
 		CanAccessSource:      canAccessSource,
 		CanAccessProcurement: canAccessProcurement,
+		Version:              appVersion,
 	}); err != nil {
 		return fmt.Sprintf("<pre>render admin app shell failed: %s</pre>", template.HTMLEscapeString(err.Error()))
 	}

@@ -23,6 +23,13 @@ import (
 )
 
 func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Service, miniappService *miniappservice.Service) {
+	fullSupplierActionLimit := func(batchSize int) int {
+		if batchSize > 10000 {
+			return batchSize
+		}
+		return 10000
+	}
+
 	se.Router.GET("/api/pim/healthz", func(re *core.RequestEvent) error {
 		return re.JSON(http.StatusOK, map[string]any{
 			"service": "mrtang-pim",
@@ -132,11 +139,19 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 			return re.ForbiddenError("当前账号没有抓取入库权限。", nil)
 		}
 
+		harvestData, harvestErr := admin.BuildHarvestAdminData(re.App, cfg)
+		harvestError := ""
+		if harvestErr != nil {
+			harvestError = "生成供应商同步摘要失败：" + harvestErr.Error()
+		}
+
 		summary, err := service.TargetSyncBaseSummary(re.App, strings.TrimSpace(cfg.MiniApp.SourceMode), miniappService.RawAuthStatus())
 		if err != nil {
 			return re.JSON(http.StatusOK, admin.BuildTargetSyncAPIData(
 				cfg,
 				pim.TargetSyncBaseSummary{SourceMode: strings.TrimSpace(cfg.MiniApp.SourceMode), RawAuthStatus: miniappService.RawAuthStatus()},
+				harvestData,
+				harvestError,
 				strings.TrimSpace(re.Request.URL.Query().Get("message")),
 				"生成抓取入库基础摘要失败："+err.Error(),
 			))
@@ -144,6 +159,8 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		return re.JSON(http.StatusOK, admin.BuildTargetSyncAPIData(
 			cfg,
 			summary,
+			harvestData,
+			harvestError,
 			strings.TrimSpace(re.Request.URL.Query().Get("message")),
 			strings.TrimSpace(re.Request.URL.Query().Get("error")),
 		))
@@ -158,15 +175,18 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 
 		dataset, err := miniappService.Dataset(loadCtx)
 		if err != nil {
+			rawAuthStatus := miniappService.RawAuthStatus()
 			summary, fallbackErr := service.TargetSyncStoredLiveSummary(re.App, strings.TrimSpace(cfg.MiniApp.SourceMode))
 			if fallbackErr == nil {
 				return re.JSON(http.StatusOK, admin.BuildTargetSyncLiveAPIData(
 					summary,
+					rawAuthStatus,
 					"加载源站实时摘要失败，已回退到已落库结果："+err.Error(),
 				))
 			}
 			return re.JSON(http.StatusOK, admin.BuildTargetSyncLiveAPIData(
 				pim.TargetSyncLiveSummary{SourceMode: strings.TrimSpace(cfg.MiniApp.SourceMode)},
+				rawAuthStatus,
 				"加载 miniapp dataset 失败："+err.Error(),
 			))
 		}
@@ -174,10 +194,11 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		if err != nil {
 			return re.JSON(http.StatusOK, admin.BuildTargetSyncLiveAPIData(
 				pim.TargetSyncLiveSummary{SourceMode: strings.TrimSpace(dataset.Meta.Source)},
+				miniappService.RawAuthStatus(),
 				"生成 raw 实时摘要失败："+err.Error(),
 			))
 		}
-		return re.JSON(http.StatusOK, admin.BuildTargetSyncLiveAPIData(summary, ""))
+		return re.JSON(http.StatusOK, admin.BuildTargetSyncLiveAPIData(summary, miniappService.RawAuthStatus(), ""))
 	})
 
 	se.Router.GET("/api/pim/admin/target-sync/checkout-live", func(re *core.RequestEvent) error {
@@ -192,6 +213,55 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 			return re.JSON(http.StatusOK, admin.BuildTargetSyncCheckoutLiveAPIData(pim.TargetSyncCheckoutLiveSummary{}, "加载 miniapp dataset 失败："+err.Error()))
 		}
 		return re.JSON(http.StatusOK, admin.BuildTargetSyncCheckoutLiveAPIData(service.TargetSyncCheckoutLiveSummary(*dataset), ""))
+	})
+
+	se.Router.POST("/api/pim/admin/harvest", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+
+		run, alreadyRunning, err := service.StartHarvest(re.Request.Context(), re.App, pim.HarvestOptions{
+			TriggerType: pim.HarvestTriggerManual,
+			Actor:       harvestActionActor(re),
+		})
+		if err != nil {
+			return re.JSON(http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"message": "执行供应商同步失败：" + err.Error(),
+			})
+		}
+
+		harvestData, harvestErr := admin.BuildHarvestAdminData(re.App, cfg)
+		if strings.TrimSpace(run.ID) != "" {
+			exists := false
+			for _, item := range harvestData.RecentRuns {
+				if strings.TrimSpace(item.ID) == strings.TrimSpace(run.ID) {
+					exists = true
+					break
+				}
+			}
+			if !exists {
+				harvestData.RecentRuns = append([]pim.HarvestRun{run}, harvestData.RecentRuns...)
+				if len(harvestData.RecentRuns) > 8 {
+					harvestData.RecentRuns = harvestData.RecentRuns[:8]
+				}
+			}
+		}
+		payload := map[string]any{
+			"ok":      true,
+			"run":     run,
+			"harvest": harvestData,
+		}
+		if alreadyRunning {
+			payload["message"] = "已有供应商同步在后台执行中，已切换到当前运行记录。"
+		} else {
+			payload["message"] = "供应商同步已启动，后台执行中。"
+		}
+		if harvestErr != nil {
+			payload["harvestError"] = "读取供应商同步摘要失败：" + harvestErr.Error()
+		}
+
+		return re.JSON(http.StatusOK, payload)
 	})
 
 	se.Router.POST("/api/pim/admin/source/import", func(re *core.RequestEvent) error {
@@ -1277,6 +1347,60 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		))
 	})
 
+	se.Router.GET("/api/pim/admin/source/products/live-detail", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
+		if id == "" {
+			return re.BadRequestError("missing source product id", nil)
+		}
+		record, err := re.App.FindRecordById(pim.CollectionSourceProducts, id)
+		if err != nil {
+			return re.BadRequestError("加载源数据商品失败："+err.Error(), nil)
+		}
+		spuID := strings.TrimSpace(record.GetString("spu_id"))
+		skuID := strings.TrimSpace(record.GetString("sku_id"))
+		if spuID == "" || skuID == "" {
+			return re.BadRequestError("该商品缺少 spu_id 或 sku_id。", nil)
+		}
+		loadCtx, cancel := context.WithTimeout(re.Request.Context(), 90*time.Second)
+		defer cancel()
+		product, err := miniappService.ResolveProduct(loadCtx, spuID, skuID)
+		if err != nil {
+			return re.JSON(http.StatusOK, map[string]any{
+				"ok":        false,
+				"spuId":     spuID,
+				"skuId":     skuID,
+				"productId": strings.TrimSpace(record.GetString("product_id")),
+				"error":     err.Error(),
+			})
+		}
+		if product == nil {
+			return re.JSON(http.StatusOK, map[string]any{
+				"ok":        false,
+				"spuId":     spuID,
+				"skuId":     skuID,
+				"productId": strings.TrimSpace(record.GetString("product_id")),
+				"error":     "实时详情返回空结果",
+			})
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":               true,
+			"spuId":            spuID,
+			"skuId":            skuID,
+			"productId":        product.ID,
+			"sourceType":       strings.TrimSpace(product.SourceType),
+			"cover":            strings.TrimSpace(product.Summary.Cover),
+			"carouselCount":    len(product.Detail.Carousel),
+			"detailAssetCount": len(product.Detail.DetailAssets),
+			"carousel":         product.Detail.Carousel,
+			"detailAssets":     product.Detail.DetailAssets,
+			"detailTexts":      product.Detail.DetailTexts,
+			"product":          product,
+		})
+	})
+
 	se.Router.GET("/api/pim/admin/source/assets", func(re *core.RequestEvent) error {
 		if !authorizedAdminModule(re, cfg, "source") {
 			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
@@ -1508,11 +1632,199 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		))
 	})
 
+	se.Router.GET("/api/pim/admin/harvest/detail", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		id := strings.TrimSpace(re.Request.URL.Query().Get("id"))
+		if id == "" {
+			return re.BadRequestError("missing harvest run id", nil)
+		}
+		run, err := pim.GetHarvestRun(re.App, id)
+		if err != nil {
+			return re.JSON(http.StatusOK, admin.BuildHarvestDetailAPIData(
+				pim.HarvestRun{},
+				strings.TrimSpace(re.Request.URL.Query().Get("returnTo")),
+				strings.TrimSpace(re.Request.URL.Query().Get("message")),
+				"加载供应商同步详情失败："+err.Error(),
+			))
+		}
+		return re.JSON(http.StatusOK, admin.BuildHarvestDetailAPIData(
+			run,
+			strings.TrimSpace(re.Request.URL.Query().Get("returnTo")),
+			strings.TrimSpace(re.Request.URL.Query().Get("message")),
+			strings.TrimSpace(re.Request.URL.Query().Get("error")),
+		))
+	})
+
+	se.Router.GET("/api/pim/admin/harvest/summary", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		harvestData, err := admin.BuildHarvestAdminData(re.App, cfg)
+		if err != nil {
+			return re.JSON(http.StatusOK, admin.BuildHarvestSummaryAPIData(
+				admin.HarvestAdminData{},
+				"读取供应商同步摘要失败："+err.Error(),
+			))
+		}
+		return re.JSON(http.StatusOK, admin.BuildHarvestSummaryAPIData(harvestData, ""))
+	})
+
+	se.Router.POST("/api/pim/admin/supplier-products/process", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		result, err := service.ProcessPending(re.Request.Context(), re.App, fullSupplierActionLimit(cfg.Workflow.ProcessBatchSize))
+		if err != nil {
+			return re.BadRequestError("处理待处理商品图片失败："+err.Error(), nil)
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": fmt.Sprintf("已处理待处理商品图片：成功 %d，失败 %d。", result.Processed, result.Failed),
+			"result":  result,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/supplier-products/advance-ready", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		result, err := service.AdvanceProcessedPending(re.Request.Context(), re.App, fullSupplierActionLimit(cfg.Workflow.ProcessBatchSize))
+		if err != nil {
+			return re.BadRequestError("推进待推进商品失败："+err.Error(), nil)
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": fmt.Sprintf("已推进待推进商品：成功 %d，失败 %d。", result.Processed, result.Failed),
+			"result":  result,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/supplier-products/approve-ready", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		result, err := service.ApproveReady(re.Request.Context(), re.App, fullSupplierActionLimit(cfg.Workflow.ProcessBatchSize))
+		if err != nil {
+			return re.BadRequestError("批准可同步商品失败："+err.Error(), nil)
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": fmt.Sprintf("已批准可同步商品：成功 %d，失败 %d。", result.Processed, result.Failed),
+			"result":  result,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/supplier-products/sync", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		result, err := service.SyncApproved(re.Request.Context(), re.App, fullSupplierActionLimit(cfg.Workflow.SyncBatchSize))
+		if err != nil {
+			return re.BadRequestError("同步已批准商品失败："+err.Error(), nil)
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": fmt.Sprintf("已同步已批准商品：成功 %d，失败 %d。", result.Processed, result.Failed),
+			"result":  result,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/supplier-products/sync-async", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		progress, alreadyRunning, err := service.StartSupplierSyncAsync(re.Request.Context(), re.App, fullSupplierActionLimit(cfg.Workflow.SyncBatchSize))
+		if err != nil {
+			return re.BadRequestError("启动已批准商品同步失败："+err.Error(), nil)
+		}
+		message := "已批准商品同步已启动。"
+		if alreadyRunning {
+			message = "已有同步任务在执行中，已返回当前任务进度。"
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":       true,
+			"message":  message,
+			"progress": progress,
+		})
+	})
+
+	se.Router.GET("/api/pim/admin/supplier-products/sync-progress", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":       true,
+			"progress": service.SupplierSyncProgress(re.App),
+		})
+	})
+
+	se.Router.GET("/api/pim/admin/supplier-products/single-image-scan", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		items, err := service.ScanSyncedSingleImageCandidates(re.Request.Context(), re.App, 200)
+		if err != nil {
+			return re.BadRequestError("排查后端单图商品失败："+err.Error(), nil)
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": fmt.Sprintf("已排查后端单图商品：命中 %d 条。", len(items)),
+			"items":   items,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/supplier-products/requeue-single-image", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		ids := strings.Split(strings.TrimSpace(re.Request.FormValue("ids")), ",")
+		result, err := service.RequeueSingleImageCandidatesByIDs(re.Request.Context(), re.App, ids)
+		if err != nil {
+			return re.BadRequestError("重排单图商品失败："+err.Error(), nil)
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": fmt.Sprintf("已将单图商品加入待同步：成功 %d，跳过 %d，失败 %d。", result.Processed, result.Skipped, result.Failed),
+			"result":  result,
+		})
+	})
+
+	se.Router.POST("/api/pim/admin/supplier-products/cleanup-duplicate-orphans", func(re *core.RequestEvent) error {
+		if !authorizedAdminModule(re, cfg, "source") {
+			return re.ForbiddenError("当前账号没有源数据模块权限。", nil)
+		}
+		result, err := service.CleanupDuplicateOrphanProducts(re.Request.Context(), re.App)
+		if err != nil {
+			return re.BadRequestError("清理后台重复商品失败："+err.Error(), nil)
+		}
+		return re.JSON(http.StatusOK, map[string]any{
+			"ok": true,
+			"message": fmt.Sprintf(
+				"已清理后台重复商品：扫描 %d 个商品，重复组 %d，候选 %d，删除 %d，失败 %d。",
+				result.ProductCount,
+				result.DuplicateGroups,
+				result.CandidateCount,
+				result.DeletedCount,
+				result.FailedCount,
+			),
+			"result": result,
+		})
+	})
+
 	se.Router.GET("/api/pim/admin/backend-release", func(re *core.RequestEvent) error {
 		if !authorizedAdminModule(re, cfg, "source") {
 			return re.ForbiddenError("当前账号没有发布准备权限。", nil)
 		}
-		summary, err := service.BackendReleaseSummary(re.Request.Context(), re.App, 12)
+		summary, err := service.BackendReleaseSummaryFiltered(re.Request.Context(), re.App, 12, pim.BackendReleaseFilter{
+			SyncStatus: strings.TrimSpace(re.Request.URL.Query().Get("syncStatus")),
+			Query:      strings.TrimSpace(re.Request.URL.Query().Get("q")),
+			Page:       readQueryInt(re, "page", 1),
+			PageSize:   readQueryInt(re, "pageSize", 12),
+			SortBy:     strings.TrimSpace(re.Request.URL.Query().Get("sortBy")),
+			SortOrder:  strings.TrimSpace(re.Request.URL.Query().Get("sortOrder")),
+		})
 		if err != nil {
 			return re.JSON(http.StatusOK, admin.BuildBackendReleaseAPIData(
 				pim.BackendReleaseSummary{},
@@ -1784,8 +2096,8 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 			return redirectAdminAppShell(re, "/_/mrtang-admin/source/product-jobs")
 		}
 		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
-			"商品发布任务",
-			"商品发布与重试发布的历史任务、失败项和重跑入口都在这里查看。",
+			"历史商品任务",
+			"这里只展示旧 source 发布链留下的任务记录，不包含当前供应商同步主链。",
 			"/_/mrtang-admin/source/product-jobs",
 			authorizedAdminModule(re, cfg, "source"),
 			authorizedAdminModule(re, cfg, "procurement"),
@@ -1797,8 +2109,8 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 			return redirectAdminAppShell(re, "/_/mrtang-admin/source/product-jobs/detail")
 		}
 		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
-			"商品发布任务详情",
-			"任务详情页会异步加载商品发布任务的进度、失败项和最近日志。",
+			"历史商品任务详情",
+			"详情页会异步加载旧 source 发布链任务的进度、失败项和最近日志。",
 			"/_/mrtang-admin/source/product-jobs/detail",
 			authorizedAdminModule(re, cfg, "source"),
 			authorizedAdminModule(re, cfg, "procurement"),
@@ -2157,6 +2469,19 @@ func registerAdminRoutes(se *core.ServeEvent, cfg config.Config, service *pim.Se
 		))
 	})
 
+	se.Router.GET("/_/mrtang-admin/harvest/detail", func(re *core.RequestEvent) error {
+		if adminLegacyRedirect(re) {
+			return redirectAdminAppShell(re, "/_/mrtang-admin/harvest/detail")
+		}
+		return re.HTML(http.StatusOK, admin.RenderAdminAppShellHTML(
+			"供应商同步详情",
+			"详情页会异步加载本次供应商同步的统计、错误和失败明细。",
+			"/_/mrtang-admin/harvest/detail",
+			authorizedAdminModule(re, cfg, "source"),
+			authorizedAdminModule(re, cfg, "procurement"),
+		))
+	})
+
 	se.Router.GET("/_/procurement-workbench", func(re *core.RequestEvent) error {
 		if !admin.AuthorizedPage(re) {
 			return re.UnauthorizedError("The request requires valid superuser authorization token or localhost access.", nil)
@@ -2228,6 +2553,8 @@ func readSourceReviewFilter(re *core.RequestEvent) pim.SourceReviewFilter {
 		AssetIDs:       strings.TrimSpace(re.Request.URL.Query().Get("assetIds")),
 		SyncState:      strings.TrimSpace(re.Request.URL.Query().Get("syncState")),
 		Query:          strings.TrimSpace(re.Request.URL.Query().Get("q")),
+		SortBy:         strings.TrimSpace(re.Request.URL.Query().Get("sortBy")),
+		SortOrder:      strings.TrimSpace(re.Request.URL.Query().Get("sortOrder")),
 	}
 	if page, err := strconv.Atoi(strings.TrimSpace(re.Request.URL.Query().Get("productPage"))); err == nil {
 		filter.ProductPage = page
@@ -2290,6 +2617,14 @@ func procurementActionActor(re *core.RequestEvent) pim.ProcurementActionActor {
 func targetSyncActor(re *core.RequestEvent) pim.TargetSyncActor {
 	sourceActor := sourceActionActor(re)
 	return pim.TargetSyncActor{
+		Email: sourceActor.Email,
+		Name:  sourceActor.Name,
+	}
+}
+
+func harvestActionActor(re *core.RequestEvent) pim.HarvestActionActor {
+	sourceActor := sourceActionActor(re)
+	return pim.HarvestActionActor{
 		Email: sourceActor.Email,
 		Name:  sourceActor.Name,
 	}

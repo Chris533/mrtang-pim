@@ -63,20 +63,48 @@ mrtang-pim/
 
 ## PIM 商品流程
 
-1. `Harvest`
-   从供应商连接器拉取商品，写入 `supplier_products`。
-2. `Process`
-   处理图片并更新 `processed_image`、`sync_status`。
-3. `Review`
-   运营在 PocketBase Admin UI 中确认标题、分类、文案和售价。
-4. `Sync`
-   将 `approved` 记录同步到 Vendure，并回写 Vendure ID。
-5. `Offline`
-   上游缺失 SKU 会标记为 `offline`，并尝试下架 Vendure 商品。
+当前运营侧建议按两条链理解：
 
-状态流转：
+1. `供应商同步`
+   - 正式主链
+   - 从真实供应商拉取价格、规格、库存、上下架
+   - 直接更新 `supplier_products`
+   - 对缺失商品执行 `offline`
+2. `抓取入库 -> source 审核/图片处理`
+   - 辅助审核链
+   - 负责分类来源核对、图片采集、商品审核、图片处理
+   - 不再作为正式商品发布主链
 
-`pending -> ai_processing -> ready -> approved -> synced / offline / error`
+当前最常用状态：
+
+- `source_products.review_status`
+  - `imported -> approved`
+  - `promoted` 仅表示历史已发布链处理
+- `supplier_products.sync_status`
+  - `approved / ready / synced / offline / error`
+
+### 流程简图
+
+```mermaid
+flowchart TD
+  A[Harvest 定时/手动抓取供应商数据] --> B[更新 supplier_products]
+  B --> C[图片处理 / 待确认 / 待同步]
+  C --> D[SyncApproved / AUTO_SYNC_APPROVED / 定时同步]
+  D --> E[写入 Vendure 后端商品、规格、图片、分类]
+  E --> F[小程序购物车保留已选商品]
+  F --> G[结算页 precheckActiveOrder 重新校验]
+  G --> H{是否变更}
+  H -->|无变更| I[继续结算 / 提交订单]
+  H -->|价格变更| J[提示刷新后重新确认]
+  H -->|规格变更 / 库存不足 / 已下架| K[拦截结算，要求先处理商品]
+```
+
+这张图对应的核心原则是：
+
+- `Harvest` 负责同步供应商真实数据
+- `Sync` 负责把已批准商品写入后端
+- `Checkout` 负责在提交前再校验一次最新状态
+- 购物车不是最终锁定态，真正以结算前预检为准
 
 ## Miniapp 首页流程
 
@@ -110,8 +138,9 @@ Miniapp 模块已经拆成明确分层：
 如果要快速理解“源站 API、抓包归档、dataset 和本地接口”之间的关系，直接看 [source-api.md](./source-api.md)。
 如果要直接看 `mrtang-backend` shop API 经 `mrtang-pim` 代理后的分类树、分类商品和商品详情接口，也看 [source-api.md](./source-api.md) 里的 `Miniapp UI 代理链路`。
 如果要直接对接结算页，优先看 [checkout-api.md](./checkout-api.md)。
+如果要直接看商品采集、图片处理、正式供应商同步和当前操作 SOP，见 [product-capture-release-sop.md](./product-capture-release-sop.md)。
 如果要直接看源站抓取入库模块、运行记录和变更详情，见 [target-sync.md](./target-sync.md)。
-如果要直接操作 source 商品审核、图片处理和加入发布队列、同步，见 [source-review-workbench.md](./source-review-workbench.md)。
+如果要直接看 source 商品审核与图片处理工作台，见 [source-review-workbench.md](./source-review-workbench.md)。
 如果要理解后台模块结构和页面入口，见 [mrtang-admin.md](./mrtang-admin.md)。
 如果要先规划 backend 与小程序发布前的能力缺口，再决定何时正式同步，见 [backend-miniapp-plan.md](./backend-miniapp-plan.md)。
 如果要开始推进“小程序 UI 目标模型”，并按批次梳理分类页、商品页、多单位、B/C 图和结算规则，见 [miniapp-ui-plan.md](./miniapp-ui-plan.md)。
@@ -189,17 +218,21 @@ go run ./cmd/pim serve
 - 默认关闭 localhost 绕过（`ADMIN_ALLOW_LOOPBACK_BYPASS=false`）
 - 本地开发可保留绕过（`ADMIN_ALLOW_LOOPBACK_BYPASS=true`）
 
-## Source Workbench 状态流
+## 当前推荐操作
+
+完整操作说明见 [product-capture-release-sop.md](./product-capture-release-sop.md)。
 
 推荐操作顺序：
 
-1. 先在 `/_/mrtang-admin/target-sync` 执行源站分类、商品规格和图片的抓取入库。
-2. 再进入 `/_/mrtang-admin/source/products` 和 `/_/mrtang-admin/source/assets` 处理待审核商品与待处理图片。
-3. 商品加入发布队列并写入 `supplier_products` 后，再进入既有 backend 发布链。
+1. 先执行 `供应商同步`，对齐正式商品价格、规格、库存和上下架。
+2. 再在 `/_/mrtang-admin/target-sync` 执行分类来源和图片抓取入库。
+3. 再进入 `/_/mrtang-admin/source/products` 和 `/_/mrtang-admin/source/assets` 处理待审核商品与待处理图片。
+4. 当前 `source` 页面只承担审核和图片处理，不再作为正式商品发布入口。
 
 商品审核状态：
 
-- `imported -> approved -> promoted`
+- `imported -> approved`
+- `promoted` 表示历史已发布链处理
 - 允许人工转为 `rejected`
 
 图片处理状态：

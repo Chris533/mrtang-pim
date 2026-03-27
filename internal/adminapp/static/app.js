@@ -13,6 +13,18 @@ function parseQuery() {
   return { message: params.get("message") || "", error: params.get("error") || "" };
 }
 
+function replaceURLSearch(params) {
+  const next = new URLSearchParams();
+  Object.entries(params || {}).forEach(([key, value]) => {
+    const current = String(value == null ? "" : value).trim();
+    if (!current) return;
+    if ((key === "page" || key === "productPage" || key === "assetPage") && current === "1") return;
+    next.set(key, current);
+  });
+  const target = `${window.location.pathname}${next.toString() ? `?${next.toString()}` : ""}`;
+  window.history.replaceState({}, "", target);
+}
+
 function exportedKeyAlias(key) {
   if (!key) return key;
   if (key === "id") return "ID";
@@ -123,6 +135,31 @@ function useResource(url, deps = []) {
   return state;
 }
 
+function useBackgroundResource(url, deps = []) {
+  const [state, setState] = useState({ loading: true, error: "", data: null });
+  useEffect(() => {
+    let active = true;
+    if (!url) {
+      setState({ loading: false, error: "", data: null });
+      return () => { active = false; };
+    }
+    setState((previous) => ({ loading: true, error: "", data: previous.data }));
+    fetchJSON(url)
+      .then((data) => active && setState({ loading: false, error: "", data }))
+      .catch((error) => active && setState((previous) => ({ loading: false, error: error.message || "加载失败", data: previous.data })));
+    return () => { active = false; };
+  }, [url, ...deps]);
+  return state;
+}
+
+function useSyncedValue(value) {
+  const [state, setState] = useState(value);
+  useEffect(() => {
+    setState(value);
+  }, [value]);
+  return [state, setState];
+}
+
 function classifyLoadError(error) {
   const message = String(error || "").trim();
   const lowered = message.toLowerCase();
@@ -180,6 +217,188 @@ function syncStatusLabel(status) {
   if (normalized === "partial") return "部分成功";
   if (normalized === "failed") return "失败";
   return status || "-";
+}
+
+function supplierProductStatusLabel(status, item) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "pending") return item && item.HasProcessedImage ? "待推进" : "待图片处理";
+  if (normalized === "ai_processing") return "图片处理中";
+  if (normalized === "ready") return "待人工确认";
+  if (normalized === "approved") return "待同步";
+  if (normalized === "synced") return "已同步";
+  if (normalized === "offline") return "已下架";
+  if (normalized === "error") return "失败";
+  return status || "-";
+}
+
+function supplierLastSyncLabel(item) {
+  const value = formatDateTime(item && item.LastSyncedAt);
+  if (value !== "-") return value;
+  const normalized = String(item && item.SyncStatus || "").toLowerCase();
+  if (["pending", "ai_processing", "ready", "approved"].includes(normalized)) return "尚未正式同步";
+  if (normalized === "offline") return "下架前未同步";
+  return "-";
+}
+
+function harvestTriggerLabel(triggerType) {
+  const normalized = (triggerType || "").toLowerCase();
+  if (normalized === "manual") return "手动";
+  if (normalized === "cron") return "计划任务";
+  if (normalized === "api") return "API";
+  return triggerType || "-";
+}
+
+function harvestRunSummary(run) {
+  if (!run) return "-";
+  const processed = Number(run.Processed || 0);
+  const created = Number(run.Created || 0);
+  const updated = Number(run.Updated || 0);
+  const skipped = Number(run.Skipped || 0);
+  const offline = Number(run.Offline || 0);
+  const failed = Number(run.Failed || 0);
+  const parts = [`处理 ${processed}`, `新增 ${created}`, `更新 ${updated}`, `未变 ${skipped}`, `下架 ${offline}`];
+  if (failed > 0) parts.push(`失败 ${failed}`);
+  return parts.join(" / ");
+}
+
+function supplierSyncProgressText(progress) {
+  if (!progress || !progress.Status) return "-";
+  const total = Number(progress.Total || 0);
+  const processed = Number(progress.Processed || 0);
+  const failed = Number(progress.Failed || 0);
+  if (String(progress.Status).toLowerCase() === "running") {
+    return `执行中 ${processed}/${total || "-"}，失败 ${failed}`;
+  }
+  return `完成 ${processed}/${total || "-"}，失败 ${failed}`;
+}
+
+function supplierActionNoticeState(actionState) {
+  const busy = String(actionState && actionState.busy || "");
+  const message = String(actionState && actionState.message || "");
+  const error = String(actionState && actionState.error || "");
+  const hrefLabel = String(actionState && actionState.hrefLabel || "");
+  const isSupplierAction = ["harvest", "supplier-process", "supplier-advance", "supplier-approve", "supplier-sync", "supplier-requeue-single-image", "supplier-cleanup-duplicate-products"].includes(busy)
+    || message.includes("供应商同步")
+    || message.includes("商品图片")
+    || message.includes("待推进商品")
+    || message.includes("可同步商品")
+    || message.includes("已批准商品")
+    || message.includes("单图商品")
+    || message.includes("重复商品")
+    || error.includes("供应商同步")
+    || error.includes("商品图片")
+    || error.includes("待推进商品")
+    || error.includes("可同步商品")
+    || error.includes("已批准商品")
+    || error.includes("单图商品")
+    || error.includes("重复商品")
+    || hrefLabel === "查看供应商同步详情";
+  if (!isSupplierAction) {
+    return { busy: "", message: "", error: "", href: "", hrefLabel: "" };
+  }
+  return {
+    busy,
+    message,
+    error,
+    href: hrefLabel === "查看供应商同步详情" ? (actionState.href || "") : "",
+    hrefLabel: hrefLabel === "查看供应商同步详情" ? hrefLabel : "",
+  };
+}
+
+function harvestRunDetail(run) {
+  if (!run) return "-";
+  if (run.ErrorMessage) return run.ErrorMessage;
+  const items = Array.isArray(run.FailureItems) ? run.FailureItems : [];
+  if (items.length) {
+    const first = items[0] || {};
+    return `${first.Step || "error"}: ${first.SKU || first.ProductID || "-"} ${first.Error || ""}`.trim();
+  }
+  return run.DurationMs ? `${run.DurationMs} ms` : "-";
+}
+
+function summarizeHarvestFailureItems(items) {
+  const list = Array.isArray(items) ? items : [];
+  const counts = new Map();
+  list.forEach((item) => {
+    const step = String((item && item.Step) || "unknown").trim() || "unknown";
+    counts.set(step, (counts.get(step) || 0) + 1);
+  });
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))
+    .map(([step, count]) => ({ step, count }));
+}
+
+function hasRunningHarvestRun(harvest) {
+  const runs = (harvest && harvest.RecentRuns) || [];
+  return runs.some((run) => String((run && run.Status) || "").toLowerCase() === "running");
+}
+
+function mergeHarvestRunIntoData(harvest, run) {
+  const nextHarvest = harvest && typeof harvest === "object" ? { ...harvest } : {};
+  const currentRuns = Array.isArray(nextHarvest.RecentRuns) ? nextHarvest.RecentRuns : [];
+  const runID = String((run && (run.ID || run.id)) || "").trim();
+  if (!runID) {
+    nextHarvest.RecentRuns = currentRuns;
+    return nextHarvest;
+  }
+  const normalizedRun = { ...run };
+  if (!normalizedRun.Status && !normalizedRun.status) {
+    normalizedRun.Status = "running";
+  }
+  const remaining = currentRuns.filter((item) => String((item && (item.ID || item.id)) || "").trim() !== runID);
+  nextHarvest.RecentRuns = [normalizedRun, ...remaining].slice(0, 8);
+  return nextHarvest;
+}
+
+function applyHarvestResult(currentHarvest, result) {
+  let nextHarvest = currentHarvest && typeof currentHarvest === "object" ? currentHarvest : {};
+  if (result && result.harvest && typeof result.harvest === "object") {
+    nextHarvest = result.harvest;
+  }
+  if (result && result.run) {
+    nextHarvest = mergeHarvestRunIntoData(nextHarvest, result.run);
+  }
+  return nextHarvest;
+}
+
+function mergePendingHarvestRun(harvest, pendingRun) {
+  if (!pendingRun) {
+    return harvest;
+  }
+  const currentHarvest = harvest && typeof harvest === "object" ? harvest : {};
+  const currentRuns = Array.isArray(currentHarvest.RecentRuns) ? currentHarvest.RecentRuns : [];
+  const pendingID = String(pendingRun.ID || pendingRun.id || "").trim();
+  if (!pendingID) {
+    return mergeHarvestRunIntoData(currentHarvest, pendingRun);
+  }
+  if (currentRuns.some((item) => String((item && (item.ID || item.id)) || "").trim() === pendingID)) {
+    return currentHarvest;
+  }
+  return mergeHarvestRunIntoData(currentHarvest, pendingRun);
+}
+
+function createClientPendingHarvestRun() {
+  return {
+    ID: `pending-${Date.now()}`,
+    TriggerType: "manual",
+    Status: "running",
+    StartedAt: new Date().toISOString(),
+    Processed: 0,
+    Created: 0,
+    Updated: 0,
+    Skipped: 0,
+    Offline: 0,
+    Failed: 0,
+    ClientPending: true,
+    ErrorMessage: "等待后端返回供应商同步运行记录。",
+  };
+}
+
+function supplierConnectorLabel(value) {
+  const normalized = String(value || "").toLowerCase();
+  if (normalized === "http") return "HTTP Connector";
+  if (normalized === "file") return "File Connector";
+  return value || "-";
 }
 
 function formatDateTime(value) {
@@ -582,6 +801,26 @@ function MetricCard({ eyebrow, value, detail }) {
   return html`<div class="metric-card"><div class="metric-kicker">${eyebrow}</div><div class="metric-value">${value}</div>${detail ? html`<div class="small" style="margin-top:8px;">${detail}</div>` : null}</div>`;
 }
 
+function HarvestRunsPreview({ runs }) {
+  const items = Array.isArray(runs) ? runs : [];
+  return html`<div class="table-card" style="margin-top:14px;">
+    <table>
+      <thead><tr><th>开始时间</th><th>触发方式</th><th>状态</th><th>摘要</th><th>操作</th></tr></thead>
+      <tbody>
+        ${items.length ? items.map((run) => html`
+          <tr>
+            <td class="small">${formatDateTime(run.StartedAt)}</td>
+            <td><strong>${harvestTriggerLabel(run.TriggerType)}</strong><div class="small">${run.TriggeredByName || run.TriggeredByEmail || "-"}</div></td>
+            <td><${StatusBadge} label=${syncStatusLabel(run.Status)} currentTone=${tone(run.Status)} /></td>
+            <td class="small"><div>${harvestRunSummary(run)}</div><div>${harvestRunDetail(run)}</div></td>
+            <td>${run.ClientPending ? html`<span class="pill">等待回执</span>` : html`<a class="btn secondary" href=${buildURL("/_/mrtang-admin/harvest/detail", { id: run.ID || "", returnTo: window.location.pathname + window.location.search })}>详情</a>`}</td>
+          </tr>
+        `) : html`<tr><td colspan="5" class="small">还没有供应商同步记录。</td></tr>`}
+      </tbody>
+    </table>
+  </div>`;
+}
+
 function AppLayout({ title, subtitle, currentPath, canAccessSource, canAccessProcurement, children }) {
   const showSourceNav =
     !!canAccessSource ||
@@ -596,7 +835,7 @@ function AppLayout({ title, subtitle, currentPath, canAccessSource, canAccessPro
     { href: "/_/mrtang-admin", label: "总览", visible: true },
     { href: "/_/mrtang-admin/target-sync", label: "抓取入库", visible: showSourceNav },
     { href: "/_/mrtang-admin/source", label: "源数据", visible: showSourceNav },
-    { href: "/_/mrtang-admin/backend-release", label: "发布准备", visible: showSourceNav },
+    { href: "/_/mrtang-admin/backend-release", label: "正式商品结果", visible: showSourceNav },
     { href: "/_/mrtang-admin/procurement", label: "采购", visible: showProcurementNav },
     { href: "/_/mrtang-admin/audit", label: "审计", visible: true },
   ].filter((item) => item.visible);
@@ -605,7 +844,7 @@ function AppLayout({ title, subtitle, currentPath, canAccessSource, canAccessPro
     ...(showSourceNav ? [
       { href: "/_/mrtang-admin/source/categories", label: "分类" },
       { href: "/_/mrtang-admin/source/products", label: "商品" },
-      { href: "/_/mrtang-admin/source/product-jobs", label: "发布任务" },
+      { href: "/_/mrtang-admin/source/product-jobs", label: "历史任务" },
       { href: "/_/mrtang-admin/source/assets", label: "图片" },
       { href: "/_/mrtang-admin/source/asset-jobs", label: "任务" },
       { href: "/_/mrtang-admin/source/logs", label: "日志" },
@@ -616,9 +855,9 @@ function AppLayout({ title, subtitle, currentPath, canAccessSource, canAccessPro
     <div class="admin-shell">
       <aside class="admin-sidebar">
         <div class="brand">
-          <div class="brand-kicker">Mrtang Admin</div>
-          <div class="brand-title">统一后台</div>
-          <div class="brand-desc">页面先开壳，再异步加载各模块数据。raw 慢时只影响局部卡片，不再拖死整页。</div>
+          <div class="brand-kicker">版本 ${boot.version || "dev"}</div>
+          <div class="brand-title">统一中台</div>
+          <div class="brand-desc">供应商同步、审核、采购都在这里处理。</div>
         </div>
         <div class="nav-group">
           <div class="nav-label">导航</div>
@@ -628,7 +867,7 @@ function AppLayout({ title, subtitle, currentPath, canAccessSource, canAccessPro
       <main class="admin-main">
         <header class="admin-topbar">
           <div>
-            <div class="breadcrumbs"><a href="/_/mrtang-admin">后台</a><span>/</span><span>${title}</span></div>
+            <div class="breadcrumbs"><a href="/_/mrtang-admin">中台</a><span>/</span><span>${title}</span></div>
             <h1 class="page-title">${title}</h1>
             <p class="page-subtitle">${subtitle}</p>
           </div>
@@ -679,49 +918,221 @@ function buildPaginationItems(currentPage, totalPages) {
   return items;
 }
 
-function Pagination({ basePath, pageParam, currentPage, totalPages, params }) {
+function Pagination({ basePath, pageParam, currentPage, totalPages, params, onNavigate }) {
   const page = Math.max(1, Number(currentPage) || 1);
   const pages = Math.max(1, Number(totalPages) || 1);
   if (pages <= 1) return null;
   const items = buildPaginationItems(page, pages);
   const baseParams = { ...(params || {}) };
   delete baseParams[pageParam];
+  function hrefFor(targetPage) {
+    return buildURL(basePath, { ...baseParams, [pageParam]: targetPage });
+  }
+  function handleNavigate(targetPage, event) {
+    if (!onNavigate) return;
+    event.preventDefault();
+    if (targetPage < 1 || targetPage > pages || targetPage === page) return;
+    onNavigate(targetPage);
+  }
   return html`
     <div class="pagination">
-      <a class=${`page-link ${page <= 1 ? "disabled" : ""}`} href=${page <= 1 ? "#" : buildURL(basePath, { ...baseParams, [pageParam]: page - 1 })}>上一页</a>
+      <a class=${`page-link ${page <= 1 ? "disabled" : ""}`} href=${page <= 1 ? "#" : hrefFor(page - 1)} onClick=${(event) => handleNavigate(page - 1, event)}>上一页</a>
       ${items.map((item) => item === "ellipsis"
         ? html`<span class="page-ellipsis">…</span>`
-        : html`<a class=${`page-link ${item === page ? "active" : ""}`} href=${buildURL(basePath, { ...baseParams, [pageParam]: item })}>${item}</a>`)}
-      <a class=${`page-link ${page >= pages ? "disabled" : ""}`} href=${page >= pages ? "#" : buildURL(basePath, { ...baseParams, [pageParam]: page + 1 })}>下一页</a>
+        : html`<a class=${`page-link ${item === page ? "active" : ""}`} href=${hrefFor(item)} onClick=${(event) => handleNavigate(item, event)}>${item}</a>`)}
+      <a class=${`page-link ${page >= pages ? "disabled" : ""}`} href=${page >= pages ? "#" : hrefFor(page + 1)} onClick=${(event) => handleNavigate(page + 1, event)}>下一页</a>
     </div>
   `;
 }
 
 function DashboardPage() {
   const [reloadKey, setReloadKey] = useState(0);
+  const [harvestReloadKey, setHarvestReloadKey] = useState(0);
+  const [supplierSyncReloadKey, setSupplierSyncReloadKey] = useState(0);
   const [miniappReloadKey, setMiniappReloadKey] = useState(0);
   const [miniappLiveEnabled, setMiniappLiveEnabled] = useState(false);
-  const [actionState, setActionState] = useState({ busy: "", message: "", error: "" });
+  const [pendingHarvestRun, setPendingHarvestRun] = useState(null);
+  const [supplierSyncProgress, setSupplierSyncProgress] = useState(null);
+  const [actionState, setActionState] = useState({ busy: "", message: "", error: "", href: "", hrefLabel: "" });
   const resource = useResource("/api/pim/admin/dashboard", [reloadKey]);
+  const harvestResource = useBackgroundResource("/api/pim/admin/harvest/summary", [harvestReloadKey]);
+  const supplierSyncProgressResource = useBackgroundResource("/api/pim/admin/supplier-products/sync-progress", [supplierSyncReloadKey]);
   const miniappResource = useResource(miniappLiveEnabled ? "/api/pim/admin/dashboard/miniapp-live" : "", [reloadKey, miniappReloadKey, miniappLiveEnabled]);
   if (resource.loading) return html`<${LoadingSection} label="总览数据" />`;
   if (resource.error) return html`<${ErrorSection} error=${resource.error} />`;
   const data = resource.data || {};
+  const harvestPayload = harvestResource.data || {};
   const miniappPayload = miniappResource.data || {};
-  const miniapp = miniappPayload.Miniapp || data.Miniapp || {};
+  const [miniapp, setMiniapp] = useSyncedValue(miniappPayload.Miniapp || data.Miniapp || {});
   const miniappError = miniappPayload.MiniappError || "";
   const miniappErrorInfo = classifyLoadError(miniappError);
   const source = data.SourceCapture || {};
+  const [harvest, setHarvest] = useSyncedValue(harvestPayload.harvest || data.Harvest || {});
+  const harvestError = harvestPayload.flashError || data.HarvestError || "";
+  const displayedHarvest = mergePendingHarvestRun(harvest, pendingHarvestRun);
+  const supplierSync = (supplierSyncProgressResource.data && supplierSyncProgressResource.data.progress) || supplierSyncProgress || {};
   const procurement = data.Procurement || {};
 
+  useEffect(() => {
+    if (!pendingHarvestRun || !(pendingHarvestRun.ID || pendingHarvestRun.id)) return;
+    const runs = (harvest && harvest.RecentRuns) || [];
+    const pendingID = String(pendingHarvestRun.ID || pendingHarvestRun.id || "").trim();
+    const matched = runs.some((item) => String((item && (item.ID || item.id)) || "").trim() === pendingID);
+    const realRunningExists = !!pendingHarvestRun.ClientPending && runs.some((item) => !item.ClientPending && String((item && (item.Status || item.status)) || "").toLowerCase() === "running");
+    if (matched || realRunningExists) {
+      setPendingHarvestRun(null);
+    }
+  }, [harvest, pendingHarvestRun]);
+
+  useEffect(() => {
+    if (!hasRunningHarvestRun(displayedHarvest)) return undefined;
+    const timer = window.setTimeout(() => {
+      setHarvestReloadKey((value) => value + 1);
+    }, 2500);
+    return () => window.clearTimeout(timer);
+  }, [displayedHarvest]);
+
+  useEffect(() => {
+    if (!supplierSync || String(supplierSync.Status || "").toLowerCase() !== "running") return undefined;
+    const timer = window.setTimeout(() => {
+      setSupplierSyncReloadKey((value) => value + 1);
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [supplierSync]);
+
   async function importSource(scope) {
-    setActionState({ busy: "import-source", message: "", error: "" });
+    setActionState({ busy: "import-source", message: "", error: "", href: "", hrefLabel: "" });
     try {
       const result = await postForm("/api/pim/admin/source/import", { scope });
-      setActionState({ busy: "", message: result.message || "源数据导入完成。", error: "" });
+      setActionState({ busy: "", message: result.message || "源数据导入完成。", error: "", href: "", hrefLabel: "" });
       setReloadKey((value) => value + 1);
     } catch (error) {
-      setActionState({ busy: "", message: "", error: error.message || "导入源数据失败" });
+      setActionState({ busy: "", message: "", error: error.message || "导入源数据失败", href: "", hrefLabel: "" });
+    }
+  }
+
+  async function runHarvest() {
+    if (!window.confirm("确认立即执行供应商同步吗？这一步会直接写入 supplier_products，并把供应商 feed 里消失的 SKU 标记为 offline。")) return;
+    setPendingHarvestRun(createClientPendingHarvestRun());
+    setActionState({ busy: "harvest", message: "供应商同步请求已发送，等待后端回执...", error: "", href: "", hrefLabel: "" });
+    try {
+      const result = await postForm("/api/pim/admin/harvest", {});
+      setHarvest((current) => applyHarvestResult(current, result));
+      const run = (result && result.run) || {};
+      if (run && (run.ID || run.id)) {
+        setPendingHarvestRun(run);
+      }
+      const runID = String(run.ID || run.id || "").trim();
+      const runStatus = String(run.Status || run.status || "").trim();
+      setActionState({
+        busy: "",
+        message: runID
+          ? `${result.message || "供应商同步已启动。"} run=${runID} / status=${runStatus || "running"}`
+          : `${result.message || "供应商同步已启动。"} 后端未返回 run id。`,
+        error: result.harvestError || "",
+        href: run.ID ? buildURL("/_/mrtang-admin/harvest/detail", { id: run.ID, returnTo: window.location.pathname + window.location.search }) : "",
+        hrefLabel: run.ID ? "查看供应商同步详情" : "",
+      });
+      setHarvestReloadKey((value) => value + 1);
+    } catch (error) {
+      setActionState({ busy: "", message: "", error: error.message || "执行供应商同步失败", href: "", hrefLabel: "" });
+    }
+  }
+
+  async function runSupplierProcess() {
+    if (!window.confirm("确认处理当前待处理商品图片吗？这会推动 pending 商品进入后续 ready 状态。")) return;
+    setActionState({ busy: "supplier-process", message: "", error: "", href: "", hrefLabel: "" });
+    try {
+      const result = await postForm("/api/pim/admin/supplier-products/process", {});
+      setActionState({ busy: "", message: result.message || "待处理商品图片已开始处理。", error: "", href: "", hrefLabel: "" });
+      setHarvestReloadKey((value) => value + 1);
+      setReloadKey((value) => value + 1);
+    } catch (error) {
+      setActionState({ busy: "", message: "", error: error.message || "处理待处理商品图片失败", href: "", hrefLabel: "" });
+    }
+  }
+
+  async function runSupplierAdvance() {
+    if (!window.confirm("确认推进当前待推进商品吗？这会把图片已就绪但仍停在 pending 的商品推进到待人工确认。")) return;
+    setActionState({ busy: "supplier-advance", message: "", error: "", href: "", hrefLabel: "" });
+    try {
+      const result = await postForm("/api/pim/admin/supplier-products/advance-ready", {});
+      setActionState({ busy: "", message: result.message || "待推进商品已推进。", error: "", href: "", hrefLabel: "" });
+      setHarvestReloadKey((value) => value + 1);
+      setReloadKey((value) => value + 1);
+    } catch (error) {
+      setActionState({ busy: "", message: "", error: error.message || "推进待推进商品失败", href: "", hrefLabel: "" });
+    }
+  }
+
+  async function runSupplierApprove() {
+    if (!window.confirm("确认批准当前可同步商品吗？这会把 ready 商品推进到待同步。")) return;
+    setActionState({ busy: "supplier-approve", message: "", error: "", href: "", hrefLabel: "" });
+    try {
+      const result = await postForm("/api/pim/admin/supplier-products/approve-ready", {});
+      setActionState({ busy: "", message: result.message || "可同步商品已批准。", error: "", href: "", hrefLabel: "" });
+      setHarvestReloadKey((value) => value + 1);
+      setReloadKey((value) => value + 1);
+    } catch (error) {
+      setActionState({ busy: "", message: "", error: error.message || "批准可同步商品失败", href: "", hrefLabel: "" });
+    }
+  }
+
+  async function runSupplierSync() {
+    if (!window.confirm("确认同步当前已批准商品吗？这会把 approved 商品推送到 Vendure。")) return;
+    setActionState({ busy: "supplier-sync", message: "", error: "", href: "", hrefLabel: "" });
+    try {
+      const result = await postForm("/api/pim/admin/supplier-products/sync-async", {});
+      const progress = result.progress || {};
+      setSupplierSyncProgress(progress);
+      setActionState({
+        busy: "",
+        message: `${result.message || "已批准商品同步已启动。"} ${progress.ID ? `任务 ${progress.ID}` : ""}`.trim(),
+        error: "",
+        href: "",
+        hrefLabel: "",
+      });
+      setHarvestReloadKey((value) => value + 1);
+      setSupplierSyncReloadKey((value) => value + 1);
+      setReloadKey((value) => value + 1);
+    } catch (error) {
+      setActionState({ busy: "", message: "", error: error.message || "同步已批准商品失败", href: "", hrefLabel: "" });
+    }
+  }
+
+  async function runSupplierRequeueSingleImage() {
+    setActionState({ busy: "supplier-requeue-single-image", message: "", error: "", href: "", hrefLabel: "" });
+    try {
+      const scan = await fetchJSON("/api/pim/admin/supplier-products/single-image-scan");
+      const items = Array.isArray(scan.items) ? scan.items : [];
+      const ids = items.map((item) => String(item.ID || item.id || "").trim()).filter(Boolean);
+      if (!ids.length) {
+        setActionState({ busy: "", message: "排查完成：当前没有命中的后端单图商品。", error: "", href: "", hrefLabel: "" });
+        return;
+      }
+      if (!window.confirm(`已排查命中 ${ids.length} 条后端单图商品，确认将这批加入待同步吗？`)) {
+        setActionState({ busy: "", message: `已排查命中 ${ids.length} 条，未执行重排。`, error: "", href: "", hrefLabel: "" });
+        return;
+      }
+      const result = await postForm("/api/pim/admin/supplier-products/requeue-single-image", { ids: ids.join(",") });
+      setActionState({ busy: "", message: result.message || `已将 ${ids.length} 条单图商品加入待同步。`, error: "", href: "", hrefLabel: "" });
+      setHarvestReloadKey((value) => value + 1);
+      setReloadKey((value) => value + 1);
+    } catch (error) {
+      setActionState({ busy: "", message: "", error: error.message || "重排历史单图商品失败", href: "", hrefLabel: "" });
+    }
+  }
+
+  async function runSupplierCleanupDuplicateProducts() {
+    if (!window.confirm("确认清理后台重复商品吗？仅删除未被 PIM 绑定的重复商品，执行后不可恢复。")) return;
+    setActionState({ busy: "supplier-cleanup-duplicate-products", message: "", error: "", href: "", hrefLabel: "" });
+    try {
+      const result = await postForm("/api/pim/admin/supplier-products/cleanup-duplicate-orphans", {});
+      setActionState({ busy: "", message: result.message || "后台重复商品已清理。", error: "", href: "", hrefLabel: "" });
+      setHarvestReloadKey((value) => value + 1);
+      setReloadKey((value) => value + 1);
+    } catch (error) {
+      setActionState({ busy: "", message: "", error: error.message || "清理后台重复商品失败", href: "", hrefLabel: "" });
     }
   }
 
@@ -738,7 +1149,10 @@ function DashboardPage() {
           ${miniapp.RawAuthStatus && miniapp.RawAuthStatus.Enabled ? html`<span class="pill">续活状态: <strong>${rawWarmupLabel(miniapp.RawAuthStatus.Status)}</strong></span>` : null}
         </div>
         <div class="action-row" style="margin-top:12px;">
-          <button class="btn secondary" type="button" onClick=${() => { setMiniappLiveEnabled(true); setMiniappReloadKey((value) => value + 1); }}>
+          <button class="btn secondary" type="button" onClick=${() => {
+            setMiniappLiveEnabled(true);
+            setMiniappReloadKey((value) => value + 1);
+          }}>
             ${miniappResource.loading ? "刷新中..." : "刷新实时摘要"}
           </button>
         </div>
@@ -779,12 +1193,69 @@ function DashboardPage() {
         ${data.SourceError ? html`<div class="flash error" style="margin-top:14px;">${data.SourceError}</div>` : null}
         <div class="metric-grid section">
           <${MetricCard} eyebrow="Categories" value=${source.CategoryCount || 0} />
-          <${MetricCard} eyebrow="商品" value=${source.ProductCount || 0} detail=${`${source.ImportedCount || 0} 待审核 / ${source.ApprovedCount || 0} 待加入发布队列 / ${source.PromotedCount || 0} 已加入发布队列`} />
+          <${MetricCard} eyebrow="商品" value=${source.ProductCount || 0} detail=${`${source.ImportedCount || 0} 待审核 / ${source.ApprovedCount || 0} 已审核 / ${source.PromotedCount || 0} 历史已发布链处理`} />
           <${MetricCard} eyebrow="Assets" value=${source.AssetCount || 0} detail=${`${source.ProcessedAssetCount || 0} processed / ${source.FailedAssetCount || 0} failed`} />
           <${MetricCard} eyebrow="Bridge" value=${source.LinkedCount || 0} detail=${`${source.SyncedCount || 0} synced / ${source.SyncErrorCount || 0} error`} />
         </div>
       </div></section>
     </div>
+
+    <section class="section card"><div class="card-body">
+      <div class="card-kicker">供应商同步</div>
+      <h2 class="card-title">手动执行正式供应商同步</h2>
+      <${ActionNotice} state=${supplierActionNoticeState(actionState)} />
+      ${harvestError ? html`<div class="flash error" style="margin-top:14px;">${harvestError}</div>` : null}
+      <div class="inline-pills">
+        <span class="pill">供应商: <code>${displayedHarvest.SupplierCode || "-"}</code></span>
+        <span class="pill">连接器: <code>${supplierConnectorLabel(displayedHarvest.Connector)}</code></span>
+        ${pendingHarvestRun ? html`<span class="pill">本地状态: <strong>等待回执</strong></span>` : null}
+      </div>
+      <div class="metric-grid section">
+        <${MetricCard} eyebrow="已采集商品" value=${displayedHarvest.ProductCount || 0} />
+        <${MetricCard} eyebrow="在线商品" value=${displayedHarvest.ActiveCount || 0} detail=${`${displayedHarvest.OfflineCount || 0} 已下架`} />
+        <${MetricCard} eyebrow="待图片处理" value=${displayedHarvest.NeedProcessCount || 0} detail=${`${displayedHarvest.ProcessingCount || 0} 处理中 / ${displayedHarvest.StuckPendingCount || 0} 待推进`} />
+        <${MetricCard} eyebrow="待同步" value=${displayedHarvest.ApprovedCount || 0} detail=${`${displayedHarvest.ReadyCount || 0} 待人工确认 / ${displayedHarvest.SyncedCount || 0} 已同步`} />
+      </div>
+      <div class="small">最近采集：${formatDateTime(displayedHarvest.LastSeenAt)} / 最近下架：${formatDateTime(displayedHarvest.LastOfflineAt)}</div>
+      <div class="flash warning" style="margin-top:14px;">
+        <div><strong>这是正式供应商同步主链</strong></div>
+        <div class="small" style="margin-top:8px;">供应商同步会直接更新 <code>supplier_products</code>，不会经过 <code>target-sync -> source</code> 审核流。</div>
+      </div>
+      <div class="inline-pills section">
+        <span class="pill">ready <code>${displayedHarvest.ReadyCount || 0}</code></span>
+        <span class="pill">approved <code>${displayedHarvest.ApprovedCount || 0}</code></span>
+        <span class="pill">error <code>${displayedHarvest.ErrorCount || 0}</code></span>
+        ${supplierSync && supplierSync.Status ? html`<span class="pill">同步任务 <strong>${syncStatusLabel(supplierSync.Status)}</strong></span>` : null}
+        ${supplierSync && supplierSync.Status ? html`<span class="pill">${supplierSyncProgressText(supplierSync)}</span>` : null}
+      </div>
+      ${supplierSync && supplierSync.CurrentItem ? html`<div class="small" style="margin-top:8px;">当前处理：${supplierSync.CurrentItem}</div>` : null}
+      <div class="action-row" style="margin-top:14px;">
+        <button class="btn" type="button" disabled=${actionState.busy === "harvest"} onClick=${runHarvest}>
+          ${actionState.busy === "harvest" ? "执行中..." : "立即供应商同步"}
+        </button>
+        <button class="btn secondary" type="button" disabled=${actionState.busy === "supplier-process"} onClick=${runSupplierProcess}>
+          ${actionState.busy === "supplier-process" ? "处理中..." : "处理全部待处理商品图片"}
+        </button>
+        <button class="btn secondary" type="button" disabled=${actionState.busy === "supplier-advance"} onClick=${runSupplierAdvance}>
+          ${actionState.busy === "supplier-advance" ? "推进中..." : "推进全部待推进商品"}
+        </button>
+        <button class="btn secondary" type="button" disabled=${actionState.busy === "supplier-approve"} onClick=${runSupplierApprove}>
+          ${actionState.busy === "supplier-approve" ? "批准中..." : "批准全部可同步商品"}
+        </button>
+        <button class="btn secondary" type="button" disabled=${actionState.busy === "supplier-sync"} onClick=${runSupplierSync}>
+          ${actionState.busy === "supplier-sync" ? "同步中..." : "同步全部已批准商品"}
+        </button>
+        <button class="btn secondary" type="button" disabled=${actionState.busy === "supplier-requeue-single-image"} onClick=${runSupplierRequeueSingleImage}>
+          ${actionState.busy === "supplier-requeue-single-image" ? "排查中..." : "排查后端单图商品并加入待同步"}
+        </button>
+        <button class="btn secondary" type="button" disabled=${actionState.busy === "supplier-cleanup-duplicate-products"} onClick=${runSupplierCleanupDuplicateProducts}>
+          ${actionState.busy === "supplier-cleanup-duplicate-products" ? "清理中..." : "清理后台重复商品"}
+        </button>
+        <a class="btn secondary" href="/_/">打开 PocketBase Admin</a>
+      </div>
+      <div class="small" style="margin-top:8px;">说明：处理图片 -> 待人工确认 -> 待同步 -> 已同步。这里的手动按钮会尽量处理当前全部符合条件的商品。</div>
+      <${HarvestRunsPreview} runs=${displayedHarvest.RecentRuns || []} />
+    </div></section>
 
     <section class="section card"><div class="card-body">
       <div class="card-kicker">Backend Readiness</div>
@@ -843,13 +1314,30 @@ function DashboardPage() {
 }
 
 function BackendReleasePage() {
+  const initialQuery = useMemo(() => new URLSearchParams(window.location.search), []);
+  const [filters, setFilters] = useState({
+    syncStatus: initialQuery.get("syncStatus") || "",
+    q: initialQuery.get("q") || "",
+    page: initialQuery.get("page") || "1",
+    pageSize: initialQuery.get("pageSize") || "24",
+    sortBy: initialQuery.get("sortBy") || "updated",
+    sortOrder: initialQuery.get("sortOrder") || "desc",
+  });
+  const [formState, setFormState] = useState({
+    syncStatus: initialQuery.get("syncStatus") || "",
+    q: initialQuery.get("q") || "",
+    pageSize: initialQuery.get("pageSize") || "24",
+    sortBy: initialQuery.get("sortBy") || "updated",
+    sortOrder: initialQuery.get("sortOrder") || "desc",
+  });
   const [reloadKey, setReloadKey] = useState(0);
   const [actionState, setActionState] = useState({ busy: "", message: "", error: "" });
   const [previewID, setPreviewID] = useState("");
-  const resource = useResource("/api/pim/admin/backend-release", [reloadKey]);
+  const apiURL = buildURL("/api/pim/admin/backend-release", filters);
+  const resource = useBackgroundResource(apiURL, [reloadKey, filters.syncStatus, filters.q, filters.page, filters.pageSize]);
   const previewResource = useResource(previewID ? buildURL("/api/pim/admin/backend-release/product-preview", { id: previewID }) : "", [previewID]);
 
-  if (resource.loading) return html`<${LoadingSection} label="发布准备" />`;
+  if (resource.loading && !resource.data) return html`<${LoadingSection} label="正式商品结果" />`;
   if (resource.error) return html`<${ErrorSection} error=${resource.error} />`;
 
   const payload = resource.data || {};
@@ -859,6 +1347,8 @@ function BackendReleasePage() {
   const products = summary.Products || [];
   const suggestedCategories = summary.SuggestedCategories || [];
   const recommendedProducts = summary.RecommendedProducts || [];
+  const currentProductPage = Number(summary.ProductPage || 1);
+  const productPages = Number(summary.ProductPages || 1);
   const suggestionMap = useMemo(() => {
     const next = {};
     suggestedCategories.forEach((item) => {
@@ -878,6 +1368,7 @@ function BackendReleasePage() {
       return String(left.SourcePath || left.sourcePath || "").localeCompare(String(right.SourcePath || right.sourcePath || ""), "zh-CN");
     });
   }, [categories, suggestionMap]);
+  const showAdvancedCount = (visibleCategories.length || 0) + (suggestedCategories.length || 0) + (branches.length || 0);
   const suggestedKeys = useMemo(() => suggestedCategories.map((item) => item.SourceKey || item.sourceKey || "").filter(Boolean), [suggestedCategories]);
   const failedCategoryKeys = useMemo(() => visibleCategories
     .filter((item) => String(item.PublishStatus || item.publishStatus || "").toLowerCase() === "error")
@@ -895,6 +1386,48 @@ function BackendReleasePage() {
       setPreviewID(first.ID);
     }
   }, [previewID, recommendedProducts, products]);
+
+  useEffect(() => {
+    replaceURLSearch(filters);
+  }, [filters]);
+
+  function updateForm(key, value) {
+    setFormState((current) => ({ ...current, [key]: value }));
+  }
+
+  function applyFilters(event) {
+    if (event) event.preventDefault();
+    setFilters({
+      syncStatus: String(formState.syncStatus || "").trim(),
+      q: String(formState.q || "").trim(),
+      page: "1",
+      pageSize: String(formState.pageSize || "24").trim() || "24",
+      sortBy: String(formState.sortBy || "updated").trim() || "updated",
+      sortOrder: String(formState.sortOrder || "desc").trim() || "desc",
+    });
+  }
+
+  function resetFilters() {
+    const next = { syncStatus: "", q: "", page: "1", pageSize: "24", sortBy: "updated", sortOrder: "desc" };
+    setFormState({ syncStatus: "", q: "", pageSize: "24", sortBy: "updated", sortOrder: "desc" });
+    setFilters(next);
+  }
+
+  function applyQuickFilter(syncStatus, q) {
+    const nextStatus = String(syncStatus || "").trim();
+    const nextQuery = String(q || "").trim();
+    setFormState((current) => ({ ...current, syncStatus: nextStatus, q: nextQuery }));
+      setFilters((current) => ({
+        ...current,
+        syncStatus: nextStatus,
+        q: nextQuery,
+        page: "1",
+      }));
+  }
+
+  function goToProductPage(nextPage) {
+    setFilters((current) => ({ ...current, page: String(nextPage) }));
+  }
 
   async function saveMapping(item, form) {
     const key = item.SourceKey || item.sourceKey || "";
@@ -1014,18 +1547,159 @@ function BackendReleasePage() {
   return html`
     <section class="section split-grid">
       <section class="card"><div class="card-body">
-        <div class="card-kicker">Backend 发布</div>
-        <h2 class="card-title">分类创建与商品发布准备</h2>
+        <div class="card-kicker">正式商品结果</div>
+        <h2 class="card-title">当前正式同步结果</h2>
         <${ActionNotice} state=${actionState} />
+        ${resource.loading ? html`<div class="small" style="margin-top:8px;">正在更新当前列表...</div>` : null}
         <div class="metric-grid section">
+          <${MetricCard} eyebrow="正式商品" value=${summary.ProductCount || 0} detail=${`待同步 ${(summary.ReadyProductCount || 0)} / 已同步 ${(summary.SyncedProductCount || 0)} / 已下架 ${(summary.OfflineProductCount || 0)}`} />
+          <${MetricCard} eyebrow="商品同步错误" value=${summary.ErrorProductCount || 0} detail=${`当前筛选 ${(summary.FilteredProductCount || summary.ProductCount || 0)} 条`} />
           <${MetricCard} eyebrow="分类创建" value=${summary.PublishedCount || 0} detail=${`顶级分支已创建 ${(summary.PublishedRootCount || 0)} / 待创建 ${(summary.PendingCategoryCount || 0)} / 失败 ${(summary.ErrorCategoryCount || 0)}`} />
-          <${MetricCard} eyebrow="商品联调" value=${summary.ProductCount || 0} detail=${`待同步 ${(summary.ReadyProductCount || 0)} / 已同步 ${(summary.SyncedProductCount || 0)}`} />
-          <${MetricCard} eyebrow="商品同步错误" value=${summary.ErrorProductCount || 0} />
         </div>
-        <div class="flash warning" style="margin-top:14px;">
-          <div><strong>推荐顺序</strong></div>
-          <div class="small" style="margin-top:8px;">先配置 Vendure 字段，再直接创建 backend 分类，最后挑 1 到 3 个商品做 payload 预览和试同步。</div>
+        <div class="small" style="margin-top:12px;">这里展示当前正式同步结果，不再混用旧 source 商品发布任务。</div>
+      </div></section>
+
+      <section class="card"><div class="card-body">
+        <div class="card-kicker">联调预览</div>
+        <h2 class="card-title">Vendure 同步预览</h2>
+        ${!previewID ? html`<div class="small">从台账里选一个商品，查看将要发送给 Vendure 的 payload。</div>` : null}
+        ${previewID && previewResource.loading ? html`<${LoadingSection} label="payload 预览" />` : null}
+        ${previewID && previewResource.error ? html`<div class="flash error">${previewResource.error}</div>` : null}
+        ${previewID && previewResource.data && previewResource.data.preview && previewResource.data.preview.Payload ? html`
+          <pre class="json-block">${JSON.stringify(previewResource.data.preview.Payload, null, 2)}</pre>
+        ` : null}
+      </div></section>
+    </section>
+
+    <section class="section split-grid">
+      <section class="table-card"><div class="table-card"><div class="card-body">
+        <div class="card-kicker">商品结果列表</div>
+        <h2 class="card-title">正式商品结果</h2>
+        <form class="action-row section" onSubmit=${applyFilters}>
+          <label class="control">
+            <span class="control-label">同步状态</span>
+            <select class="control-select" value=${formState.syncStatus} onInput=${(event) => updateForm("syncStatus", event.target.value)}>
+              <option value="">全部</option>
+              <option value="approved">待同步</option>
+              <option value="ready">可同步</option>
+              <option value="synced">已同步</option>
+              <option value="error">同步失败</option>
+              <option value="offline">已下架</option>
+              <option value="pending">待图片处理 / 待推进</option>
+            </select>
+          </label>
+          <label class="control grow">
+            <span class="control-label">关键词</span>
+            <input class="control-input" type="search" placeholder="商品名 / SKU / Vendure ID / 错误" value=${formState.q} onInput=${(event) => updateForm("q", event.target.value)} />
+          </label>
+          <label class="control">
+            <span class="control-label">每页数量</span>
+            <select class="control-select" value=${String(formState.pageSize || "24")} onInput=${(event) => updateForm("pageSize", event.target.value)}>
+              <option value="12">12</option>
+              <option value="24">24</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </label>
+          <label class="control">
+            <span class="control-label">排序字段</span>
+            <select class="control-select" value=${String(formState.sortBy || "updated")} onInput=${(event) => updateForm("sortBy", event.target.value)}>
+              <option value="updated">PIM 更新时间</option>
+              <option value="created">创建时间</option>
+              <option value="last_synced_at">同步时间</option>
+              <option value="supplier_updated_at">供应商更新时间</option>
+            </select>
+          </label>
+          <label class="control">
+            <span class="control-label">排序顺序</span>
+            <select class="control-select" value=${String(formState.sortOrder || "desc")} onInput=${(event) => updateForm("sortOrder", event.target.value)}>
+              <option value="desc">最新优先</option>
+              <option value="asc">最早优先</option>
+            </select>
+          </label>
+          <button class="btn secondary" type="submit">筛选</button>
+          <button class="btn secondary" type="button" onClick=${resetFilters}>重置</button>
+        </form>
+        <div class="inline-pills" style="margin-top:8px;">
+          <button class="btn secondary" type="button" onClick=${() => applyQuickFilter("error", "")}>只看同步失败</button>
+          <button class="btn secondary" type="button" onClick=${() => applyQuickFilter("ready", "vendure graphql error")}>只看可同步但带错误</button>
         </div>
+        <div class="inline-pills">
+          <span class="pill">当前结果 <code>${summary.FilteredProductCount || summary.ProductCount || 0}</code></span>
+          <span class="pill">已同步 <code>${summary.SyncedProductCount || 0}</code></span>
+          <span class="pill">同步失败 <code>${summary.ErrorProductCount || 0}</code></span>
+          <span class="pill">已下架 <code>${summary.OfflineProductCount || 0}</code></span>
+          <span class="pill">排序 <code>${formState.sortBy === "created" ? "创建时间" : formState.sortBy === "last_synced_at" ? "同步时间" : formState.sortBy === "supplier_updated_at" ? "供应商更新时间" : "PIM 更新时间"}</code> / <code>${formState.sortOrder === "asc" ? "最早优先" : "最新优先"}</code></span>
+        </div>
+        <div class="small" style="margin-top:8px;">这里是当前正式商品结果，不是旧的 source 商品发布任务。</div>
+        <div class="table-wrap section"><table><thead><tr><th>商品</th><th>分类 / 字段</th><th>状态</th><th>时间</th><th>错误 / 备注</th><th>预览</th></tr></thead><tbody>
+          ${products.length ? products.map((item) => html`<tr>
+            <td><strong>${item.Title || "-"}</strong><div class="small">${item.SupplierCode || "-"} / ${item.SKU || "-"}</div><div class="small">Vendure: ${item.VendureProductID || "-"} / ${item.VendureVariantID || "-"}</div></td>
+            <td><div>${item.NormalizedCategory || "-"}</div><div class="small">Audience: ${item.TargetAudience || "ALL"} / Rate: ${item.ConversionRate || 1}</div><div class="small">${item.HasProcessedImage ? "已有处理图" : "仅原图"}${item.SupplierStatus ? ` / supplier ${item.SupplierStatus}` : ""}</div></td>
+            <td><${StatusBadge} label=${supplierProductStatusLabel(item.SyncStatus, item)} currentTone=${tone(item.SyncStatus)} />${item.OfflineAt ? html`<div class="small">下架：${formatDateTime(item.OfflineAt)}</div>` : null}</td>
+            <td>
+              <div class="small">创建时间：${formatDateTime(item.CreatedAt)}</div>
+              <div class="small">供应商更新：${formatDateTime(item.SupplierUpdatedAt)}</div>
+              <div class="small">PIM 更新：${formatDateTime(item.UpdatedAt)}</div>
+              <div class="small">最后同步：${supplierLastSyncLabel(item)}</div>
+              <div class="small">最后看到：${formatDateTime(item.LastSeenAt)}</div>
+            </td>
+            <td>${item.LastSyncError ? html`<div class="small">${item.LastSyncError}</div>` : html`<div class="small">${item.SyncStatus === "synced" ? "最近同步成功" : item.SyncStatus === "offline" ? "已按供应商缺失下架" : item.SyncStatus === "approved" ? "已批准，等待正式同步" : item.SyncStatus === "ready" ? "图片已处理，等待人工确认" : item.SyncStatus === "pending" ? (item.HasProcessedImage ? "图片已就绪，等待状态推进" : "等待图片处理") : "-"}</div>`}</td>
+            <td><button class="btn secondary" type="button" disabled=${!item.ReadyForPreview} onClick=${() => setPreviewID(item.ID || "")}>预览 payload</button></td>
+          </tr>`) : html`<tr><td colspan="6" class="small">当前筛选下没有商品同步记录。</td></tr>`}
+        </tbody></table></div>
+        <div class="small">第 ${currentProductPage} / ${productPages} 页，共 ${summary.FilteredProductCount || summary.ProductCount || 0} 条当前筛选结果。</div>
+        <${Pagination}
+          basePath="/_/mrtang-admin/backend-release"
+          pageParam="page"
+          currentPage=${currentProductPage}
+          totalPages=${productPages}
+          onNavigate=${goToProductPage}
+          params=${{
+            syncStatus: filters.syncStatus,
+            q: filters.q,
+            pageSize: filters.pageSize || summary.ProductPageSize || 24,
+            sortBy: filters.sortBy,
+            sortOrder: filters.sortOrder,
+          }}
+        />
+      </div></div></section>
+    </section>
+
+    <details class="section">
+      <summary>展开查看分类映射与联调区（${showAdvancedCount} 项）</summary>
+      <section class="section split-grid">
+        <section class="table-card"><div class="table-card"><div class="card-body">
+          <div class="card-kicker">顶级分支创建概览</div>
+          <h2 class="card-title">顶级分类创建状态</h2>
+          <div class="table-wrap section"><table><thead><tr><th>顶级分支</th><th>总数</th><th>已创建</th><th>待创建</th><th>失败</th></tr></thead><tbody>
+            ${branches.length ? branches.map((item) => html`<tr>
+              <td><strong>${item.Label || item.label || "-"}</strong><div class="small"><code>${item.RootKey || item.rootKey || "-"}</code></div></td>
+              <td>${item.TotalCount || item.totalCount || 0}</td>
+              <td>${item.PublishedCount || item.publishedCount || 0}</td>
+              <td>${item.PendingCount || item.pendingCount || 0}</td>
+              <td>${item.ErrorCount || item.errorCount || 0}</td>
+            </tr>`) : html`<tr><td colspan="5" class="small">当前没有顶级分支摘要。</td></tr>`}
+          </tbody></table></div>
+        </div></div></section>
+
+        <section class="table-card"><div class="table-card"><div class="card-body">
+          <div class="card-kicker">最小分类创建样例</div>
+          <h2 class="card-title">建议先创建这些 Backend 分类</h2>
+          <div class="table-wrap section"><table><thead><tr><th>源分类</th><th>建议 collection</th><th>建议 path</th><th>说明</th></tr></thead><tbody>
+            ${suggestedCategories.length ? suggestedCategories.map((item) => html`<tr>
+              <td><strong>${item.Label || "-"}</strong><div class="small">${item.SourcePath || "-"}</div></td>
+              <td><code>${item.SuggestedCollection || "-"}</code></td>
+              <td><code>${item.SuggestedBackendPath || "-"}</code></td>
+              <td class="small">${item.Reason || "-"}</td>
+            </tr>`) : html`<tr><td colspan="4" class="small">当前没有新的分类映射建议。</td></tr>`}
+          </tbody></table></div>
+        </div></div></section>
+      </section>
+
+      <section class="section card"><div class="card-body">
+        <div class="card-kicker">分类与图片动作</div>
+        <h2 class="card-title">联调操作</h2>
         <div class="action-row" style="margin-top:14px;">
           <button class="btn secondary" type="button" disabled=${actionState.busy === "batch:按建议批量创建" || !suggestedKeys.length} onClick=${() => publishBatch(suggestedKeys, "按建议批量创建")}>
             ${actionState.busy === "batch:按建议批量创建" ? "创建中..." : `按建议批量创建（${suggestedKeys.length}）`}
@@ -1040,97 +1714,17 @@ function BackendReleasePage() {
             ${actionState.busy === "cleanup-assets" ? "清理中..." : "清理 backend 冗余图片"}
           </button>
         </div>
+        <div class="small" style="margin-top:12px;">字段映射与发布模型：<code>docs/backend-release-contract.md</code> / Vendure 字段配置：<code>docs/vendure-field-setup.md</code></div>
       </div></section>
 
-      <section class="card"><div class="card-body">
-        <div class="card-kicker">文档</div>
-        <h2 class="card-title">联调参考</h2>
-        <div class="small">字段映射与发布模型：<code>docs/backend-release-contract.md</code></div>
-        <div class="small" style="margin-top:8px;">Vendure 字段配置：<code>docs/vendure-field-setup.md</code></div>
-        <div class="small" style="margin-top:8px;">整体发布前规划：<code>docs/backend-miniapp-plan.md</code></div>
-        <div class="small" style="margin-top:8px;">Backend 分类模型：<code>../mrtang-backend/docs/category-release-model.md</code></div>
+      <section class="section card"><div class="card-body">
+        <div class="card-kicker">Backend 分类创建</div>
+        <h2 class="card-title">source category -> backend collection</h2>
+        <div class="table-wrap section"><table><thead><tr><th>源分类</th><th>backend collection</th><th>backend path</th><th>状态</th><th>操作</th></tr></thead><tbody>
+          ${visibleCategories.length ? visibleCategories.map((item) => html`<${BackendCategoryMappingRow} key=${item.SourceKey || item.sourceKey} item=${item} suggestion=${suggestionMap[item.SourceKey || item.sourceKey || ""]} onSave=${saveMapping} onPublish=${publishCategory} busy=${actionState.busy} />`) : html`<tr><td colspan="5" class="small">还没有分类映射数据。</td></tr>`}
+        </tbody></table></div>
       </div></section>
-    </section>
-
-    <section class="section split-grid">
-      <section class="table-card"><div class="table-card"><div class="card-body">
-        <div class="card-kicker">顶级分支创建概览</div>
-        <h2 class="card-title">为什么 backend 里可能只看到一个顶级分类</h2>
-        <div class="small">当前批量创建会递归补齐父子层级，所以一次可能创建很多分类，但它们可能都属于同一个顶级分支。</div>
-        <div class="table-wrap section"><table><thead><tr><th>顶级分支</th><th>总数</th><th>已创建</th><th>待创建</th><th>失败</th></tr></thead><tbody>
-          ${branches.length ? branches.map((item) => html`<tr>
-            <td><strong>${item.Label || item.label || "-"}</strong><div class="small"><code>${item.RootKey || item.rootKey || "-"}</code></div></td>
-            <td>${item.TotalCount || item.totalCount || 0}</td>
-            <td>${item.PublishedCount || item.publishedCount || 0}</td>
-            <td>${item.PendingCount || item.pendingCount || 0}</td>
-            <td>${item.ErrorCount || item.errorCount || 0}</td>
-          </tr>`) : html`<tr><td colspan="5" class="small">当前没有顶级分支摘要。</td></tr>`}
-        </tbody></table></div>
-      </div></div></section>
-
-      <section class="table-card"><div class="table-card"><div class="card-body">
-        <div class="card-kicker">最小分类创建样例</div>
-        <h2 class="card-title">建议先创建这些 Backend 分类</h2>
-        <div class="small">更推荐直接“按建议创建”或“创建到 Backend”，而不是只保存本地映射。</div>
-        <div class="small" style="margin-top:8px;">下方分类列表会优先展示有建议路径的分类行，便于你直接创建。</div>
-        <div class="table-wrap section"><table><thead><tr><th>源分类</th><th>建议 collection</th><th>建议 path</th><th>说明</th></tr></thead><tbody>
-          ${suggestedCategories.length ? suggestedCategories.map((item) => html`<tr>
-            <td><strong>${item.Label || "-"}</strong><div class="small">${item.SourcePath || "-"}</div></td>
-            <td><code>${item.SuggestedCollection || "-"}</code></td>
-            <td><code>${item.SuggestedBackendPath || "-"}</code></td>
-            <td class="small">${item.Reason || "-"}</td>
-          </tr>`) : html`<tr><td colspan="4" class="small">当前没有新的分类映射建议。</td></tr>`}
-        </tbody></table></div>
-      </div></div></section>
-
-      <section class="table-card"><div class="table-card"><div class="card-body">
-        <div class="card-kicker">联调候选商品</div>
-        <h2 class="card-title">建议先试这 1 到 3 个商品</h2>
-        <div class="table-wrap section"><table><thead><tr><th>商品</th><th>特征</th><th>状态</th><th>预览</th></tr></thead><tbody>
-          ${recommendedProducts.length ? recommendedProducts.map((item) => html`<tr>
-            <td><strong>${item.Title || "-"}</strong><div class="small">${item.SupplierCode || "-"} / ${item.SKU || "-"}</div></td>
-            <td><div class="small">${item.Reason || "基础联调样例"}</div><div class="small">Audience: ${item.TargetAudience || "ALL"} / Rate: ${item.ConversionRate || 1}</div></td>
-            <td><${StatusBadge} label=${item.SyncStatus || "-"} currentTone=${tone(item.SyncStatus)} /></td>
-            <td><button class="btn secondary" type="button" disabled=${!item.ReadyForPreview} onClick=${() => setPreviewID(item.ID || "")}>预览 payload</button></td>
-          </tr>`) : html`<tr><td colspan="4" class="small">当前没有推荐联调商品。</td></tr>`}
-        </tbody></table></div>
-      </div></div></section>
-    </section>
-
-    <section class="section card"><div class="card-body">
-      <div class="card-kicker">Backend 分类创建</div>
-      <h2 class="card-title">source category -> backend collection</h2>
-      <div class="table-wrap section"><table><thead><tr><th>源分类</th><th>backend collection</th><th>backend path</th><th>状态</th><th>操作</th></tr></thead><tbody>
-        ${visibleCategories.length ? visibleCategories.map((item) => html`<${BackendCategoryMappingRow} key=${item.SourceKey || item.sourceKey} item=${item} suggestion=${suggestionMap[item.SourceKey || item.sourceKey || ""]} onSave=${saveMapping} onPublish=${publishCategory} busy=${actionState.busy} />`) : html`<tr><td colspan="5" class="small">还没有分类映射数据。</td></tr>`}
-      </tbody></table></div>
-    </div></section>
-
-    <section class="section split-grid">
-      <section class="table-card"><div class="table-card"><div class="card-body">
-        <div class="card-kicker">待联调商品</div>
-        <h2 class="card-title">最近 supplier_products</h2>
-        <div class="table-wrap section"><table><thead><tr><th>商品</th><th>分类</th><th>字段</th><th>状态</th><th>预览</th></tr></thead><tbody>
-          ${products.length ? products.map((item) => html`<tr>
-            <td><strong>${item.Title || "-"}</strong><div class="small">${item.SupplierCode || "-"} / ${item.SKU || "-"}</div></td>
-            <td>${item.NormalizedCategory || "-"}</td>
-            <td><div class="small">Audience: ${item.TargetAudience || "ALL"}</div><div class="small">Rate: ${item.ConversionRate || 1}</div><div class="small">${item.HasProcessedImage ? "已有处理图" : "仅原图"}</div></td>
-            <td><${StatusBadge} label=${item.SyncStatus || "-"} currentTone=${tone(item.SyncStatus)} /></td>
-            <td><button class="btn secondary" type="button" disabled=${!item.ReadyForPreview} onClick=${() => setPreviewID(item.ID || "")}>预览 payload</button></td>
-          </tr>`) : html`<tr><td colspan="5" class="small">当前还没有可联调商品。</td></tr>`}
-        </tbody></table></div>
-      </div></div></section>
-
-      <section class="card"><div class="card-body">
-        <div class="card-kicker">Payload Preview</div>
-        <h2 class="card-title">Vendure 同步预览</h2>
-        ${!previewID ? html`<div class="small">从左侧选一个商品，查看将要发送给 Vendure 的 payload。</div>` : null}
-        ${previewID && previewResource.loading ? html`<${LoadingSection} label="payload 预览" />` : null}
-        ${previewID && previewResource.error ? html`<div class="flash error">${previewResource.error}</div>` : null}
-        ${previewID && previewResource.data && previewResource.data.preview && previewResource.data.preview.Payload ? html`
-          <pre class="json-block">${JSON.stringify(previewResource.data.preview.Payload, null, 2)}</pre>
-        ` : null}
-      </div></section>
-    </section>
+    </details>
   `;
 }
 
@@ -1173,15 +1767,21 @@ function TargetSyncPage() {
   const pageQuery = useMemo(() => new URLSearchParams(window.location.search), []);
   const initialRunId = pageQuery.get("id") || "";
   const [reloadKey, setReloadKey] = useState(0);
+  const [harvestReloadKey, setHarvestReloadKey] = useState(0);
+  const [supplierSyncReloadKey, setSupplierSyncReloadKey] = useState(0);
   const [liveReloadKey, setLiveReloadKey] = useState(0);
   const [checkoutReloadKey, setCheckoutReloadKey] = useState(0);
   const [liveEnabled, setLiveEnabled] = useState(false);
   const [checkoutEnabled, setCheckoutEnabled] = useState(false);
+  const [pendingHarvestRun, setPendingHarvestRun] = useState(null);
+  const [supplierSyncProgress, setSupplierSyncProgress] = useState(null);
   const [actionState, setActionState] = useState({ busy: "", message: "", error: "", href: "", hrefLabel: "" });
   const [activeRunId, setActiveRunId] = useState(initialRunId);
   const [activeRun, setActiveRun] = useState(null);
   const [activeRunError, setActiveRunError] = useState("");
   const resource = useResource("/api/pim/admin/target-sync", [reloadKey]);
+  const harvestResource = useBackgroundResource("/api/pim/admin/harvest/summary", [harvestReloadKey]);
+  const supplierSyncProgressResource = useBackgroundResource("/api/pim/admin/supplier-products/sync-progress", [supplierSyncReloadKey]);
   const liveResource = useResource(liveEnabled ? "/api/pim/admin/target-sync/live" : "", [reloadKey, liveReloadKey, liveEnabled]);
   const checkoutResource = useResource(checkoutEnabled ? "/api/pim/admin/target-sync/checkout-live" : "", [reloadKey, checkoutReloadKey, checkoutEnabled]);
 
@@ -1232,11 +1832,43 @@ function TargetSyncPage() {
   if (resource.loading) return html`<${LoadingSection} label="抓取入库" />`;
   if (resource.error) return html`<${ErrorSection} error=${resource.error} />`;
   const payload = resource.data || {};
+  const harvestPayload = harvestResource.data || {};
   const summary = payload.summary || {};
+  const [harvest, setHarvest] = useSyncedValue(harvestPayload.harvest || payload.harvest || {});
+  const harvestError = harvestPayload.flashError || payload.harvestError || "";
+  const displayedHarvest = mergePendingHarvestRun(harvest, pendingHarvestRun);
+  const supplierSync = (supplierSyncProgressResource.data && supplierSyncProgressResource.data.progress) || supplierSyncProgress || {};
   const livePayload = liveResource.data || {};
   const liveSummary = livePayload.summary || {};
   const checkoutPayload = checkoutResource.data || {};
   const checkoutSummary = checkoutPayload.summary || {};
+
+  useEffect(() => {
+    if (!pendingHarvestRun || !(pendingHarvestRun.ID || pendingHarvestRun.id)) return;
+    const runs = (harvest && harvest.RecentRuns) || [];
+    const pendingID = String(pendingHarvestRun.ID || pendingHarvestRun.id || "").trim();
+    const matched = runs.some((item) => String((item && (item.ID || item.id)) || "").trim() === pendingID);
+    const realRunningExists = !!pendingHarvestRun.ClientPending && runs.some((item) => !item.ClientPending && String((item && (item.Status || item.status)) || "").toLowerCase() === "running");
+    if (matched || realRunningExists) {
+      setPendingHarvestRun(null);
+    }
+  }, [harvest, pendingHarvestRun]);
+
+  useEffect(() => {
+    if (!hasRunningHarvestRun(displayedHarvest)) return undefined;
+    const timer = window.setTimeout(() => {
+      setHarvestReloadKey((value) => value + 1);
+    }, 2500);
+    return () => window.clearTimeout(timer);
+  }, [displayedHarvest]);
+
+  useEffect(() => {
+    if (!supplierSync || String(supplierSync.Status || "").toLowerCase() !== "running") return undefined;
+    const timer = window.setTimeout(() => {
+      setSupplierSyncReloadKey((value) => value + 1);
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [supplierSync]);
 
   async function ensureJob(entityType, scopeKey = "", scopeLabel = "") {
     setActionState({ busy: `ensure:${entityType}:${scopeKey}`, message: "", error: "", href: "", hrefLabel: "" });
@@ -1273,7 +1905,7 @@ function TargetSyncPage() {
       return `重建分类商品归属完成：新增 ${created}，更新 ${updated}，未变化 ${unchanged}。`;
     }
     if (entityType === "products") {
-      return `按已保存分类来源抓商品规格完成：新增 ${created}，更新 ${updated}，未变化 ${unchanged}。`;
+      return `按已保存分类来源抓商品规格到审核区完成：新增 ${created}，更新 ${updated}，未变化 ${unchanged}。`;
     }
     if (entityType === "assets") {
       return `按当前源站结果抓图片完成：新增 ${created}，更新 ${updated}，未变化 ${unchanged}。`;
@@ -1361,6 +1993,131 @@ function TargetSyncPage() {
     }
   }
 
+  async function runHarvest() {
+    if (!window.confirm("确认立即执行供应商同步吗？这一步会直接写入 supplier_products，并把供应商 feed 里消失的 SKU 标记为 offline。")) return;
+    setPendingHarvestRun(createClientPendingHarvestRun());
+    setActionState({ busy: "harvest", message: "供应商同步请求已发送，等待后端回执...", error: "", href: "", hrefLabel: "" });
+    try {
+      const result = await postForm("/api/pim/admin/harvest", {});
+      setHarvest((current) => applyHarvestResult(current, result));
+      const run = (result && result.run) || {};
+      if (run && (run.ID || run.id)) {
+        setPendingHarvestRun(run);
+      }
+      const runID = String(run.ID || run.id || "").trim();
+      const runStatus = String(run.Status || run.status || "").trim();
+      setActionState({
+        busy: "",
+        message: runID
+          ? `${result.message || "供应商同步已启动。"} run=${runID} / status=${runStatus || "running"}`
+          : `${result.message || "供应商同步已启动。"} 后端未返回 run id。`,
+        error: result.harvestError || "",
+        href: run.ID ? buildURL("/_/mrtang-admin/harvest/detail", { id: run.ID, returnTo: window.location.pathname + window.location.search }) : "",
+        hrefLabel: run.ID ? "查看供应商同步详情" : "",
+      });
+      setHarvestReloadKey((value) => value + 1);
+    } catch (error) {
+      setActionState({ busy: "", message: "", error: error.message || "执行供应商同步失败", href: "", hrefLabel: "" });
+    }
+  }
+
+  async function runSupplierProcess() {
+    if (!window.confirm("确认处理当前待处理商品图片吗？这会推动 pending 商品进入后续 ready 状态。")) return;
+    setActionState({ busy: "supplier-process", message: "", error: "", href: "", hrefLabel: "" });
+    try {
+      const result = await postForm("/api/pim/admin/supplier-products/process", {});
+      setActionState({ busy: "", message: result.message || "待处理商品图片已开始处理。", error: "", href: "", hrefLabel: "" });
+      setHarvestReloadKey((value) => value + 1);
+      setReloadKey((value) => value + 1);
+    } catch (error) {
+      setActionState({ busy: "", message: "", error: error.message || "处理待处理商品图片失败", href: "", hrefLabel: "" });
+    }
+  }
+
+  async function runSupplierAdvance() {
+    if (!window.confirm("确认推进当前待推进商品吗？这会把图片已就绪但仍停在 pending 的商品推进到待人工确认。")) return;
+    setActionState({ busy: "supplier-advance", message: "", error: "", href: "", hrefLabel: "" });
+    try {
+      const result = await postForm("/api/pim/admin/supplier-products/advance-ready", {});
+      setActionState({ busy: "", message: result.message || "待推进商品已推进。", error: "", href: "", hrefLabel: "" });
+      setHarvestReloadKey((value) => value + 1);
+      setReloadKey((value) => value + 1);
+    } catch (error) {
+      setActionState({ busy: "", message: "", error: error.message || "推进待推进商品失败", href: "", hrefLabel: "" });
+    }
+  }
+
+  async function runSupplierApprove() {
+    if (!window.confirm("确认批准当前可同步商品吗？这会把 ready 商品推进到待同步。")) return;
+    setActionState({ busy: "supplier-approve", message: "", error: "", href: "", hrefLabel: "" });
+    try {
+      const result = await postForm("/api/pim/admin/supplier-products/approve-ready", {});
+      setActionState({ busy: "", message: result.message || "可同步商品已批准。", error: "", href: "", hrefLabel: "" });
+      setHarvestReloadKey((value) => value + 1);
+      setReloadKey((value) => value + 1);
+    } catch (error) {
+      setActionState({ busy: "", message: "", error: error.message || "批准可同步商品失败", href: "", hrefLabel: "" });
+    }
+  }
+
+  async function runSupplierSync() {
+    if (!window.confirm("确认同步当前已批准商品吗？这会把 approved 商品推送到 Vendure。")) return;
+    setActionState({ busy: "supplier-sync", message: "", error: "", href: "", hrefLabel: "" });
+    try {
+      const result = await postForm("/api/pim/admin/supplier-products/sync-async", {});
+      const progress = result.progress || {};
+      setSupplierSyncProgress(progress);
+      setActionState({
+        busy: "",
+        message: `${result.message || "已批准商品同步已启动。"} ${progress.ID ? `任务 ${progress.ID}` : ""}`.trim(),
+        error: "",
+        href: "",
+        hrefLabel: "",
+      });
+      setHarvestReloadKey((value) => value + 1);
+      setSupplierSyncReloadKey((value) => value + 1);
+      setReloadKey((value) => value + 1);
+    } catch (error) {
+      setActionState({ busy: "", message: "", error: error.message || "同步已批准商品失败", href: "", hrefLabel: "" });
+    }
+  }
+
+  async function runSupplierRequeueSingleImage() {
+    setActionState({ busy: "supplier-requeue-single-image", message: "", error: "", href: "", hrefLabel: "" });
+    try {
+      const scan = await fetchJSON("/api/pim/admin/supplier-products/single-image-scan");
+      const items = Array.isArray(scan.items) ? scan.items : [];
+      const ids = items.map((item) => String(item.ID || item.id || "").trim()).filter(Boolean);
+      if (!ids.length) {
+        setActionState({ busy: "", message: "排查完成：当前没有命中的后端单图商品。", error: "", href: "", hrefLabel: "" });
+        return;
+      }
+      if (!window.confirm(`已排查命中 ${ids.length} 条后端单图商品，确认将这批加入待同步吗？`)) {
+        setActionState({ busy: "", message: `已排查命中 ${ids.length} 条，未执行重排。`, error: "", href: "", hrefLabel: "" });
+        return;
+      }
+      const result = await postForm("/api/pim/admin/supplier-products/requeue-single-image", { ids: ids.join(",") });
+      setActionState({ busy: "", message: result.message || `已将 ${ids.length} 条单图商品加入待同步。`, error: "", href: "", hrefLabel: "" });
+      setHarvestReloadKey((value) => value + 1);
+      setReloadKey((value) => value + 1);
+    } catch (error) {
+      setActionState({ busy: "", message: "", error: error.message || "重排历史单图商品失败", href: "", hrefLabel: "" });
+    }
+  }
+
+  async function runSupplierCleanupDuplicateProducts() {
+    if (!window.confirm("确认清理后台重复商品吗？仅删除未被 PIM 绑定的重复商品，执行后不可恢复。")) return;
+    setActionState({ busy: "supplier-cleanup-duplicate-products", message: "", error: "", href: "", hrefLabel: "" });
+    try {
+      const result = await postForm("/api/pim/admin/supplier-products/cleanup-duplicate-orphans", {});
+      setActionState({ busy: "", message: result.message || "后台重复商品已清理。", error: "", href: "", hrefLabel: "" });
+      setHarvestReloadKey((value) => value + 1);
+      setReloadKey((value) => value + 1);
+    } catch (error) {
+      setActionState({ busy: "", message: "", error: error.message || "清理后台重复商品失败", href: "", hrefLabel: "" });
+    }
+  }
+
   const scopeOptions = liveSummary.ScopeOptions || [];
   const progressTotal = (activeRun && activeRun.ProgressTotal) || 0;
   const progressDone = (activeRun && activeRun.ProgressDone) || 0;
@@ -1371,6 +2128,7 @@ function TargetSyncPage() {
   const checkoutError = checkoutPayload.flashError || "";
   const liveErrorInfo = classifyLoadError(liveError);
   const checkoutErrorInfo = classifyLoadError(checkoutError);
+  const displayedRawAuthStatus = (liveEnabled && (livePayload.RawAuthStatus || livePayload.rawAuthStatus)) || summary.RawAuthStatus || {};
   const displayedTopLevelCount = liveEnabled ? (liveSummary.TopLevelCount || 0) : (summary.TopLevelCount || 0);
   const displayedNodeCount = liveEnabled ? (liveSummary.ExpectedNodeCount || 0) : (summary.CategoryCount || 0);
   const displayedProductCount = liveEnabled ? (liveSummary.ExpectedProductCount || 0) : (summary.SourceProductCount || 0);
@@ -1381,7 +2139,7 @@ function TargetSyncPage() {
     <section class="section split-grid">
       <section class="card"><div class="card-body">
         <div class="card-kicker">抓取入库</div>
-        <h2 class="card-title">先抓分类树，再刷新分类商品来源，再按来源抓商品规格</h2>
+        <h2 class="card-title">先抓分类树，再刷新分类商品来源，再抓图片到审核区</h2>
         ${payload.flashError ? html`<div class="flash error" style="margin-top:14px;">${payload.flashError}</div>` : null}
         ${payload.flashMessage ? html`<div class="flash ok" style="margin-top:14px;">${payload.flashMessage}</div>` : null}
         <${ActionNotice} state=${actionState} />
@@ -1390,10 +2148,10 @@ function TargetSyncPage() {
           <button class="btn" type="button" disabled=${actionState.busy === "run:category_tree:"} onClick=${() => runJob("category_tree", "", "分类树", "确认立即抓取分类树吗？")}>${actionState.busy === "run:category_tree:" ? "启动中..." : "抓分类树"}</button>
           <button class="btn secondary" type="button" disabled=${actionState.busy === "run:category_sources:"} onClick=${() => runJob("category_sources", "", "分类商品来源", "确认立即刷新分类商品来源吗？这一步会请求各分类路径下的商品列表，但不会抓商品详情。")}>${actionState.busy === "run:category_sources:" ? "启动中..." : "刷新分类商品来源"}</button>
           <button class="btn secondary" type="button" disabled=${actionState.busy === "run:category_rebuild:"} onClick=${() => runJob("category_rebuild", "", "分类商品归属", "确认基于全部已保存分类来源重建商品分类归属吗？这一步不会请求源站。")}>${actionState.busy === "run:category_rebuild:" ? "启动中..." : "全量重建分类商品归属"}</button>
-          <button class="btn secondary" type="button" disabled=${actionState.busy === "run:products:"} onClick=${() => runJob("products", "", "商品规格", "确认基于已保存分类商品来源抓取商品规格吗？若没有来源，将先即时刷新来源。")}>${actionState.busy === "run:products:" ? "启动中..." : "按已保存来源抓商品规格"}</button>
           <button class="btn secondary" type="button" disabled=${actionState.busy === "run:assets:"} onClick=${() => runJob("assets", "", "商品图片", "确认立即抓取图片入库吗？图片仍基于当前商品结果生成。")}>${actionState.busy === "run:assets:" ? "启动中..." : "按已保存商品抓图片"}</button>
         </div>
-        <div class="small" style="margin-top:10px;">默认流程现在是：先抓分类树，再刷新分类商品来源，再按已保存来源抓商品规格。商品规格抓取不再重新请求分类接口；只有没有已保存来源时，才会即时补刷新。</div>
+        <div class="flash warning" style="margin-top:12px;">供应商正式同步以 <code>供应商同步</code> 为准。这里不再提供商品规格抓取和 source 发布入口，避免覆盖正式供应商数据。</div>
+        <div class="small" style="margin-top:10px;">当前这里主要用于分类来源核对、图片审核和辅助排查。若需要同步供应商价格、规格、库存、上下架，请运行 <code>供应商同步</code>。</div>
         <div class="action-row" style="margin-top:12px;">
           <button class="btn secondary" type="button" onClick=${() => { setLiveEnabled(true); setLiveReloadKey((value) => value + 1); }}>
             ${liveResource.loading ? "刷新中..." : "刷新实时范围摘要"}
@@ -1406,11 +2164,11 @@ function TargetSyncPage() {
           <${StatusBadge} label=${sourceModeLabel(effectiveSourceMode)} currentTone=${tone(effectiveSourceMode)} />
           <span class="pill">sourceURL: <code>${payload.sourceURL || "-"}</code></span>
           <span class="pill">${payload.requiresAuth ? "当前 API 需要 Bearer 鉴权" : "当前 API 默认公开"}</span>
-          ${summary.RawAuthStatus && summary.RawAuthStatus.Enabled ? html`<span class="pill">续活状态: <strong>${rawWarmupLabel(summary.RawAuthStatus.Status)}</strong></span>` : null}
+          ${displayedRawAuthStatus && displayedRawAuthStatus.Enabled ? html`<span class="pill">续活状态: <strong>${rawWarmupLabel(displayedRawAuthStatus.Status)}</strong></span>` : null}
         </div>
-        ${summary.RawAuthStatus && summary.RawAuthStatus.Enabled ? html`<div class=${`flash ${((summary.RawAuthStatus.Status || "").toLowerCase() === "failed" ? "error" : "ok")}`} style="margin-top:14px;">
-          <div>${summary.RawAuthStatus.Message || "raw 登录续活状态未知。"}</div>
-          <div class="small" style="margin-top:8px;">上次尝试：${summary.RawAuthStatus.LastAttemptAt || "-"} / 最近成功：${summary.RawAuthStatus.LastSuccessAt || "-"} / OpenID：${summary.RawAuthStatus.OpenID || "未配置"}</div>
+        ${displayedRawAuthStatus && displayedRawAuthStatus.Enabled ? html`<div class=${`flash ${((displayedRawAuthStatus.Status || "").toLowerCase() === "failed" ? "error" : "ok")}`} style="margin-top:14px;">
+          <div>${displayedRawAuthStatus.Message || "raw 登录续活状态未知。"}</div>
+          <div class="small" style="margin-top:8px;">上次尝试：${displayedRawAuthStatus.LastAttemptAt || "-"} / 最近成功：${displayedRawAuthStatus.LastSuccessAt || "-"} / OpenID：${displayedRawAuthStatus.OpenID || "未配置"}</div>
         </div>` : null}
         <div class="metric-grid section">
           <${MetricCard} eyebrow="抓取任务" value=${summary.JobCount || 0} />
@@ -1465,6 +2223,64 @@ function TargetSyncPage() {
       </div></section>
     </section>
 
+    <section class="section card"><div class="card-body">
+      <div class="card-kicker">供应商同步</div>
+      <h2 class="card-title">手动执行正式供应商同步</h2>
+      <${ActionNotice} state=${supplierActionNoticeState(actionState)} />
+      ${harvestError ? html`<div class="flash error" style="margin-top:14px;">${harvestError}</div>` : null}
+      <div class="inline-pills">
+        <span class="pill">供应商: <code>${displayedHarvest.SupplierCode || "-"}</code></span>
+        <span class="pill">连接器: <code>${supplierConnectorLabel(displayedHarvest.Connector)}</code></span>
+        <span class="pill">最近采集: <code>${formatDateTime(displayedHarvest.LastSeenAt)}</code></span>
+        ${pendingHarvestRun ? html`<span class="pill">本地状态: <strong>等待回执</strong></span>` : null}
+      </div>
+      <div class="metric-grid section">
+        <${MetricCard} eyebrow="已采集商品" value=${displayedHarvest.ProductCount || 0} />
+        <${MetricCard} eyebrow="在线商品" value=${displayedHarvest.ActiveCount || 0} detail=${`${displayedHarvest.OfflineCount || 0} 已下架`} />
+        <${MetricCard} eyebrow="待图片处理" value=${displayedHarvest.NeedProcessCount || 0} detail=${`${displayedHarvest.ProcessingCount || 0} 处理中 / ${displayedHarvest.StuckPendingCount || 0} 待推进`} />
+        <${MetricCard} eyebrow="待同步" value=${displayedHarvest.ApprovedCount || 0} detail=${`${displayedHarvest.ReadyCount || 0} 待人工确认 / ${displayedHarvest.SyncedCount || 0} 已同步`} />
+      </div>
+      <div class="small">最近下架：${formatDateTime(displayedHarvest.LastOfflineAt)}</div>
+      <div class="flash warning" style="margin-top:14px;">
+        <div><strong>这不是 source 抓取入库</strong></div>
+        <div class="small" style="margin-top:8px;">供应商同步会直接更新 <code>supplier_products</code>。如果你要走审核链路，继续使用上面的 <code>target-sync</code> 与 <code>source</code> 页面。</div>
+      </div>
+      <div class="inline-pills section">
+        <span class="pill">ready <code>${displayedHarvest.ReadyCount || 0}</code></span>
+        <span class="pill">approved <code>${displayedHarvest.ApprovedCount || 0}</code></span>
+        <span class="pill">error <code>${displayedHarvest.ErrorCount || 0}</code></span>
+        ${supplierSync && supplierSync.Status ? html`<span class="pill">同步任务 <strong>${syncStatusLabel(supplierSync.Status)}</strong></span>` : null}
+        ${supplierSync && supplierSync.Status ? html`<span class="pill">${supplierSyncProgressText(supplierSync)}</span>` : null}
+      </div>
+      ${supplierSync && supplierSync.CurrentItem ? html`<div class="small" style="margin-top:8px;">当前处理：${supplierSync.CurrentItem}</div>` : null}
+      <div class="action-row" style="margin-top:14px;">
+        <button class="btn" type="button" disabled=${actionState.busy === "harvest"} onClick=${runHarvest}>
+          ${actionState.busy === "harvest" ? "执行中..." : "立即供应商同步"}
+        </button>
+        <button class="btn secondary" type="button" disabled=${actionState.busy === "supplier-process"} onClick=${runSupplierProcess}>
+          ${actionState.busy === "supplier-process" ? "处理中..." : "处理全部待处理商品图片"}
+        </button>
+        <button class="btn secondary" type="button" disabled=${actionState.busy === "supplier-advance"} onClick=${runSupplierAdvance}>
+          ${actionState.busy === "supplier-advance" ? "推进中..." : "推进全部待推进商品"}
+        </button>
+        <button class="btn secondary" type="button" disabled=${actionState.busy === "supplier-approve"} onClick=${runSupplierApprove}>
+          ${actionState.busy === "supplier-approve" ? "批准中..." : "批准全部可同步商品"}
+        </button>
+        <button class="btn secondary" type="button" disabled=${actionState.busy === "supplier-sync"} onClick=${runSupplierSync}>
+          ${actionState.busy === "supplier-sync" ? "同步中..." : "同步全部已批准商品"}
+        </button>
+        <button class="btn secondary" type="button" disabled=${actionState.busy === "supplier-requeue-single-image"} onClick=${runSupplierRequeueSingleImage}>
+          ${actionState.busy === "supplier-requeue-single-image" ? "排查中..." : "排查后端单图商品并加入待同步"}
+        </button>
+        <button class="btn secondary" type="button" disabled=${actionState.busy === "supplier-cleanup-duplicate-products"} onClick=${runSupplierCleanupDuplicateProducts}>
+          ${actionState.busy === "supplier-cleanup-duplicate-products" ? "清理中..." : "清理后台重复商品"}
+        </button>
+        <a class="btn secondary" href="/_/mrtang-admin/backend-release">查看正式商品结果</a>
+      </div>
+      <div class="small" style="margin-top:8px;">说明：处理图片 -> 待人工确认 -> 待同步 -> 已同步。这里的手动按钮会尽量处理当前全部符合条件的商品。</div>
+      <${HarvestRunsPreview} runs=${displayedHarvest.RecentRuns || []} />
+    </div></section>
+
     <section class="section split-grid">
       <section class="card"><div class="card-body">
         <div class="card-kicker">抓取结果入口</div>
@@ -1474,7 +2290,7 @@ function TargetSyncPage() {
           <a class="action-card" href="/_/mrtang-admin/source/products"><div class="card-kicker">已入库商品</div><div class="metric-value">${summary.SourceProductCount || 0}</div><div class="card-desc">查看抓取保存下来的商品、规格和审核状态。</div></a>
           <a class="action-card" href="/_/mrtang-admin/source/assets"><div class="card-kicker">已入库图片</div><div class="metric-value">${summary.SourceAssetCount || 0}</div><div class="card-desc">查看抓取保存下来的封面、轮播和详情图。</div></a>
           <a class="action-card" href="/_/mrtang-admin/source/products?productStatus=imported"><div class="card-kicker">待审核商品</div><div class="metric-value">${summary.SourceImportedCount || 0}</div><div class="card-desc">商品和规格变化后自动回到 imported。</div></a>
-          <a class="action-card" href="/_/mrtang-admin/source/products?productStatus=approved"><div class="card-kicker">待加入发布队列商品</div><div class="metric-value">${summary.SourceApprovedCount || 0}</div><div class="card-desc">审核通过后加入发布队列，再进入 supplier_products 和 backend 发布链。</div></a>
+          <a class="action-card" href="/_/mrtang-admin/source/products?productStatus=approved"><div class="card-kicker">已审核商品</div><div class="metric-value">${summary.SourceApprovedCount || 0}</div><div class="card-desc">查看已审核 source 商品，仅供核对，不作为正式供应商发布入口。</div></a>
           <a class="action-card" href="/_/mrtang-admin/source/assets?assetStatus=pending"><div class="card-kicker">待处理图片</div><div class="metric-value">${summary.SourceAssetPendingCount || 0}</div><div class="card-desc">图片变化后自动重置为 pending。</div></a>
           <a class="action-card" href="/_/mrtang-admin/source/assets?assetStatus=failed"><div class="card-kicker">失败图片</div><div class="metric-value">${summary.SourceAssetFailedCount || 0}</div><div class="card-desc">在图片模块继续重试或人工处理。</div></a>
         </div>
@@ -1568,6 +2384,7 @@ function TargetSyncPage() {
 function routePath(pathname) {
   if ((pathname || "").startsWith("/_/mrtang-admin/audit")) return "audit";
   if ((pathname || "").startsWith("/_/mrtang-admin/backend-release")) return "backend-release";
+  if ((pathname || "").startsWith("/_/mrtang-admin/harvest/detail")) return "harvest-detail";
   if ((pathname || "").startsWith("/_/mrtang-admin/source/logs")) return "source-logs";
   if ((pathname || "").startsWith("/_/mrtang-admin/source/categories")) return "source-categories";
   if ((pathname || "").startsWith("/_/mrtang-admin/source/products/detail")) return "source-product-detail";
@@ -1596,6 +2413,7 @@ function routePath(pathname) {
   if (pathname === "/_/mrtang-admin/procurement/detail") return "procurement-detail";
   if (pathname === "/_/mrtang-admin/target-sync") return "target-sync";
   if (pathname === "/_/mrtang-admin/backend-release") return "backend-release";
+  if (pathname === "/_/mrtang-admin/harvest/detail") return "harvest-detail";
   if (pathname === "/_/mrtang-admin/source/logs") return "source-logs";
   if (pathname === "/_/mrtang-admin/audit") return "audit";
   return "dashboard";
@@ -1665,9 +2483,9 @@ function SourceModulePage() {
         ${payload.flashError ? html`<div class="flash error" style="margin-top:14px;">${payload.flashError}</div>` : null}
         ${payload.flashMessage ? html`<div class="flash ok" style="margin-top:14px;">${payload.flashMessage}</div>` : null}
         <div class="metric-grid section">
-          <${MetricCard} eyebrow="商品总数" value=${summary.ProductCount || 0} detail=${`${summary.ImportedCount || 0} 待审核 / ${summary.ApprovedCount || 0} 待加入发布队列`} />
+          <${MetricCard} eyebrow="商品总数" value=${summary.ProductCount || 0} detail=${`${summary.ImportedCount || 0} 待审核 / ${summary.ApprovedCount || 0} 已审核`} />
           <${MetricCard} eyebrow="图片总数" value=${summary.AssetCount || 0} detail=${`${summary.AssetPending || 0} 待处理 / ${summary.AssetFailed || 0} 失败`} />
-          <${MetricCard} eyebrow="已加入发布队列" value=${summary.LinkedCount || 0} detail=${`${summary.SyncedCount || 0} 已同步 / ${summary.SyncErrorCount || 0} 同步失败`} />
+          <${MetricCard} eyebrow="历史发布链记录" value=${summary.LinkedCount || 0} detail=${`${summary.SyncedCount || 0} 已同步 / ${summary.SyncErrorCount || 0} 同步失败`} />
           <${MetricCard} eyebrow="分类" value=${summary.CategoryCount || 0} />
         </div>
       </div></section>
@@ -1678,7 +2496,7 @@ function SourceModulePage() {
           <a class="action-card" href="/_/mrtang-admin/source/categories"><div class="card-kicker">分类</div><div class="card-title">分类管理</div><div class="card-desc">查看抓取入库后的分类树、层级和分类商品数量。</div></a>
           <a class="action-card" href="/_/mrtang-admin/source/products?productStatus=imported"><div class="card-kicker">商品</div><div class="card-title">待审核商品</div><div class="card-desc">直接筛出 imported 商品。</div></a>
           <a class="action-card" href="/_/mrtang-admin/source/products?syncState=error"><div class="card-kicker">商品</div><div class="card-title">同步失败商品</div><div class="card-desc">查看 linked sync error 并继续重试。</div></a>
-          <a class="action-card" href="/_/mrtang-admin/source/product-jobs"><div class="card-kicker">发布任务</div><div class="card-title">商品发布任务</div><div class="card-desc">查看批量发布、重试发布的历史任务、失败项与重跑。</div></a>
+          <a class="action-card" href="/_/mrtang-admin/source/product-jobs"><div class="card-kicker">历史任务</div><div class="card-title">历史商品任务</div><div class="card-desc">查看旧发布链留下的批量任务、失败项与重跑。</div></a>
           <a class="action-card" href="/_/mrtang-admin/source/assets?assetStatus=pending"><div class="card-kicker">图片</div><div class="card-title">待处理图片</div><div class="card-desc">进入图片页执行批量处理。</div></a>
           <a class="action-card" href="/_/mrtang-admin/source/asset-jobs"><div class="card-kicker">任务</div><div class="card-title">图片任务历史</div><div class="card-desc">查看原图下载和图片处理的历史任务、失败与重试。</div></a>
           <a class="action-card" href="/_/mrtang-admin/source/logs"><div class="card-kicker">日志</div><div class="card-title">源数据日志</div><div class="card-desc">查看最近审核、加入发布队列和图片处理动作。</div></a>
@@ -1805,7 +2623,9 @@ function SourceProductsPage() {
   const q = qs.get("q") || "";
   const page = qs.get("productPage") || qs.get("page") || "";
   const pageSize = qs.get("pageSize") || "";
-  const apiURL = buildURL("/api/pim/admin/source/products", { categoryKeys: categoryKeys.join(","), productStatus, syncState, productIds, q, productPage: page, pageSize });
+  const sortBy = qs.get("sortBy") || "";
+  const sortOrder = qs.get("sortOrder") || "";
+  const apiURL = buildURL("/api/pim/admin/source/products", { categoryKeys: categoryKeys.join(","), productStatus, syncState, productIds, q, productPage: page, pageSize, sortBy, sortOrder });
   const categoryOptionsURL = buildURL("/api/pim/admin/source/categories", { pageSize: 300 });
   const [reloadKey, setReloadKey] = useState(0);
   const [actionState, setActionState] = useState({ busy: "", message: "", error: "" });
@@ -1963,8 +2783,8 @@ function SourceProductsPage() {
             <select class="control-select" name="productStatus" defaultValue=${filter.ProductStatus || ""}>
               <option value="">全部审核状态</option>
               <option value="imported">待审核</option>
-              <option value="approved">待加入发布队列</option>
-              <option value="promoted">已加入发布队列</option>
+              <option value="approved">已审核</option>
+              <option value="promoted">历史已发布链处理</option>
               <option value="rejected">已拒绝</option>
             </select>
           </label>
@@ -1987,6 +2807,21 @@ function SourceProductsPage() {
               <option value="12">12</option>
               <option value="24">24</option>
               <option value="48">48</option>
+            </select>
+          </label>
+          <label class="control-field">
+            <span class="control-label">排序字段</span>
+            <select class="control-select" name="sortBy" defaultValue=${filter.SortBy || qs.get("sortBy") || "updated"}>
+              <option value="updated">PIM 更新时间</option>
+              <option value="created">创建时间</option>
+              <option value="last_synced_at">同步时间</option>
+            </select>
+          </label>
+          <label class="control-field">
+            <span class="control-label">排序顺序</span>
+            <select class="control-select" name="sortOrder" defaultValue=${filter.SortOrder || qs.get("sortOrder") || "desc"}>
+              <option value="desc">最新优先</option>
+              <option value="asc">最早优先</option>
             </select>
           </label>
         </div>
@@ -2069,9 +2904,10 @@ function SourceProductsPage() {
         ${filter.ProductIDs ? html`<span class="pill">任务商品范围 <code>${normalizeIDList((filter.ProductIDs || "").split(",")).length}</code></span>` : null}
         <span class="pill">总数 <code>${summary.ProductCount || 0}</code></span>
         <span class="pill">待审核 <code>${summary.ImportedCount || 0}</code></span>
-        <span class="pill">待加入发布队列 <code>${summary.ApprovedCount || 0}</code></span>
+        <span class="pill">已审核 <code>${summary.ApprovedCount || 0}</code></span>
         <span class="pill">同步失败 <code>${summary.SyncErrorCount || 0}</code></span>
         <span class="pill">当前筛选 <code>${summary.FilteredProductCount || summary.ProductCount || 0}</code></span>
+        <span class="pill">排序 <code>${(filter.SortBy || "updated") === "created" ? "创建时间" : (filter.SortBy || "updated") === "last_synced_at" ? "同步时间" : "PIM 更新时间"}</code> / <code>${(filter.SortOrder || "desc") === "asc" ? "最早优先" : "最新优先"}</code></span>
         ${selectedVisibleIDs.length ? html`<span class="pill">当前选中 <code>${selectedVisibleIDs.length}</code></span>` : null}
       </div>
     </div></section>
@@ -2097,26 +2933,21 @@ function SourceProductsPage() {
     <section class="section table-card"><div class="table-card"><div class="card-body">
       <div class="card-kicker">列表</div>
       <h2 class="card-title">商品批次</h2>
+      <div class="flash warning" style="margin-bottom:12px;">供应商正式同步优先使用 <code>供应商同步</code>。这里保留 source 审核和历史查看，不再提供 source 发布动作。</div>
       <div class="action-row" style="margin-bottom:12px;">
         <button class="btn secondary" type="button" disabled=${!(summary.FilteredProductCount || 0) || actionState.busy === "filtered-approve"} onClick=${() => filteredProductAction("/api/pim/admin/source/products/batch-status-filtered", { status: "approved" }, `确认将当前筛选结果 ${summary.FilteredProductCount || 0} 个商品标记为通过吗？`, "filtered-approve", "按当前筛选结果批量通过已完成。")}>${actionState.busy === "filtered-approve" ? "处理中..." : "按当前筛选结果批量通过"}</button>
         <button class="btn secondary" type="button" disabled=${!(summary.FilteredProductCount || 0) || actionState.busy === "filtered-reject"} onClick=${() => filteredProductAction("/api/pim/admin/source/products/batch-status-filtered", { status: "rejected" }, `确认拒绝当前筛选结果 ${summary.FilteredProductCount || 0} 个商品吗？`, "filtered-reject", "按当前筛选结果批量拒绝已完成。")}>${actionState.busy === "filtered-reject" ? "处理中..." : "按当前筛选结果批量拒绝"}</button>
-        <button class="btn secondary" type="button" disabled=${!(summary.FilteredProductCount || 0) || actionState.busy === "filtered-promote"} onClick=${() => filteredProductAction("/api/pim/admin/source/products/batch-promote-filtered", {}, `确认将当前筛选结果 ${summary.FilteredProductCount || 0} 个商品加入发布队列吗？`, "filtered-promote", "按当前筛选结果批量加入发布队列已完成。")}>${actionState.busy === "filtered-promote" ? "处理中..." : "按当前筛选结果加入发布队列"}</button>
-        <button class="btn secondary" type="button" disabled=${!(summary.FilteredProductCount || 0) || actionState.busy === "filtered-promote-sync"} onClick=${() => filteredProductAction("/api/pim/admin/source/products/batch-promote-sync-filtered", {}, `确认将当前筛选结果 ${summary.FilteredProductCount || 0} 个商品加入发布队列并发布到 Backend 吗？`, "filtered-promote-sync", "按当前筛选结果批量发布已完成。")}>${actionState.busy === "filtered-promote-sync" ? "处理中..." : "按当前筛选结果加入发布队列并发布"}</button>
-        <button class="btn secondary" type="button" disabled=${!(summary.FilteredProductCount || 0) || actionState.busy === "filtered-retry-sync"} onClick=${() => filteredProductAction("/api/pim/admin/source/products/batch-retry-sync-filtered", {}, `确认重试当前筛选结果 ${summary.FilteredProductCount || 0} 个商品发布到 Backend 吗？`, "filtered-retry-sync", "按当前筛选结果批量重试发布已完成。")}>${actionState.busy === "filtered-retry-sync" ? "处理中..." : "按当前筛选结果重试发布"}</button>
       </div>
       <div class="action-row" style="margin-bottom:12px;">
         <button class="btn secondary" type="button" disabled=${!selectedVisibleIDs.length || actionState.busy === "batch-approve"} onClick=${() => batchProductAction("/api/pim/admin/source/products/batch-status", { status: "approved" }, `确认将选中的 ${selectedVisibleIDs.length} 个商品标记为通过吗？`, "batch-approve", "批量更新商品审核状态已完成。")}>${actionState.busy === "batch-approve" ? "处理中..." : "选中项批量通过"}</button>
         <button class="btn secondary" type="button" disabled=${!selectedVisibleIDs.length || actionState.busy === "batch-reject"} onClick=${() => batchProductAction("/api/pim/admin/source/products/batch-status", { status: "rejected" }, `确认拒绝选中的 ${selectedVisibleIDs.length} 个商品吗？`, "batch-reject", "批量更新商品审核状态已完成。")}>${actionState.busy === "batch-reject" ? "处理中..." : "选中项批量拒绝"}</button>
-        <button class="btn secondary" type="button" disabled=${!selectedVisibleIDs.length || actionState.busy === "batch-promote"} onClick=${() => batchProductAction("/api/pim/admin/source/products/batch-promote", {}, `确认将选中的 ${selectedVisibleIDs.length} 个商品加入发布队列吗？`, "batch-promote", "批量加入发布队列已完成。")}>${actionState.busy === "batch-promote" ? "处理中..." : "选中项批量加入发布队列"}</button>
-        <button class="btn secondary" type="button" disabled=${!selectedVisibleIDs.length || actionState.busy === "batch-promote-sync"} onClick=${() => batchProductAction("/api/pim/admin/source/products/batch-promote-sync", {}, `确认将选中的 ${selectedVisibleIDs.length} 个商品加入发布队列并发布到 Backend 吗？`, "batch-promote-sync", "批量加入发布队列并发布已完成。")}>${actionState.busy === "batch-promote-sync" ? "处理中..." : "选中项批量加入发布队列并发布"}</button>
-        <button class="btn secondary" type="button" disabled=${!selectedVisibleIDs.length || actionState.busy === "batch-retry-sync"} onClick=${() => batchProductAction("/api/pim/admin/source/products/batch-retry-sync", {}, `确认重试选中的 ${selectedVisibleIDs.length} 个商品发布到 Backend 吗？`, "batch-retry-sync", "批量重试发布已完成。")}>${actionState.busy === "batch-retry-sync" ? "处理中..." : "选中项批量重试发布"}</button>
         ${selectedVisibleIDs.length ? html`<button class="btn secondary" type="button" onClick=${() => setSelectedIDs([])}>清空选择</button>` : null}
       </div>
       <div class="table-wrap section"><table><thead><tr><th><input type="checkbox" checked=${allVisibleSelected} onChange=${toggleSelectAll} /></th><th>商品</th><th>发布分类 / 观察到分类</th><th>审核</th><th>发布队列</th><th>动作</th></tr></thead><tbody>
         ${products.length ? products.map((item) => html`
           <tr>
             <td><input type="checkbox" checked=${selectedVisibleIDs.includes(item.ID || "")} onChange=${() => toggleSelected(item.ID || "")} /></td>
-            <td><strong>${item.Name || "-"}</strong><div class="small">${item.ProductID || "-"}</div></td>
+            <td><strong>${item.Name || "-"}</strong><div class="small">${item.ProductID || "-"}</div><div class="small">创建：${formatDateTime(item.CreatedAt)} / 同步：${formatDateTime(item.LastSyncedAt)}</div></td>
             <td class="small">
               <div><strong>发布分类：</strong>${item.CategoryPath || "-"}</div>
               <div style="margin-top:4px;"><strong>观察到分类：</strong>${(item.ObservedCategoryPaths && item.ObservedCategoryPaths.length) ? item.ObservedCategoryPaths.join("；") : "-"}</div>
@@ -2128,8 +2959,6 @@ function SourceProductsPage() {
               <div class="action-row">
                 <a class="btn secondary" href=${`/_/mrtang-admin/source/products/detail?id=${encodeURIComponent(item.ID || "")}&returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`}>详情</a>
                 <button class="btn secondary" type="button" disabled=${actionState.busy === `approve:${item.ID || ""}`} onClick=${() => productAction("/api/pim/admin/source/products/status", { id: item.ID || "", status: "approved" }, "确认将这个商品标记为通过吗？", `approve:${item.ID || ""}`, "商品审核状态已更新。")}>${actionState.busy === `approve:${item.ID || ""}` ? "处理中..." : "通过"}</button>
-                <button class="btn secondary" type="button" disabled=${actionState.busy === `promote:${item.ID || ""}`} onClick=${() => productAction("/api/pim/admin/source/products/promote", { id: item.ID || "" }, "确认将这个商品加入发布队列吗？", `promote:${item.ID || ""}`, "商品已加入发布队列。")}>${actionState.busy === `promote:${item.ID || ""}` ? "处理中..." : "加入发布队列"}</button>
-                ${(item.Bridge && (item.Bridge.SyncStatus || "").toLowerCase() === "error") ? html`<button class="btn secondary" type="button" disabled=${actionState.busy === `retry:${item.ID || ""}`} onClick=${() => productAction("/api/pim/admin/source/products/retry-sync", { id: item.ID || "" }, "确认重试这个商品发布到 Backend 吗？", `retry:${item.ID || ""}`, "已触发商品发布重试。")}>${actionState.busy === `retry:${item.ID || ""}` ? "处理中..." : "重试发布"}</button>` : null}
               </div>
             </td>
           </tr>
@@ -2149,6 +2978,8 @@ function SourceProductsPage() {
             productIds: filter.ProductIDs || "",
             q: filter.Query || "",
             pageSize: filter.PageSize || 24,
+            sortBy: filter.SortBy || "updated",
+            sortOrder: filter.SortOrder || "desc",
           }}
         />
       </div>
@@ -2819,7 +3650,7 @@ function SourceProductJobsPage() {
   const [reloadKey, setReloadKey] = useState(0);
   const [actionState, setActionState] = useState({ busy: "", message: "", error: "" });
   const resource = useResource(apiURL, [reloadKey]);
-  if (resource.loading) return html`<${LoadingSection} label="商品发布任务" />`;
+  if (resource.loading) return html`<${LoadingSection} label="历史商品任务" />`;
   if (resource.error) return html`<${ErrorSection} error=${resource.error} />`;
   const payload = resource.data || {};
   const summary = payload.summary || {};
@@ -2846,14 +3677,15 @@ function SourceProductJobsPage() {
   return html`
     <section class="section card"><div class="card-body">
       <div class="card-kicker">筛选</div>
-      <h2 class="card-title">商品发布任务历史</h2>
+      <h2 class="card-title">历史商品任务</h2>
+      <div class="small" style="margin-top:8px;">这里只展示旧 source 发布链留下的任务，不包含当前“供应商同步”主链记录。</div>
       <${ActionNotice} state=${actionState} />
       <form class="action-row" method="get" action="/_/mrtang-admin/source/product-jobs">
         <select name="jobType" defaultValue=${filter.JobType || ""}>
           <option value="">全部任务类型</option>
-          <option value="promote">加入发布队列</option>
-          <option value="retry_sync">重试发布</option>
-          <option value="promote_sync">加入发布队列并发布</option>
+          <option value="promote">历史加入发布队列</option>
+          <option value="retry_sync">历史重试发布</option>
+          <option value="promote_sync">历史加入发布队列并发布</option>
         </select>
         <select name="status" defaultValue=${filter.Status || ""}>
           <option value="">全部状态</option>
@@ -2904,7 +3736,7 @@ function SourceProductJobDetailPage() {
   const [actionState, setActionState] = useState({ busy: "", message: "", error: "" });
   const [reloadKey, setReloadKey] = useState(0);
   const resource = useResource(buildURL("/api/pim/admin/source/product-jobs/detail", { id, returnTo }), [reloadKey]);
-  if (resource.loading) return html`<${LoadingSection} label="商品发布任务详情" />`;
+  if (resource.loading) return html`<${LoadingSection} label="历史商品任务详情" />`;
   if (resource.error) return html`<${ErrorSection} error=${resource.error} />`;
   const payload = resource.data || {};
   const detail = payload.detail || {};
@@ -2981,6 +3813,70 @@ function SourceProductJobDetailPage() {
           <td><a class="btn secondary" href=${buildURL("/_/mrtang-admin/source/products/detail", { id: item.RecordID || "", returnTo: window.location.pathname + window.location.search })}>查看商品</a></td>
         </tr>`) : html`<tr><td colspan="5" class="small">当前任务没有失败商品。</td></tr>`}
       </tbody></table></div>
+    </div></div></section>
+  `;
+}
+
+function HarvestDetailPage() {
+  const qs = new URLSearchParams(window.location.search);
+  const id = qs.get("id") || "";
+  const returnTo = qs.get("returnTo") || "/_/mrtang-admin";
+  const resource = useResource(buildURL("/api/pim/admin/harvest/detail", { id, returnTo }), []);
+  if (resource.loading) return html`<${LoadingSection} label="供应商同步详情" />`;
+  if (resource.error) return html`<${ErrorSection} error=${resource.error} />`;
+  const payload = resource.data || {};
+  const detail = payload.detail || {};
+  const backHref = payload.returnTo || returnTo;
+  const failureItems = Array.isArray(detail.FailureItems) ? detail.FailureItems : [];
+  const failureSummary = summarizeHarvestFailureItems(failureItems);
+
+  return html`
+    <section class="section split-grid">
+      <section class="card"><div class="card-body">
+        <div class="card-kicker">供应商同步详情</div>
+        <h2 class="card-title">${harvestTriggerLabel(detail.TriggerType)}供应商同步</h2>
+        ${(payload.flashError) ? html`<div class="flash error">${payload.flashError}</div>` : null}
+        ${(payload.flashMessage) ? html`<div class="flash ok">${payload.flashMessage}</div>` : null}
+        <div class="inline-pills">
+          <span class="pill">运行 ID <code>${detail.ID || "-"}</code></span>
+          <${StatusBadge} label=${syncStatusLabel(detail.Status)} currentTone=${tone(detail.Status)} />
+          <span class="pill">连接器 <code>${supplierConnectorLabel(detail.Connector)}</code></span>
+          <span class="pill">来源模式 <code>${detail.SourceMode || "-"}</code></span>
+        </div>
+        <div class="action-row" style="margin-top:12px;">
+          <a class="btn secondary" href=${backHref}>返回上一页</a>
+        </div>
+      </div></section>
+      <section class="card"><div class="card-body">
+        <div class="card-kicker">运行统计</div>
+        <h2 class="card-title">结果摘要</h2>
+        <div class="metric-grid section">
+          <${MetricCard} eyebrow="处理" value=${detail.Processed || 0} />
+          <${MetricCard} eyebrow="新增" value=${detail.Created || 0} />
+          <${MetricCard} eyebrow="更新" value=${detail.Updated || 0} />
+          <${MetricCard} eyebrow="未变化" value=${detail.Skipped || 0} />
+          <${MetricCard} eyebrow="下架" value=${detail.Offline || 0} />
+          <${MetricCard} eyebrow="失败" value=${detail.Failed || 0} detail=${detail.DurationMs ? `${detail.DurationMs} ms` : ""} />
+        </div>
+        <div class="small">开始：${formatDateTime(detail.StartedAt)} / 结束：${formatDateTime(detail.FinishedAt)}</div>
+        ${detail.ErrorMessage ? html`<div class="flash error" style="margin-top:14px;">${detail.ErrorMessage}</div>` : null}
+        ${failureSummary.length ? html`<div class="inline-pills" style="margin-top:12px;">
+          ${failureSummary.map((item) => html`<span class="pill"><code>${item.step}</code> × ${item.count}</span>`)}
+        </div>` : null}
+      </div></section>
+    </section>
+
+    <section class="section table-card"><div class="table-card"><div class="card-body">
+      <div class="card-kicker">失败明细</div>
+      <h2 class="card-title">本次供应商同步截断失败项</h2>
+      <div class="table-wrap section"><table><thead><tr><th>步骤</th><th>SKU / Product</th><th>错误</th></tr></thead><tbody>
+        ${failureItems.length ? failureItems.map((item) => html`<tr>
+          <td class="small">${item.Step || "-"}</td>
+          <td><strong>${item.SKU || "-"}</strong><div class="small">${item.ProductID || "-"}</div></td>
+          <td class="small">${item.Error || "-"}</td>
+        </tr>`) : html`<tr><td colspan="3" class="small">本次运行没有失败明细。</td></tr>`}
+      </tbody></table></div>
+      ${detail.Failed > failureItems.length ? html`<div class="small">当前仅保留前 ${failureItems.length} 条失败明细，避免日志无限增长。</div>` : null}
     </div></div></section>
   `;
 }
@@ -3129,6 +4025,7 @@ function SourceProductDetailPage() {
   const [actionState, setActionState] = useState({ busy: "", message: "", error: "" });
   const [approveNote, setApproveNote] = useState("");
   const [rejectNote, setRejectNote] = useState("");
+  const [liveDetailState, setLiveDetailState] = useState({ loading: false, error: "", data: null });
   const resource = useResource(buildURL("/api/pim/admin/source/products/detail", { id, returnTo }), [reloadKey]);
   if (resource.loading) return html`<${LoadingSection} label="商品详情" />`;
   if (resource.error) return html`<${ErrorSection} error=${resource.error} />`;
@@ -3145,6 +4042,16 @@ function SourceProductDetailPage() {
       setReloadKey((value) => value + 1);
     } catch (error) {
       setActionState({ busy: "", message: "", error: error.message || successMessage || "操作失败" });
+    }
+  }
+
+  async function loadLiveDetail() {
+    setLiveDetailState({ loading: true, error: "", data: null });
+    try {
+      const result = await fetchJSON(buildURL("/api/pim/admin/source/products/live-detail", { id }));
+      setLiveDetailState({ loading: false, error: String(result.error || ""), data: result });
+    } catch (error) {
+      setLiveDetailState({ loading: false, error: error.message || "实时详情检查失败", data: null });
     }
   }
 
@@ -3168,6 +4075,7 @@ function SourceProductDetailPage() {
         <pre>${detail.ObservedCategoryKeys || "-"}</pre>
         <div class="action-row">
           <a class="btn secondary" href=${backHref}>返回上一页</a>
+          <button class="btn secondary" type="button" disabled=${liveDetailState.loading} onClick=${loadLiveDetail}>${liveDetailState.loading ? "检查中..." : "实时检查详情图"}</button>
           <input type="text" value=${approveNote} onInput=${(event) => setApproveNote(event.currentTarget.value)} placeholder="审核备注" />
           <button class="btn secondary" type="button" disabled=${actionState.busy === "approve"} onClick=${() => detailAction("/api/pim/admin/source/products/status", { id: detail.ID || "", status: "approved", note: approveNote }, "确认将这个商品标记为通过吗？", "approve", "商品审核状态已更新。")}>${actionState.busy === "approve" ? "处理中..." : "通过"}</button>
           <input type="text" value=${rejectNote} onInput=${(event) => setRejectNote(event.currentTarget.value)} placeholder="驳回原因" />
@@ -3182,14 +4090,30 @@ function SourceProductDetailPage() {
           <span class="pill">supplierRecord: <code>${(detail.Bridge && detail.Bridge.SupplierRecordID) || "-"}</code></span>
           <span class="pill">vendure: <code>${(detail.Bridge && detail.Bridge.VendureProductID) || "-"} / ${(detail.Bridge && detail.Bridge.VendureVariantID) || "-"}</code></span>
         </div>
+        <div class="flash warning" style="margin-top:14px;">供应商正式同步优先使用 <code>供应商同步</code>。这里保留审核和历史查看，不再提供 source 发布动作。</div>
         ${(detail.Bridge && detail.Bridge.LastSyncError) ? html`<div class="flash error" style="margin-top:14px;">${detail.Bridge.LastSyncError}</div>` : null}
-        <div class="action-row" style="margin-top:12px;">
-          <button class="btn secondary" type="button" disabled=${actionState.busy === "promote"} onClick=${() => detailAction("/api/pim/admin/source/products/promote", { id: detail.ID || "" }, "确认将这个商品加入发布队列吗？", "promote", "商品已加入发布队列。")}>${actionState.busy === "promote" ? "处理中..." : "加入发布队列"}</button>
-          <button class="btn secondary" type="button" disabled=${actionState.busy === "promote-sync"} onClick=${() => detailAction("/api/pim/admin/source/products/promote-sync", { id: detail.ID || "" }, "确认将这个商品加入发布队列并发布到 Backend 吗？", "promote-sync", "商品已加入发布队列并发布到 Backend。")}>${actionState.busy === "promote-sync" ? "处理中..." : "加入发布队列并发布"}</button>
-          <button class="btn secondary" type="button" disabled=${actionState.busy === "retry-sync"} onClick=${() => detailAction("/api/pim/admin/source/products/retry-sync", { id: detail.ID || "" }, "确认重试这个商品发布到 Backend 吗？", "retry-sync", "已触发商品发布重试。")}>${actionState.busy === "retry-sync" ? "处理中..." : "重试发布到 Backend"}</button>
-        </div>
       </div></section>
     </section>
+
+    <section class="section card"><div class="card-body">
+      <div class="card-kicker">实时详情图检查</div>
+      <h2 class="card-title">按 spu/sku 直接检查源站详情</h2>
+      ${liveDetailState.error ? html`<div class="flash error">${liveDetailState.error}</div>` : null}
+      ${liveDetailState.loading ? html`<div class="small">正在请求实时详情，请稍候...</div>` : null}
+      ${liveDetailState.data && !liveDetailState.error ? html`
+        <div class="inline-pills">
+          <span class="pill">sourceType: <code>${liveDetailState.data.sourceType || "-"}</code></span>
+          <span class="pill">carousel: <code>${liveDetailState.data.carouselCount || 0}</code></span>
+          <span class="pill">detailAssets: <code>${liveDetailState.data.detailAssetCount || 0}</code></span>
+          <span class="pill">cover: <code>${liveDetailState.data.cover || "-"}</code></span>
+        </div>
+        <div class="split-grid section">
+          <div class="table-card"><div class="table-card"><div class="card-body"><div class="card-kicker">轮播图</div><pre>${JSON.stringify(liveDetailState.data.carousel || [], null, 2)}</pre></div></div></div>
+          <div class="table-card"><div class="table-card"><div class="card-body"><div class="card-kicker">详情图</div><pre>${JSON.stringify(liveDetailState.data.detailAssets || [], null, 2)}</pre></div></div></div>
+        </div>
+        <div class="table-card section"><div class="table-card"><div class="card-body"><div class="card-kicker">原始返回</div><pre>${JSON.stringify(liveDetailState.data.product || {}, null, 2)}</pre></div></div></div>
+      ` : html`<div class="small">点击“实时检查详情图”后，这里会显示源站当前返回的轮播图和详情图数量。</div>`}
+    </div></section>
 
     <section class="section card"><div class="card-body">
       <div class="card-kicker">数据块</div>
@@ -3525,40 +4449,42 @@ function App() {
     : !!boot.canAccessProcurement;
   return html`
     <${AppLayout}
-      title=${currentRoute === "backend-release" ? "发布准备" : currentRoute === "target-sync" ? "抓取入库" : currentRoute === "source" ? "源数据" : currentRoute === "source-categories" ? "源数据分类" : currentRoute === "source-products" ? "源数据商品" : currentRoute === "source-product-detail" ? "商品详情" : currentRoute === "source-product-jobs" ? "商品发布任务" : currentRoute === "source-product-job-detail" ? "商品发布任务详情" : currentRoute === "source-assets" ? "源数据图片" : currentRoute === "source-asset-detail" ? "图片详情" : currentRoute === "source-asset-jobs" ? "图片任务" : currentRoute === "source-asset-job-detail" ? "图片任务详情" : currentRoute === "source-logs" ? "日志" : currentRoute === "procurement" ? "采购" : currentRoute === "procurement-detail" ? "采购详情" : currentRoute === "audit" ? "审计" : "总览"}
+      title=${currentRoute === "backend-release" ? "正式商品结果" : currentRoute === "target-sync" ? "抓取入库" : currentRoute === "source" ? "源数据" : currentRoute === "source-categories" ? "源数据分类" : currentRoute === "source-products" ? "源数据商品" : currentRoute === "source-product-detail" ? "商品详情" : currentRoute === "source-product-jobs" ? "历史商品任务" : currentRoute === "source-product-job-detail" ? "历史商品任务详情" : currentRoute === "source-assets" ? "源数据图片" : currentRoute === "source-asset-detail" ? "图片详情" : currentRoute === "source-asset-jobs" ? "图片任务" : currentRoute === "source-asset-job-detail" ? "图片任务详情" : currentRoute === "source-logs" ? "日志" : currentRoute === "procurement" ? "采购" : currentRoute === "procurement-detail" ? "采购详情" : currentRoute === "harvest-detail" ? "供应商同步详情" : currentRoute === "audit" ? "审计" : "总览"}
       subtitle=${currentRoute === "target-sync"
-        ? "先开页面，再异步拉抓取摘要、来源矩阵和最近写操作；“当前源站结果”只代表本次实际读到的数据。"
+        ? "查看抓取入库、分类来源和图片审核。"
         : currentRoute === "backend-release"
-          ? "先看 Vendure 字段准备度、分类映射和商品 payload 预览，再决定何时正式同步。"
+          ? "查看正式商品同步结果，并按需展开分类联调区。"
         : currentRoute === "source"
-          ? "先看 source 模块概览，再分流到商品、图片和日志；数据异步加载，不阻塞整页。"
+          ? "查看 source 审核区的商品、图片和日志。"
           : currentRoute === "source-categories"
-            ? "分类树抓取入库结果和已落库分类都在这里查看；页面先开壳，再异步加载。"
+            ? "查看已抓取分类和分类归属。"
           : currentRoute === "source-products"
-            ? "商品审核、加入发布队列、发布重试改成前端异步列表；现有动作端点继续复用。"
+            ? "查看并审核 source 商品。"
             : currentRoute === "source-product-detail"
-              ? "详情页也切到前端异步渲染，动作端点继续复用现有 POST 路由。"
+              ? "查看 source 商品详情和审核状态。"
             : currentRoute === "source-product-jobs"
-              ? "批量发布和重试发布改成后台任务后，这里可以追踪进度、失败项和重跑。"
+              ? "查看旧 source 发布链留下的历史任务。"
               : currentRoute === "source-product-job-detail"
-                ? "任务详情会显示进度、错误和失败商品，刷新页面后也能继续追踪。"
+                ? "查看旧 source 发布链任务详情、进度和失败项。"
             : currentRoute === "source-assets"
-              ? "图片状态、失败聚合和批量处理改成前端异步列表；现有动作端点继续复用。"
+              ? "查看并处理 source 图片。"
               : currentRoute === "source-asset-detail"
-                ? "详情页也切到前端异步渲染，动作端点继续复用现有 POST 路由。"
+                ? "查看图片详情和处理状态。"
                 : currentRoute === "source-asset-jobs"
-                  ? "原图下载和图片处理任务都在这里追踪；失败后也可以直接重新执行。"
+                  ? "查看图片任务和处理结果。"
                   : currentRoute === "source-asset-job-detail"
-                    ? "任务详情会显示进度、错误和最近日志，刷新页面后也能继续追踪。"
+                    ? "查看图片任务详情、进度和日志。"
                 : currentRoute === "procurement"
-                  ? "采购列表、风险筛选和最近动作改成前端异步加载；详情页也已接入同一前端壳子。"
+                  ? "查看采购单、风险项和最近动作。"
                   : currentRoute === "procurement-detail"
-                    ? "详情页也切到前端异步渲染，风险商品和原始摘要不再阻塞整页。"
+                    ? "查看采购单详情和风险信息。"
+                    : currentRoute === "harvest-detail"
+                      ? "查看本次供应商同步的结果和失败项。"
                     : currentRoute === "source-logs"
-                      ? "源数据日志已切换到统一前端壳子，样式与模块结构保持一致。"
+                      ? "查看 source 相关操作日志。"
                       : currentRoute === "audit"
-                        ? "统一审计页面已切换到前端异步渲染，和其他模块一致。"
-              : "后台首页先秒开壳子，再异步拉 coverage、source capture 和最近动作。"}
+                        ? "查看后台审计记录。"
+              : "查看供应商同步、source 概览和最近动作。"}
       currentPath=${currentPath}
       canAccessSource=${canAccessSource}
       canAccessProcurement=${canAccessProcurement}
@@ -3593,6 +4519,8 @@ function App() {
           ? html`<${ProcurementPage} />`
         : currentRoute === "procurement-detail"
           ? html`<${ProcurementDetailPage} />`
+        : currentRoute === "harvest-detail"
+          ? html`<${HarvestDetailPage} />`
         : currentRoute === "audit"
           ? html`<${AuditPage} />`
         : html`<${DashboardPage} />`}

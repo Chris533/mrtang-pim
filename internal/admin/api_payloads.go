@@ -7,6 +7,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 
 	"mrtang-pim/internal/config"
+	miniappmodel "mrtang-pim/internal/miniapp/model"
 	miniappservice "mrtang-pim/internal/miniapp/service"
 	"mrtang-pim/internal/pim"
 )
@@ -16,6 +17,8 @@ type DashboardMiniappLiveAPIData = DashboardMiniappAPIData
 
 type TargetSyncAPIData struct {
 	Summary      pim.TargetSyncBaseSummary `json:"summary"`
+	Harvest      HarvestAdminData          `json:"harvest"`
+	HarvestError string                    `json:"harvestError"`
 	FlashMessage string                    `json:"flashMessage"`
 	FlashError   string                    `json:"flashError"`
 	RequiresAuth bool                      `json:"requiresAuth"`
@@ -23,8 +26,9 @@ type TargetSyncAPIData struct {
 }
 
 type TargetSyncLiveAPIData struct {
-	Summary    pim.TargetSyncLiveSummary `json:"summary"`
-	FlashError string                    `json:"flashError"`
+	Summary       pim.TargetSyncLiveSummary  `json:"summary"`
+	RawAuthStatus miniappmodel.RawAuthStatus `json:"rawAuthStatus"`
+	FlashError    string                     `json:"flashError"`
 }
 
 type TargetSyncCheckoutLiveAPIData struct {
@@ -119,6 +123,18 @@ type SourceProductJobDetailAPIData struct {
 	FlashError   string                     `json:"flashError"`
 }
 
+type HarvestDetailAPIData struct {
+	Detail       pim.HarvestRun `json:"detail"`
+	ReturnTo     string         `json:"returnTo"`
+	FlashMessage string         `json:"flashMessage"`
+	FlashError   string         `json:"flashError"`
+}
+
+type HarvestSummaryAPIData struct {
+	Harvest    HarvestAdminData `json:"harvest"`
+	FlashError string           `json:"flashError"`
+}
+
 type SourceLogsAPIData struct {
 	Data         SourceLogsPageData `json:"data"`
 	FlashMessage string             `json:"flashMessage"`
@@ -179,11 +195,15 @@ func BuildDashboardMiniappAPIData(ctx context.Context, app core.App, cfg config.
 func BuildTargetSyncAPIData(
 	cfg config.Config,
 	summary pim.TargetSyncBaseSummary,
+	harvest HarvestAdminData,
+	harvestError string,
 	flashMessage string,
 	flashError string,
 ) TargetSyncAPIData {
 	return TargetSyncAPIData{
 		Summary:      summary,
+		Harvest:      harvest,
+		HarvestError: strings.TrimSpace(harvestError),
 		FlashMessage: strings.TrimSpace(flashMessage),
 		FlashError:   strings.TrimSpace(flashError),
 		RequiresAuth: strings.TrimSpace(cfg.MiniApp.AuthorizedAccountID) != "",
@@ -191,10 +211,11 @@ func BuildTargetSyncAPIData(
 	}
 }
 
-func BuildTargetSyncLiveAPIData(summary pim.TargetSyncLiveSummary, flashError string) TargetSyncLiveAPIData {
+func BuildTargetSyncLiveAPIData(summary pim.TargetSyncLiveSummary, rawAuthStatus miniappmodel.RawAuthStatus, flashError string) TargetSyncLiveAPIData {
 	return TargetSyncLiveAPIData{
-		Summary:    summary,
-		FlashError: strings.TrimSpace(flashError),
+		Summary:       summary,
+		RawAuthStatus: rawAuthStatus,
+		FlashError:    strings.TrimSpace(flashError),
 	}
 }
 
@@ -315,6 +336,22 @@ func BuildSourceProductJobDetailAPIData(detail pim.SourceProductJobDetail, retur
 		ReturnTo:     strings.TrimSpace(returnTo),
 		FlashMessage: strings.TrimSpace(flashMessage),
 		FlashError:   strings.TrimSpace(flashError),
+	}
+}
+
+func BuildHarvestDetailAPIData(detail pim.HarvestRun, returnTo string, flashMessage string, flashError string) HarvestDetailAPIData {
+	return HarvestDetailAPIData{
+		Detail:       detail,
+		ReturnTo:     strings.TrimSpace(returnTo),
+		FlashMessage: strings.TrimSpace(flashMessage),
+		FlashError:   strings.TrimSpace(flashError),
+	}
+}
+
+func BuildHarvestSummaryAPIData(harvest HarvestAdminData, flashError string) HarvestSummaryAPIData {
+	return HarvestSummaryAPIData{
+		Harvest:    harvest,
+		FlashError: strings.TrimSpace(flashError),
 	}
 }
 

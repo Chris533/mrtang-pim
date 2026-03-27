@@ -13,7 +13,9 @@ import (
 func RegisterCrons(app *pocketbase.PocketBase, cfg config.Config, service *pim.Service) {
 	if strings.TrimSpace(cfg.Workflow.CronHarvest) != "" {
 		app.Cron().MustAdd("pim-harvest", cfg.Workflow.CronHarvest, func() {
-			if _, err := service.Harvest(context.Background(), app); err != nil {
+			if _, err := service.HarvestWithOptions(context.Background(), app, pim.HarvestOptions{
+				TriggerType: pim.HarvestTriggerCron,
+			}); err != nil {
 				app.Logger().Error("scheduled harvest failed", "error", err)
 			}
 		})

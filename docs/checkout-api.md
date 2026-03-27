@@ -35,6 +35,16 @@
 - `GET /api/miniapp/cart-order/order/freight-cost`
 - `POST /api/miniapp/cart-order/order/submit`
 
+## 结算前预检
+
+结算页在真正提交前，还会走一次 `precheckActiveOrder`。
+
+- 如果商品价格变化，前端会提示刷新后重新确认
+- 如果规格变化、库存不足或商品已下架，前端会拦截结算
+- 购物车本身不会被立即清空，用户需要根据最新状态调整后再提交
+
+这也是大多数电商的常见做法：购物车保存意向，结算时才以最新状态为准。
+
 ## 聚合接口
 
 ### `GET /api/miniapp/cart-order/checkout-summary`

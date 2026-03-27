@@ -12,7 +12,7 @@
   - 默认使用无构建前端壳子异步加载数据，基础摘要和 miniapp raw 实时摘要分块加载；旧 `?legacy=1` 参数现在只做兼容跳转，不再回退旧 SSR 页面
 - `/_/mrtang-admin/target-sync`：抓取入库
   - 源站抓取入库
-  - 分类树、商品规格、图片资产的统一抓取入库入口
+  - 分类树、分类商品来源、图片资产的统一抓取入库入口
   - 默认使用无构建前端壳子异步加载基础摘要、raw 实时摘要、checkout 矩阵、最近写操作和当前运行进度；raw 超时只影响局部区块，`?legacy=1` 现在只做兼容跳转
 - `/_/mrtang-admin/backend-release`
   - 发布准备
@@ -27,7 +27,7 @@
   - 默认使用无构建前端壳子异步加载数据，`?legacy=1` 现在只做兼容跳转
 - `/_/mrtang-admin/source/products`
   - 源数据商品
-  - 商品审核、选中项批量审核、加入发布队列、加入发布队列并发布、重试发布
+  - 商品审核、选中项批量审核、bridge 历史状态查看
   - 默认使用无构建前端壳子异步加载列表，`?legacy=1` 现在只做兼容跳转
 - `/_/mrtang-admin/source/products/detail?id=...`
   - 商品详情
@@ -69,9 +69,9 @@
 - `imported`
   - 待审核
 - `approved`
-  - 待加入发布队列
+  - 已审核
 - `promoted`
-  - 已加入发布队列
+  - 历史已发布链处理，仅用于兼容历史数据
 - `rejected`
   - 已拒绝
 
@@ -97,26 +97,29 @@
 - `failed`
   - 原图下载失败
 
-发布队列 / 同步状态：
+bridge / 同步历史状态：
 
 - `unlinked`
-  - 未进入发布队列
+  - 尚未关联历史发布桥接
 - `approved` / `ready`
-  - 待同步
+  - 历史桥接记录显示待同步
 - `synced`
-  - 已同步
+  - 历史桥接记录显示已同步
 - `error`
-  - 同步失败
+  - 历史桥接记录显示同步失败
 
 ## 推荐使用方式
 
+完整当前 SOP 见 [product-capture-release-sop.md](./product-capture-release-sop.md)。
+
 1. 先打开 `/_/mrtang-admin` 查看总览和高频待办
-2. 进入 `/_/mrtang-admin/target-sync` 执行分类、商品规格、图片抓取入库
-3. 再进入 `/_/mrtang-admin/source` 查看 source 模块摘要
-4. 到 `/_/mrtang-admin/source/products` 处理待审核、待加入发布队列、同步失败商品
-5. 到 `/_/mrtang-admin/source/assets` 下载原图、处理失败图片和批量重试
-6. 到 `/_/mrtang-admin/source/asset-jobs` 查看批量任务进度和历史
-7. 到 `/_/mrtang-admin/source/logs` 追踪失败动作和最近操作
+2. 先执行“供应商同步”，对齐正式商品价格、规格、库存和上下架
+3. 进入 `/_/mrtang-admin/target-sync` 执行分类来源和图片抓取入库
+4. 再进入 `/_/mrtang-admin/source` 查看 source 模块摘要
+5. 到 `/_/mrtang-admin/source/products` 处理待审核商品
+6. 到 `/_/mrtang-admin/source/assets` 下载原图、处理失败图片和批量重试
+7. 到 `/_/mrtang-admin/source/asset-jobs` 查看批量任务进度和历史
+8. 到 `/_/mrtang-admin/source/logs` 追踪失败动作和最近操作
 
 ## raw 读取边界
 
@@ -146,11 +149,15 @@
 
 也就是说，推荐链路是：
 
-1. `抓取入库`
-2. `source products / assets`
-3. `promote`
-4. `supplier_products`
-5. backend / Vendure
+1. `供应商同步`
+2. `抓取入库`
+3. `source products / assets`
+4. 人工审核、图片处理、历史状态查看
+
+补充说明：
+
+- 当前 UI 已移除从 `source/products` 直接发布商品的按钮
+- `source` 页当前主要承担审核、图片处理和历史状态查看
 
 ## 兼容页面
 

@@ -15,7 +15,9 @@ func registerPIMWorkflowRoutes(se *core.ServeEvent, cfg config.Config, service *
 			return re.UnauthorizedError("missing or invalid api key", nil)
 		}
 
-		result, err := service.Harvest(re.Request.Context(), re.App)
+		result, err := service.HarvestWithOptions(re.Request.Context(), re.App, pim.HarvestOptions{
+			TriggerType: pim.HarvestTriggerAPI,
+		})
 		if err != nil {
 			return re.BadRequestError("harvest failed", err)
 		}

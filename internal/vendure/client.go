@@ -96,6 +96,21 @@ type AssetCleanupResult struct {
 	FailedIDs        []string `json:"failedIds,omitempty"`
 }
 
+type ProductBasic struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Enabled   bool   `json:"enabled"`
+	UpdatedAt string `json:"updatedAt"`
+}
+
+type ProductDeleteResult struct {
+	Requested  int      `json:"requested"`
+	Deleted    int      `json:"deleted"`
+	Failed     int      `json:"failed"`
+	DeletedIDs []string `json:"deletedIds,omitempty"`
+	FailedIDs  []string `json:"failedIds,omitempty"`
+}
+
 type CollectionPayload struct {
 	SourceCategoryKey   string
 	SourceCategoryPath  string
@@ -227,10 +242,11 @@ type assetListItem struct {
 }
 
 type Client struct {
-	cfg        config.VendureConfig
-	httpClient *http.Client
-	mu         sync.Mutex
-	loggedIn   bool
+	cfg          config.VendureConfig
+	httpClient   *http.Client
+	mu           sync.RWMutex
+	loggedIn     bool
+	sessionToken string
 }
 
 func NewClient(cfg config.VendureConfig) *Client {
@@ -271,11 +287,19 @@ func (c *Client) SyncProduct(ctx context.Context, payload ProductPayload) (SyncR
 	}
 
 	if strings.TrimSpace(payload.VendureProduct) == "" {
-		productID, err := c.createProduct(ctx, payload, primaryAssetID, productAssetIDs, cEndAssetID)
-		if err != nil {
-			return SyncResult{}, err
+		productID := ""
+		if existingProductID, err := c.findProductIDBySourceProductID(ctx, payload.SourceProductID); err == nil {
+			productID = strings.TrimSpace(existingProductID)
+		}
+		if productID == "" {
+			createdID, err := c.createProduct(ctx, payload, primaryAssetID, productAssetIDs, cEndAssetID)
+			if err != nil {
+				return SyncResult{}, err
+			}
+			productID = createdID
 		}
 		result.ProductID = productID
+		payload.VendureProduct = productID
 	} else {
 		result.ProductID = payload.VendureProduct
 	}
@@ -343,6 +367,47 @@ func (c *Client) SyncProduct(ctx context.Context, payload ProductPayload) (SyncR
 
 	result.Variants = syncedVariants
 	return result, nil
+}
+
+func (c *Client) findProductIDBySourceProductID(ctx context.Context, sourceProductID string) (string, error) {
+	sourceProductID = strings.TrimSpace(sourceProductID)
+	if sourceProductID == "" {
+		return "", nil
+	}
+
+	query := `
+query FindProductBySourceProductId($sourceProductId: String!, $take: Int!) {
+  productVariants(options: { filter: { sourceProductId: { eq: $sourceProductId } }, take: $take }) {
+    items {
+      id
+      product {
+        id
+      }
+    }
+  }
+}`
+
+	var response struct {
+		ProductVariants struct {
+			Items []struct {
+				ID      string `json:"id"`
+				Product struct {
+					ID string `json:"id"`
+				} `json:"product"`
+			} `json:"items"`
+		} `json:"productVariants"`
+	}
+
+	if _, err := c.graphQL(ctx, query, map[string]any{
+		"sourceProductId": sourceProductID,
+		"take":            1,
+	}, &response); err != nil {
+		return "", err
+	}
+	if len(response.ProductVariants.Items) == 0 {
+		return "", nil
+	}
+	return strings.TrimSpace(response.ProductVariants.Items[0].Product.ID), nil
 }
 
 func (c *Client) MiniappCollectionsTree(ctx context.Context) ([]MiniappCollectionNode, error) {
@@ -586,18 +651,12 @@ func (c *Client) DisableProduct(ctx context.Context, productID string) error {
 	mutation := `
 mutation UpdateProduct($input: UpdateProductInput!) {
   updateProduct(input: $input) {
-    ... on Product {
-      id
-    }
-    ... on ErrorResult {
-      errorCode
-      message
-    }
+    id
   }
 }`
 
 	var response struct {
-		UpdateProduct graphQLErrorResult `json:"updateProduct"`
+		UpdateProduct graphQLNode `json:"updateProduct"`
 	}
 
 	_, err := c.graphQL(ctx, mutation, map[string]any{
@@ -654,6 +713,102 @@ func (c *Client) CleanupOrphanedPIMAssets(ctx context.Context) (AssetCleanupResu
 	return result, nil
 }
 
+func (c *Client) ListProducts(ctx context.Context) ([]ProductBasic, error) {
+	if err := c.ensureAuthenticated(ctx); err != nil {
+		return nil, err
+	}
+
+	query := `
+query Products($options: ProductListOptions) {
+  products(options: $options) {
+    items {
+      id
+      name
+      enabled
+      updatedAt
+    }
+    totalItems
+  }
+}`
+
+	items := make([]ProductBasic, 0, 512)
+	skip := 0
+	for {
+		var response struct {
+			Products struct {
+				Items      []ProductBasic `json:"items"`
+				TotalItems int            `json:"totalItems"`
+			} `json:"products"`
+		}
+		_, err := c.graphQL(ctx, query, map[string]any{
+			"options": map[string]any{
+				"skip": skip,
+				"take": 100,
+			},
+		}, &response)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, response.Products.Items...)
+		skip += len(response.Products.Items)
+		if skip >= response.Products.TotalItems || len(response.Products.Items) == 0 {
+			break
+		}
+	}
+
+	return items, nil
+}
+
+func (c *Client) DeleteProducts(ctx context.Context, productIDs []string) (ProductDeleteResult, error) {
+	if err := c.ensureAuthenticated(ctx); err != nil {
+		return ProductDeleteResult{}, err
+	}
+
+	ids := uniqueNonEmptyStrings(productIDs)
+	result := ProductDeleteResult{
+		Requested:  len(ids),
+		DeletedIDs: []string{},
+		FailedIDs:  []string{},
+	}
+	if len(ids) == 0 {
+		return result, nil
+	}
+
+	mutation := `
+mutation DeleteProduct($id: ID!) {
+  deleteProduct(id: $id) {
+    result
+    message
+  }
+}`
+
+	for _, productID := range ids {
+		var response struct {
+			DeleteProduct struct {
+				Result  string `json:"result"`
+				Message string `json:"message"`
+			} `json:"deleteProduct"`
+		}
+		if _, err := c.graphQL(ctx, mutation, map[string]any{
+			"id": productID,
+		}, &response); err != nil {
+			result.Failed++
+			result.FailedIDs = append(result.FailedIDs, productID)
+			continue
+		}
+		status := strings.TrimSpace(response.DeleteProduct.Result)
+		if status != "" && !strings.EqualFold(status, "DELETED") {
+			result.Failed++
+			result.FailedIDs = append(result.FailedIDs, productID)
+			continue
+		}
+		result.Deleted++
+		result.DeletedIDs = append(result.DeletedIDs, productID)
+	}
+
+	return result, nil
+}
+
 func (c *Client) EnsureCollection(ctx context.Context, payload CollectionPayload) (CollectionSyncResult, error) {
 	if err := c.ensureAuthenticated(ctx); err != nil {
 		return CollectionSyncResult{}, err
@@ -691,12 +846,12 @@ func (c *Client) ensureAuthenticated(ctx context.Context) error {
 		return nil
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+	c.mu.RLock()
 	if c.loggedIn {
+		c.mu.RUnlock()
 		return nil
 	}
+	c.mu.RUnlock()
 
 	if strings.TrimSpace(c.cfg.Username) == "" || strings.TrimSpace(c.cfg.Password) == "" {
 		return fmt.Errorf("vendure credentials are not configured")
@@ -726,8 +881,20 @@ mutation Login($username: String!, $password: String!) {
 	}, &response); err != nil {
 		return err
 	}
+	if strings.TrimSpace(response.Login.ID) == "" {
+		message := strings.TrimSpace(response.Login.Message)
+		if message == "" {
+			message = "vendure login failed"
+		}
+		if code := strings.TrimSpace(response.Login.ErrorCode); code != "" {
+			return fmt.Errorf("vendure login failed: %s (%s)", message, code)
+		}
+		return fmt.Errorf("vendure login failed: %s", message)
+	}
 
+	c.mu.Lock()
 	c.loggedIn = true
+	c.mu.Unlock()
 	return nil
 }
 
@@ -807,8 +974,7 @@ mutation UpdateProduct($input: UpdateProductInput!) {
 }`
 
 	input := map[string]any{
-		"id":      payload.VendureProduct,
-		"enabled": true,
+		"id": payload.VendureProduct,
 		"translations": []map[string]any{
 			{
 				"languageCode": c.cfg.LanguageCode,
@@ -1198,7 +1364,6 @@ func (c *Client) buildCreateVariantInput(variant ProductVariantPayload, productI
 func (c *Client) buildUpdateVariantInput(variant ProductVariantPayload, assetID string) map[string]any {
 	input := map[string]any{
 		"id":          variant.VendureVariant,
-		"enabled":     true,
 		"sku":         variant.SKU,
 		"price":       variant.ConsumerPrice,
 		"stockOnHand": variant.DefaultStock,
@@ -2139,6 +2304,7 @@ func (c *Client) graphQLToEndpoint(ctx context.Context, endpoint string, query s
 		return nil, err
 	}
 	defer resp.Body.Close()
+	c.captureSessionToken(resp)
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		body, _ := io.ReadAll(resp.Body)
@@ -2168,13 +2334,29 @@ func (c *Client) graphQLToEndpoint(ctx context.Context, endpoint string, query s
 }
 
 func (c *Client) attachHeaders(req *http.Request) {
-	if strings.TrimSpace(c.cfg.Token) != "" {
-		req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
+	token := strings.TrimSpace(c.cfg.Token)
+	if token == "" {
+		c.mu.RLock()
+		token = strings.TrimSpace(c.sessionToken)
+		c.mu.RUnlock()
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	if strings.TrimSpace(c.cfg.ChannelToken) != "" {
 		req.Header.Set("vendure-token", c.cfg.ChannelToken)
 	}
+}
+
+func (c *Client) captureSessionToken(resp *http.Response) {
+	token := strings.TrimSpace(resp.Header.Get("vendure-auth-token"))
+	if token == "" {
+		return
+	}
+	c.mu.Lock()
+	c.sessionToken = token
+	c.mu.Unlock()
 }
 
 func upsertProductCollectionFilter(filters []collectionFilter, productID string) []collectionFilter {

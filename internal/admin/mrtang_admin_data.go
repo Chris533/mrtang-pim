@@ -22,6 +22,8 @@ type mrtangAdminPageData struct {
 	Miniapp              mrtangAdminMiniappData
 	MiniappError         string
 	SourceCapture        mrtangAdminSourceCaptureData
+	Harvest              HarvestAdminData
+	HarvestError         string
 	BackendReadiness     mrtangAdminBackendReadinessData
 	SourceError          string
 	FlashMessage         string
@@ -77,6 +79,25 @@ type mrtangAdminLink struct {
 	Title   string
 	Desc    string
 	Href    string
+}
+
+type HarvestAdminData struct {
+	SupplierCode      string
+	Connector         string
+	ProductCount      int
+	ActiveCount       int
+	PendingCount      int
+	NeedProcessCount  int
+	ProcessingCount   int
+	ReadyCount        int
+	StuckPendingCount int
+	ApprovedCount     int
+	SyncedCount       int
+	OfflineCount      int
+	ErrorCount        int
+	LastSeenAt        string
+	LastOfflineAt     string
+	RecentRuns        []pim.HarvestRun
 }
 
 type mrtangAdminSourceCaptureData struct {
@@ -237,6 +258,12 @@ func buildMrtangAdminBaseData(
 	} else {
 		page.SourceCapture = sourceCapture
 	}
+	harvestData, err := BuildHarvestAdminData(app, cfg)
+	if err != nil {
+		page.HarvestError = err.Error()
+	} else {
+		page.Harvest = harvestData
+	}
 	page.BackendReadiness = buildBackendReadinessData(app, cfg, page.SourceCapture)
 	page.RecentActions = buildMrtangAdminRecentActions(app, page.SourceCapture.RecentActions, page.Procurement.RecentActions)
 
@@ -291,6 +318,94 @@ func buildMrtangAdminSourceCaptureData(ctx context.Context, app core.App, pimSer
 		}
 	}
 	return data, nil
+}
+
+func BuildHarvestAdminData(app core.App, cfg config.Config) (HarvestAdminData, error) {
+	data := HarvestAdminData{
+		SupplierCode: strings.TrimSpace(cfg.Supplier.Code),
+		Connector:    strings.TrimSpace(cfg.Supplier.Connector),
+		RecentRuns:   []pim.HarvestRun{},
+	}
+	if app == nil {
+		return data, nil
+	}
+
+	records, err := app.FindAllRecords(pim.CollectionSupplierProducts)
+	if err != nil {
+		return data, err
+	}
+
+	for _, record := range records {
+		supplierCode := strings.TrimSpace(record.GetString("supplier_code"))
+		if data.SupplierCode != "" && !strings.EqualFold(supplierCode, data.SupplierCode) {
+			continue
+		}
+
+		data.ProductCount++
+		syncStatus := strings.ToLower(strings.TrimSpace(record.GetString("sync_status")))
+		imageStatus := strings.ToLower(strings.TrimSpace(record.GetString("image_processing_status")))
+		supplierStatus := strings.ToLower(strings.TrimSpace(record.GetString("supplier_status")))
+		switch syncStatus {
+		case pim.StatusPending:
+			data.PendingCount++
+			if imageStatus == pim.ImageStatusProcessed {
+				data.StuckPendingCount++
+			} else {
+				data.NeedProcessCount++
+			}
+		case pim.StatusAIProcessing:
+			data.PendingCount++
+			data.ProcessingCount++
+		case pim.StatusReady:
+			data.PendingCount++
+			data.ReadyCount++
+		case pim.StatusApproved:
+			data.ApprovedCount++
+		case pim.StatusSynced:
+			data.SyncedCount++
+		case pim.StatusOffline:
+			data.OfflineCount++
+		case pim.StatusError:
+			data.ErrorCount++
+		}
+		if syncStatus != pim.StatusOffline && supplierStatus != pim.SupplierStatusOffline {
+			data.ActiveCount++
+		}
+		data.LastSeenAt = maxTimestampString(data.LastSeenAt, strings.TrimSpace(record.GetString("last_seen_at")))
+		data.LastOfflineAt = maxTimestampString(data.LastOfflineAt, strings.TrimSpace(record.GetString("offline_at")))
+	}
+
+	runs, err := pim.ListHarvestRuns(app, 8)
+	if err != nil {
+		return data, err
+	}
+	data.RecentRuns = runs
+
+	return data, nil
+}
+
+func maxTimestampString(current string, next string) string {
+	current = strings.TrimSpace(current)
+	next = strings.TrimSpace(next)
+	if current == "" {
+		return next
+	}
+	if next == "" {
+		return current
+	}
+
+	currentTime, currentErr := time.Parse(time.RFC3339, current)
+	nextTime, nextErr := time.Parse(time.RFC3339, next)
+	if currentErr == nil && nextErr == nil {
+		if nextTime.After(currentTime) {
+			return next
+		}
+		return current
+	}
+	if next > current {
+		return next
+	}
+	return current
 }
 
 func buildMrtangAdminMiniappData(ctx context.Context, cfg config.Config, service *miniappservice.Service) (mrtangAdminMiniappData, error) {

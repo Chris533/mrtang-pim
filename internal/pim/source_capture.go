@@ -69,6 +69,9 @@ type SourceReviewProduct struct {
 	HasMultiUnit          bool               `json:"hasMultiUnit"`
 	DefaultPrice          float64            `json:"defaultPrice"`
 	AssetCount            int                `json:"assetCount"`
+	CreatedAt             string             `json:"createdAt"`
+	UpdatedAt             string             `json:"updatedAt"`
+	LastSyncedAt          string             `json:"lastSyncedAt"`
 	ProcessedCount        int                `json:"processedCount"`
 	FailedCount           int                `json:"failedCount"`
 	Bridge                SourceBridgeStatus `json:"bridge"`
@@ -142,6 +145,8 @@ type SourceReviewFilter struct {
 	AssetIDs       string `json:"assetIds"`
 	SyncState      string `json:"syncState"`
 	Query          string `json:"query"`
+	SortBy         string `json:"sortBy"`
+	SortOrder      string `json:"sortOrder"`
 	ProductPage    int    `json:"productPage"`
 	AssetPage      int    `json:"assetPage"`
 	PageSize       int    `json:"pageSize"`
@@ -2990,6 +2995,8 @@ func normalizeSourceReviewFilter(filter SourceReviewFilter) SourceReviewFilter {
 	filter.ProductIDs = strings.Join(sourceReviewFilterProductIDs(filter), ",")
 	filter.AssetIDs = strings.Join(sourceReviewFilterAssetIDs(filter), ",")
 	filter.SyncState = strings.ToLower(strings.TrimSpace(filter.SyncState))
+	filter.SortBy = normalizeSourceReviewSortBy(filter.SortBy)
+	filter.SortOrder = normalizeSourceReviewSortOrder(filter.SortOrder)
 	filter.CategoryKey = strings.TrimSpace(filter.CategoryKey)
 	filter.Query = strings.TrimSpace(filter.Query)
 	if filter.ProductPage <= 0 {
@@ -3002,6 +3009,65 @@ func normalizeSourceReviewFilter(filter SourceReviewFilter) SourceReviewFilter {
 		filter.PageSize = 24
 	}
 	return filter
+}
+
+func normalizeSourceReviewSortBy(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "updated", "updated_at", "pim_updated", "pim_updated_at":
+		return "updated"
+	case "created", "created_at":
+		return "created"
+	case "synced", "sync", "synced_at", "last_synced_at":
+		return "last_synced_at"
+	default:
+		return "updated"
+	}
+}
+
+func normalizeSourceReviewSortOrder(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "asc", "ascending":
+		return "asc"
+	default:
+		return "desc"
+	}
+}
+
+func sourceReviewProductSortValue(item SourceReviewProduct, sortBy string) string {
+	switch sortBy {
+	case "created":
+		return strings.TrimSpace(item.CreatedAt)
+	case "last_synced_at":
+		return strings.TrimSpace(item.LastSyncedAt)
+	default:
+		return strings.TrimSpace(item.UpdatedAt)
+	}
+}
+
+func compareSourceReviewProducts(left, right SourceReviewProduct, sortBy, sortOrder string) int {
+	leftValue := sourceReviewProductSortValue(left, sortBy)
+	rightValue := sourceReviewProductSortValue(right, sortBy)
+	if leftValue != rightValue {
+		if leftValue == "" {
+			return 1
+		}
+		if rightValue == "" {
+			return -1
+		}
+		cmp := strings.Compare(leftValue, rightValue)
+		if sortOrder == "desc" {
+			cmp = -cmp
+		}
+		if cmp != 0 {
+			return cmp
+		}
+	}
+
+	tie := strings.Compare(strings.TrimSpace(right.UpdatedAt), strings.TrimSpace(left.UpdatedAt))
+	if tie != 0 {
+		return tie
+	}
+	return strings.Compare(right.ID, left.ID)
 }
 
 func buildSourceReviewParams(filter SourceReviewFilter) dbx.Params {
@@ -3353,11 +3419,17 @@ func (s *Service) SourceReviewWorkbench(ctx context.Context, app core.App, produ
 			HasMultiUnit:          record.GetBool("has_multi_unit"),
 			DefaultPrice:          record.GetFloat("default_price"),
 			AssetCount:            record.GetInt("asset_count"),
+			CreatedAt:             record.GetString("created"),
+			UpdatedAt:             record.GetString("updated"),
+			LastSyncedAt:          bridge.LastSyncedAt,
 			ProcessedCount:        stat.processed,
 			FailedCount:           stat.failed,
 			Bridge:                bridge,
 		})
 	}
+	slices.SortFunc(filteredProducts, func(left, right SourceReviewProduct) int {
+		return compareSourceReviewProducts(left, right, filter.SortBy, filter.SortOrder)
+	})
 	summary.FilteredProductCount = len(filteredProducts)
 	summary.ProductPage = filter.ProductPage
 	summary.ProductPages = totalPages(len(filteredProducts), filter.PageSize)

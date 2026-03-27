@@ -29,12 +29,11 @@
 - 承接 `target-sync` 抓取入库后的变更结果
 - 在 `source_products` 中审核商品
 - 在 `source_assets` 中处理图片
-- 把已审核商品加入发布队列，写入 `supplier_products`
-- 触发同步到 backend / Vendure
 
 这条链路不负责：
 
 - 直接替代 `supplier_products` 的正式同步状态机
+- 作为供应商正式商品发布入口
 - 暴露源站鉴权 token 或原始敏感请求
 - 支付、履约或真实供应商自动推单
 
@@ -62,15 +61,15 @@
 - `imported`
   已导入，待人工审核
 - `approved`
-  已审核通过，待加入发布队列并写入 `supplier_products`
+  已审核通过
 - `promoted`
-  已加入发布队列，并已写入 `supplier_products`
+  历史已发布链处理，仅用于兼容历史数据查看
 - `rejected`
   人工拒绝，不进入发布链
 
 推荐流转：
 
-`imported -> approved -> promoted`
+`imported -> approved`
 
 补充流转：
 
@@ -117,7 +116,7 @@
 
 推荐顺序：
 
-1. 在 `/_/mrtang-admin/target-sync` 执行分类、商品规格、图片抓取入库
+1. 在 `/_/mrtang-admin/target-sync` 执行分类来源和图片抓取入库
 2. 同步结果落入：
    - `source_categories`
    - `source_products`
@@ -151,14 +150,21 @@
 
 ## 推荐操作流程
 
+完整当前 SOP 见 [product-capture-release-sop.md](./product-capture-release-sop.md)。
+
 1. 在 `/_/mrtang-admin/target-sync` 执行抓取入库
 2. 在 `/_/mrtang-admin/source/products` 先筛 `imported` 商品
 3. 检查标题、分类、多单位价格、缩略图
 4. 审核通过后执行 `Approve`
 5. 对待处理或失败图片优先在 `/_/mrtang-admin/source/assets` 执行 `Process` 或 `批量重处理失败图片`
 6. 如果需要先把原图固定保存到本地，再在 `/_/mrtang-admin/source/assets` 执行 `下载原图` 或 `批量下载待下载原图`
-7. 对确认可上线的商品执行“加入发布队列”或“加入发布队列并发布”
-8. 回到列表确认 bridge / sync 状态
+7. 回到列表继续查看 bridge / sync 历史状态
+
+补充说明：
+
+- 当前 UI 已不再提供 source 商品发布按钮
+- 当前 `source/products` 的定位是审核区、对照区和历史状态查看区
+- 正式商品同步应改由“供应商同步”承担
 
 ## 列表页能力
 
@@ -171,11 +177,7 @@
 - 批量操作
   - `选中项批量通过`
   - `选中项批量拒绝`
-  - `选中项批量加入发布队列`
-  - `选中项批量加入发布队列并发布`
-  - `选中项批量重试同步`
 - 分页
-- 失败同步重试
 
 `/_/mrtang-admin/source/assets` 当前支持：
 
@@ -240,9 +242,6 @@
 
 - `Approve`
 - `Reject`
-- `加入发布队列`
-- `加入发布队列并发布`
-- `Retry Sync`
 
 ### 图片详情
 
@@ -282,12 +281,15 @@
 
 `source_products` 是审核前台。
 
-真正进入 backend / Vendure 的仍然是 `supplier_products`：
+`source_products` 当前主要承担审核与对照。
 
-1. `source_products` 审核通过
-2. “加入发布队列”会写入或更新 `supplier_products`
-3. `supplier_products` 进入既有同步流程
-4. 同步结果回写到 source workbench 的 bridge / sync 展示区
+真正进入 backend / Vendure 的正式商品主链应优先以 `supplier_products` 为准，而当前 `supplier_products` 的正式同步入口是“供应商同步”。
+
+这意味着：
+
+- `source/products` 适合做人工确认和历史对照
+- 图片处理结果适合做素材准备
+- 日常正式商品同步不要再从这里发起
 
 ## 回归检查建议
 
@@ -295,7 +297,7 @@
 
 1. `/_/mrtang-admin` 能导入 source 数据
 2. `/_/mrtang-admin/source`、`products`、`assets`、`asset-jobs`、`logs` 能正常打开
-3. products 页批量“通过 / 加入发布队列 / 重试发布”不报错
+3. products 页批量“通过 / 拒绝”不报错
 4. assets 页批量 `Process / Reprocess` 不报错
 5. 商品详情和图片详情页可打开
 6. `go test ./...` 通过

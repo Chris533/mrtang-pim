@@ -58,6 +58,8 @@ mrtang-pim/
    运营在 PocketBase Admin UI 中检查记录，把 `sync_status` 从 `ready` 改成 `approved`。
 4. `Sync`
    同步到 Vendure，写回 `vendure_product_id`、`vendure_variant_id`，并把状态改成 `synced`。
+5. `Checkout Precheck`
+   小程序结算时再做一次最新校验，价格、规格、库存或上下架有变化时，先提示用户刷新确认，再决定是否继续提交。
 
 ## 开发启动
 
